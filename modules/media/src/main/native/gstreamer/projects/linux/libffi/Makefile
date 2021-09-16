@@ -14,10 +14,9 @@ TARGET_NAME = lib$(BASE_NAME).a
 TARGET = $(BUILD_DIR)/$(TARGET_NAME)
 
 CFLAGS += -c \
-         -fstack-protector       \
          -Werror=implicit-function-declaration \
          -fPIC \
-         -DHAVE_AS_X86_PCREL \
+         -fstack-protector-all  \
          -DGSTREAMER_LITE
 
 ifeq ($(BUILD_TYPE), Release)

@@ -367,7 +367,7 @@ defineProperty("AWT_TEST", "true")
 ext.IS_AWT_TEST = Boolean.parseBoolean(AWT_TEST);
 
 // Specify the build configuration (Release, Debug, or DebugNative)
-defineProperty("CONF", "Debug")
+defineProperty("CONF", "Release")
 ext.IS_DEBUG_JAVA = CONF == "Debug" || CONF == "DebugNative"
 ext.IS_DEBUG_NATIVE = CONF == "DebugNative"
 

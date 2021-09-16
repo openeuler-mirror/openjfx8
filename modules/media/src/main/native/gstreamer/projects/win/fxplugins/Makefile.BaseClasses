@@ -52,6 +52,7 @@ INCLUDES =  -I$(BASECLASSES_DIR) \
            -I$(INCLUDE4)
 
 CFLAGS =   -DWIN32 \
+           -GS     \
            -D_LIB \
            -D_WIN32_DCOM \
            -D_MBCS \

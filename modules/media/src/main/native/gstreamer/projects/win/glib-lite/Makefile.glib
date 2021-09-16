@@ -132,6 +132,7 @@ INCLUDES = $(addprefix -I$(SRCBASE_DIR)/glib/,$(DIRLIST)) \
            -I$(INCLUDE4)
 
 CFLAGS =   -DWIN32 \
+           -GS \
            -D_WINDOWS \
            -D_USRDLL \
            -DGLIB_COMPILATION \

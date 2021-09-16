@@ -82,6 +82,7 @@ INCLUDES =  $(addprefix -I$(SRCBASE_DIR)/,$(DIRLIST)) \
             -I$(INCLUDE4)
 
 CFLAGS =   -DWIN32 \
+           -GS \
            -D_WINDOWS \
            -D_USRDLL \
            -DENABLE_PULL_MODE=1 \

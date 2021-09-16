@@ -51,6 +51,7 @@ INCLUDES = $(BASE_INCLUDES) \
            -I$(INCLUDE4)
 
 CFLAGS = -DWIN32 \
+         -GS    \
          -D_WINDOWS \
          -D_USRDLL \
          -DJFXMEDIA_JNI_EXPORTS \

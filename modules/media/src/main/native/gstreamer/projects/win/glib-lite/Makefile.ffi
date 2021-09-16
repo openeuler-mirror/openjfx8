@@ -27,6 +27,7 @@ INCLUDES = -I$(SRCBASE_DIR)/include \
            -I$(INCLUDE4)
 
 CFLAGS = -DFFI_BUILDING \
+         -GS \
          -DGSTREAMER_LITE \
 	 $(INCLUDES) \
 	 $(COMPILER_FLAGS)

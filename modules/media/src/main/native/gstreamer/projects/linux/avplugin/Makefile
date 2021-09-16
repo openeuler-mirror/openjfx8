@@ -27,8 +27,8 @@ CFLAGS = -fPIC                   \
          -Wextra                 \
          -Wformat-security       \
          -Werror=implicit-function-declaration \
-         -fstack-protector       \
          -msse2                  \
+         -fstack-protector-all   \
          -fbuiltin               \
          -DHAVE_STDINT_H         \
          -DLINUX                 \
@@ -55,7 +55,7 @@ LDFLAGS = -L$(BUILD_DIR)    \
           -z relro          \
           -lgstreamer-lite  \
           -lglib-lite  \
-          -static-libgcc -static-libstdc++ -Wl,--gc-sections
+          -static-libgcc -static-libstdc++ -Wl,--gc-section,-z,now,-z,noexecstack
 
 ifneq ($(strip $(LIBAV_DIR)),)
 INCLUDES += -I$(LIBAV_DIR)/include

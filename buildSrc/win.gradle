@@ -124,7 +124,7 @@ if (winVsVer >= 120) {
 
 // Common set of flags for all modules except fxpackager
 def ccFlags = ["/nologo", "/W3", "/EHsc", "/c",
-        "/D_STATIC_CPPLIB", "/D_DISABLE_DEPRECATE_STATIC_CPPLIB", "/DINLINE=__inline",
+        "/D_STATIC_CPPLIB", "/D_DISABLE_DEPRECATE_STATIC_CPPLIB", "/DINLINE=__inline","/GS",
         "/DUNICODE", "/D_UNICODE", "/DWIN32", "/DIAL", "/D_LITTLE_ENDIAN", "/DWIN32_LEAN_AND_MEAN",
         "/I$JDK_HOME/include", "/I$JDK_HOME/include/win32",
        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt",
@@ -418,7 +418,7 @@ WIN.prismD3D.rcFlags = ["/d", "JFX_FNAME=prism_d3d.dll", "/d", "JFX_INTERNAL_NAM
 
 WIN.launcher = [:]
 WIN.launcher.compiler = compiler
-WIN.launcher.ccFlags = ["/nologo", "/W3", "/MT", "/EHsc", "/D_WINDOWS", "/DUNICODE", "/D_UNICODE", "/DWIN32",
+WIN.launcher.ccFlags = ["/nologo", "/W3", "/MT", "/EHsc", "/D_WINDOWS", "/DUNICODE", "/D_UNICODE", "/DWIN32","/GS",
         "/D_LITTLE_ENDIAN", "/DWIN32_LEAN_AND_MEAN", "/I$JDK_HOME/include", "/I$JDK_HOME/include/win32",
        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt",
        "/I$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/include",
@@ -440,7 +440,7 @@ WIN.launcher.linkFlags.add(IS_64
 
 WIN.launcherlibrary = [:]
 WIN.launcherlibrary.compiler = compiler
-WIN.launcherlibrary.ccFlags = ["/nologo", "/W3",
+WIN.launcherlibrary.ccFlags = ["/nologo", "/W3","/GS",
         // "/WX",
         "/EHsc", "/c", "/D_WINDOWS", "/DUNICODE", "/D_UNICODE", "/DWIN32",
        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt/",
@@ -465,7 +465,7 @@ WIN.launcherlibrary.linkFlags.add(IS_64
 
 WIN.iconLauncher = [:]
 WIN.iconLauncher.compiler = compiler
-WIN.iconLauncher.ccFlags = ["/nologo", "/W3", "/EHsc", "/D_WINDOWS", "/DUNICODE", "/D_UNICODE",
+WIN.iconLauncher.ccFlags = ["/nologo", "/W3", "/EHsc", "/D_WINDOWS", "/DUNICODE", "/D_UNICODE","/GS",
        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt",
        "/I$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/include",
        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/um",

@@ -27,6 +27,7 @@ INCLUDES = -I$(SRCBASE_DIR) \
            -I$(INCLUDE4)
 
 CFLAGS =   -DWIN32 \
+           -GS    \
            -D_WINDOWS \
            -D_USRDLL \
            -DGSTREAMER_LITE \

@@ -187,6 +187,7 @@ INCLUDES = $(addprefix -I$(SRCBASE_DIR)/,$(DIRLIST)) \
            -I$(INCLUDE4)
 
 CFLAGS =   -DWIN32 \
+           -GS      \
            -D_WINDOWS \
            -DLIBGSTREAMER_EXPORTS \
            -DHAVE_CONFIG_H \
