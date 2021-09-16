@@ -66,9 +66,9 @@ public abstract class PrismFontFactory implements FontFactory {
     private static boolean lcdEnabled;
     private static float lcdContrast = -1;
     private static String jreFontDir;
-    private static final String jreDefaultFont   = "Lucida Sans Regular";
-    private static final String jreDefaultFontLC = "lucida sans regular";
-    private static final String jreDefaultFontFile = "LucidaSansRegular.ttf";
+    private static final String jreDefaultFont   = "Roboto";
+    private static final String jreDefaultFontLC = "Roboto";
+    private static final String jreDefaultFontFile = "Roboto-Regular.ttf";
     private static final String T2K_FACTORY = "com.sun.javafx.font.t2k.T2KFactory";
     private static final String CT_FACTORY = "com.sun.javafx.font.coretext.CTFactory";
     private static final String DW_FACTORY = "com.sun.javafx.font.directwrite.DWFactory";
