@@ -180,7 +180,11 @@ INCLUDES = $(addprefix -I$(SRCBASE_DIR)/,$(DIRLIST)) \
            -I$(GLIB_DIR)/ \
            -I$(GLIB_DIR)/glib/ \
            -I$(GLIB_DIR)/gmodule/ \
-           -I$(GLIB_DIR)/build/win32/vs100/
+           -I$(GLIB_DIR)/build/win32/vs100/ \
+           -I$(INCLUDE1) \
+           -I$(INCLUDE2) \
+           -I$(INCLUDE3) \
+           -I$(INCLUDE4)
 
 CFLAGS =   -DWIN32 \
            -D_WINDOWS \

@@ -36,11 +36,11 @@ REM Handling of 11.0 and 14.0 is excluded here.
 REM The previous officially supported VS version was 12.0
 REM So, the search order is 150, then 120, then 100
 set VSVER=150
-set "VSVARS32FILE=C:\Program Files (x86)\Microsoft Visual Studio\2017\Professional\VC\Auxiliary\Build\vcvars32.bat"
+set "VSVARS32FILE=D:\buildtools\VisualStudio2017\VC\Auxiliary\Build\vcvars32.bat"
 if not "%VS150COMNTOOLS%"=="" (
     set "VS150COMNTOOLS=%VS150COMNTOOLS%"
 ) else (
-  if exist "%VSVARS32FILE%" set "VS150COMNTOOLS=C:\Program Files (x86)\Microsoft Visual Studio\2017\Professional\VC\Auxiliary\Build"
+  if exist "%VSVARS32FILE%" set "VS150COMNTOOLS=D:\buildtools\VisualStudio2017\Professional\VC\Auxiliary\Build"
 )
 set VSVARSDIR=%VS150COMNTOOLS%
 if "%VSVARSDIR%"=="" set VSVER=120
@@ -55,12 +55,12 @@ REM   to build media), so we set it here.
 if "%VSVER%"=="100" set VSVARS32=%VSVARSDIR%\vsvars32.bat
 if "%VSVER%"=="120" set VSVARS32=%VSVARSDIR%\vsvars32.bat
 if "%VSVER%"=="150" set VSVARS32=%VSVARSDIR%\vcvars32.bat
-call "%VSVARS32%" > NUL
+rem call "%VSVARS32%" > NUL
 
 if "%VSVER%"=="100" set VCVARSALL=%VCINSTALLDIR%\vcvarsall.bat
 if "%VSVER%"=="120" set VCVARSALL=%VCINSTALLDIR%\vcvarsall.bat
 if "%VSVER%"=="150" set VCVARSALL=%VSVARSDIR%\vcvarsall.bat
-call "%VCVARSALL%" %VCARCH% > NUL
+rem call "%VCVARSALL%" %VCARCH% > NUL
 
 REM Some vars are reset by vcvarsall.bat, so save them here.
 set TEMPDEVENVDIR=%DEVENVDIR%

@@ -45,7 +45,11 @@ CPP_SOURCES =   amextra.cpp \
 COMPILER_FLAGS = -nologo -W3 -WX- -EHsc -GS -fp:precise -Gm- \
                  -Zc:wchar_t -Zc:forScope- -Gd -wd"4430" -analyze- -errorReport:queue
 
-INCLUDES =  -I$(BASECLASSES_DIR)
+INCLUDES =  -I$(BASECLASSES_DIR) \
+           -I$(INCLUDE1) \
+           -I$(INCLUDE2) \
+           -I$(INCLUDE3) \
+           -I$(INCLUDE4)
 
 CFLAGS =   -DWIN32 \
            -D_LIB \
@@ -55,7 +59,10 @@ CFLAGS =   -DWIN32 \
 	   $(INCLUDES) \
            $(COMPILER_FLAGS)
 
-LIBFLAGS = -out:$(shell cygpath -ma $(TARGET)) -nologo
+LIBFLAGS = -out:$(shell cygpath -ma $(TARGET)) -nologo \
+          -libpath:$(LIBPATH1) \
+          -libpath:$(LIBPATH2) \
+          -libpath:$(LIBPATH3) \
 
 ifeq ($(BUILD_TYPE), Release)
     CFLAGS += -DNDEBUG -O1 -Oy -MD -Gy -GF

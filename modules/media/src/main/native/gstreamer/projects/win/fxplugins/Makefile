@@ -31,6 +31,9 @@ SYSTEM_LIBS = glib-lite.lib \
               strmiids.lib
 
 LDFLAGS = -out:$(shell cygpath -ma $(TARGET)) -nologo -incremental:no -libpath:$(shell cygpath -ma $(BUILD_DIR)) -dll $(SYSTEM_LIBS) \
+          -libpath:$(LIBPATH1) \
+          -libpath:$(LIBPATH2) \
+          -libpath:$(LIBPATH3) \
           -nodefaultlib:libcmt -manifest -manifestfile:$(MANIFEST) -manifestuac:"level='asInvoker' uiAccess='false'" -implib:$(IMPLIB) \
           -subsystem:windows -tlbid:1 -dynamicbase -nxcompat -errorreport:queue
 
@@ -72,7 +75,11 @@ INCLUDES =  $(addprefix -I$(SRCBASE_DIR)/,$(DIRLIST)) \
             -I$(GSTREAMER_DIR)/gstreamer \
             -I$(GSTREAMER_DIR)/gstreamer/libs \
             -I$(GSTREAMER_DIR)/gst-plugins-base/gst-libs \
-            -I$(BASECLASSES_DIR)
+            -I$(BASECLASSES_DIR) \
+            -I$(INCLUDE1) \
+            -I$(INCLUDE2) \
+            -I$(INCLUDE3) \
+            -I$(INCLUDE4)
 
 CFLAGS =   -DWIN32 \
            -D_WINDOWS \
