@@ -219,10 +219,11 @@ class BuiltinsCollection:
 
     def all_functions(self):
         result = []
+        self.objects.sort(key=lambda object:object.object_name)
         for object in self.objects:
+            object.functions.sort(key=lambda function:function.function_name)
             result.extend(object.functions)
 
-        result.sort()
         return result
 
     def all_internal_functions(self):
