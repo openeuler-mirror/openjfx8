@@ -1246,7 +1246,7 @@ project(":base") {
     // We need to take the VersionInfo.java file and replace the various
     // properties within it
     def replacements = [
-        "BUILD_TIMESTAMP": new java.util.Date(),
+        "BUILD_TIMESTAMP": "Mon Mar 25 23:51:34 CST 2019",
         "HUDSON_JOB_NAME": HUDSON_JOB_NAME,
         "HUDSON_BUILD_NUMBER": HUDSON_BUILD_NUMBER,
         "PROMOTED_BUILD_NUMBER": PROMOTED_BUILD_NUMBER,
