@@ -279,7 +279,7 @@ defineProperty("libAVRepositoryURL", "https://libav.org/releases/")
 defineProperty("FFmpegRepositoryURL", "https://www.ffmpeg.org/releases/")
 
 // JFX_DEPS_URL specifies the optional location of an alternate local repository
-defineProperty("JFX_DEPS_URL", "")
+defineProperty("JFX_DEPS_URL", "${buildDir}/../respositories/")
 
 loadProperties("$projectDir/build.properties")
 
