@@ -6,7 +6,7 @@
 and semantics are as close as possible to those of the Perl 5 language.
 
                        Written by Philip Hazel
-           Copyright (c) 1997-2012 University of Cambridge
+           Copyright (c) 1997-2020 University of Cambridge
 
 -----------------------------------------------------------------------------
 Redistribution and use in source and binary forms, with or without
@@ -6006,15 +6006,17 @@ for (;; ptr++)
           int n = 0;
           ptr++;
           while(IS_DIGIT(*ptr))
+            {
             n = n * 10 + *ptr++ - CHAR_0;
+            if (n > 255)
+              {
+              *errorcodeptr = ERR38;
+              goto FAILED;
+              }
+            }
           if (*ptr != CHAR_RIGHT_PARENTHESIS)
             {
             *errorcodeptr = ERR39;
-            goto FAILED;
-            }
-          if (n > 255)
-            {
-            *errorcodeptr = ERR38;
             goto FAILED;
             }
           *code++ = n;

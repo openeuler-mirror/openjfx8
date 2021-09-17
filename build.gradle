@@ -2223,7 +2223,7 @@ project(":media") {
 
     dependencies {
         if (IS_BUILD_LIBAV_STUBS) {           
-            media name: "ffmpeg-4.1.4", ext: "tar.gz"
+            media name: "ffmpeg-4.3.1", ext: "tar.gz"
         }
     }
 
@@ -2403,6 +2403,7 @@ project(":media") {
                 def copyLibAVStubs = {String fromDir, String toDir ->
                     FileCollection config = files("config.h")
                     FileCollection libavcodec = files("avcodec.h", "avfft.h", "dxva2.h", "vaapi.h", "vda.h",
+					                                  "bsf.h", "codec.h", "codec_desc.h", "codec_par.h", "codec_id.h", "packet.h",
                                                       "vdpau.h", "version.h", "xvmc.h", "old_codec_ids.h")
                     FileCollection libavdevice = files("avdevice.h", "version.h")
                     FileCollection libavfilter = files("avfiltergraph.h", "avfilter.h", "buffersink.h", "buffersrc.h", "version.h");
@@ -2460,8 +2461,8 @@ project(":media") {
                     doLast {
                         project.ext.libav = [:]
                         project.ext.libav.basedir = "${buildDir}/native/linux/ffmpeg"
-                        project.ext.libav.versions = [ "4.1.4" ]
-                        project.ext.libav.versionmap = [ "4.1.4" : "58" ]
+                        project.ext.libav.versions = [ "4.3.1" ]
+                        project.ext.libav.versionmap = [ "4.3.1" : "58" ]
 
                         libav.versions.each { version ->
                             def libavDir = "${libav.basedir}/ffmpeg-${version}"
