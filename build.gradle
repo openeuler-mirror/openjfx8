@@ -2790,7 +2790,7 @@ project(":web") {
                         cmakeArgs = " $cmakeArgs -DCMAKE_SYSTEM_NAME=Linux"
                         if (IS_64) {
                         if (OS_ARCH.toLowerCase().contains("aarch"))
-                            cmakeArgs = "$cmakeArgs -DCMAKE_SYSTEM_PROCESSOR=aarch64"
+                            cmakeArgs = "$cmakeArgs -DCMAKE_SYSTEM_PROCESSOR=aarch64 -DJAVA_AWT_LIBRARY=${JAVA_HOME}/jre/lib/aarch64 -DJAVA_JVM_LIBRARY=${JAVA_HOME}/jre/lib/aarch64"
                         else
                             cmakeArgs = "$cmakeArgs -DCMAKE_SYSTEM_PROCESSOR=x86_64"
                         } else {
