@@ -38,6 +38,15 @@
 #include "RenderView.h"
 #include "StyleResolver.h"
 #include <wtf/text/StringBuilder.h>
+#include <cmath>
+
+#if defined SYSTEM_PROCESSOR_AARCH64
+  __asm__(".symver powf,powf@GLIBC_2.17");
+  __asm__(".symver logf,logf@GLIBC_2.17");
+#elif defined SYSTEM_PROCESSOR_AMD64
+  __asm__(".symver powf,powf@GLIBC_2.2.5");
+  __asm__(".symver logf,logf@GLIBC_2.2.5");
+#endif
 
 namespace WebCore {
 
@@ -413,7 +422,7 @@ Gradient::ColorStopVector CSSGradientValue::computeStops(GradientAdapter& gradie
         // calculate colors
         for (size_t y = 0; y < 9; ++y) {
             float relativeOffset = (newStops[y].offset - offset1) / (offset2 - offset1);
-            float multiplier = std::pow(relativeOffset, std::log(.5f) / std::log(midpoint));
+            float multiplier = powf(relativeOffset, logf(.5f) / logf(midpoint));
             // FIXME: Why not premultiply here?
             newStops[y].color = blend(color1, color2, multiplier, false /* do not premultiply */);
         }

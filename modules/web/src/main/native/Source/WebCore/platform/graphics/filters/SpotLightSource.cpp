@@ -35,6 +35,12 @@
 #include "FilterEffect.h"
 #include <wtf/text/TextStream.h>
 
+#if defined SYSTEM_PROCESSOR_AARCH64
+  __asm__(".symver powf,powf@GLIBC_2.17");
+#elif defined SYSTEM_PROCESSOR_AMD64
+  __asm__(".symver powf,powf@GLIBC_2.2.5");
+#endif
+
 namespace WebCore {
 
 // spot-light edge darkening depends on an absolute treshold
