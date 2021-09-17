@@ -21,13 +21,13 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from __future__ import print_function
+
 import io
 import os
 from optparse import OptionParser
-from StringIO import StringIO
-from jsmin import JavascriptMinify
-
+from io import StringIO
+import sys
+from jsmin import jsmin
 
 def stringifyCodepoint(code):
     if code < 128:
@@ -37,7 +37,7 @@ def stringifyCodepoint(code):
 
 
 def chunk(list, chunkSize):
-    for i in xrange(0, len(list), chunkSize):
+    for i in range(0, len(list), chunkSize):
         yield list[i:i + chunkSize]
 
 
@@ -67,25 +67,21 @@ def main():
     print('#include "{0:s}"'.format(os.path.basename(headerPath)), file=sourceFile)
     print('namespace {0:s} {{'.format(namespace), file=sourceFile)
 
-    jsm = JavascriptMinify()
-
     for inputFileName in inputPaths:
-        inputStream = io.FileIO(inputFileName)
-        outputStream = StringIO()
+        inputStream = open(inputFileName,'r')
+        data = inputStream.read()
 
         if not options.no_minify:
-            jsm.minify(inputStream, outputStream)
-            characters = outputStream.getvalue()
+            characters = jsmin(data)
         else:
-            characters = inputStream.read()
-
-        size = len(characters)
+            characters = data
+        codepoints = bytearray(characters, encoding='utf-8')
+        size = len(codepoints)
         variableName = os.path.splitext(os.path.basename(inputFileName))[0]
 
         print('extern const char {0:s}JavaScript[{1:d}];'.format(variableName, size), file=headerFile)
         print('const char {0:s}JavaScript[{1:d}] = {{'.format(variableName, size), file=sourceFile)
 
-        codepoints = map(ord, characters)
         for codepointChunk in chunk(codepoints, 16):
             print('    {0:s},'.format(','.join(map(stringifyCodepoint, codepointChunk))), file=sourceFile)
 

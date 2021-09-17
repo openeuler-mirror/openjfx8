@@ -322,7 +322,7 @@ class PropertyData:
         insertLocation = None
         lowCodePoint = None
         highCodePoint = None
-        for idx in xrange(len(matches)):
+        for idx in range(len(matches)):
             match = matches[idx]
             if codePoint == match + 1:
                 lowCodePoint = match
@@ -351,22 +351,22 @@ class PropertyData:
             lowCodePoint = codePoint
             highCodePoint = codePoint
 
-        for idx in xrange(len(ranges)):
-            range = ranges[idx]
-            if lowCodePoint >= range[0] and highCodePoint <= range[1]:
+        for idx in range(len(ranges)):
+            range_ = ranges[idx]
+            if lowCodePoint >= range_[0] and highCodePoint <= range_[1]:
                 return
-            if lowCodePoint <= (range[1] + 1) and highCodePoint >= (range[0] - 1):
+            if lowCodePoint <= (range_[1] + 1) and highCodePoint >= (range_[0] - 1):
                 while idx < len(ranges) and highCodePoint >= (ranges[idx][0] - 1):
-                    range = ranges[idx]
-                    lowCodePoint = min(lowCodePoint, range[0])
-                    highCodePoint = max(highCodePoint, range[1])
+                    range_ = ranges[idx]
+                    lowCodePoint = min(lowCodePoint, range_[0])
+                    highCodePoint = max(highCodePoint, range_[1])
                     del ranges[idx]
-                    self.codePointCount = self.codePointCount - (range[1] - range[0]) - 1
+                    self.codePointCount = self.codePointCount - (range_[1] - range_[0]) - 1
 
                 ranges.insert(idx, (lowCodePoint, highCodePoint))
                 self.codePointCount = self.codePointCount + (highCodePoint - lowCodePoint) + 1
                 return
-            elif highCodePoint < range[0]:
+            elif highCodePoint < range_[0]:
                 if lowCodePoint != highCodePoint:
                     ranges.insert(idx, (lowCodePoint, highCodePoint))
                     self.codePointCount = self.codePointCount + (highCodePoint - lowCodePoint) + 1
@@ -384,7 +384,7 @@ class PropertyData:
 
     def addRangeUnorderedForMatchesAndRanges(self, lowCodePoint, highCodePoint, matches, ranges):
         if len(matches) and highCodePoint >= matches[0] and lowCodePoint <= matches[-1]:
-            for idx in xrange(len(matches)):
+            for idx in range(len(matches)):
                 match = matches[idx]
                 if lowCodePoint <= match and highCodePoint >= match:
                     while idx < len(matches) and highCodePoint >= matches[idx]:
@@ -414,22 +414,22 @@ class PropertyData:
                 elif highCodePoint < match:
                     break
 
-        for idx in xrange(len(ranges)):
-            range = ranges[idx]
-            if lowCodePoint >= range[0] and highCodePoint <= range[1]:
+        for idx in range(len(ranges)):
+            range_ = ranges[idx]
+            if lowCodePoint >= range_[0] and highCodePoint <= range_[1]:
                 return
-            if lowCodePoint <= (range[1] + 1) and highCodePoint >= (range[0] - 1):
+            if lowCodePoint <= (range_[1] + 1) and highCodePoint >= (range_[0] - 1):
                 while idx < len(ranges) and highCodePoint >= (ranges[idx][0] - 1):
-                    range = ranges[idx]
-                    lowCodePoint = min(lowCodePoint, range[0])
-                    highCodePoint = max(highCodePoint, range[1])
+                    range_ = ranges[idx]
+                    lowCodePoint = min(lowCodePoint, range_[0])
+                    highCodePoint = max(highCodePoint, range_[1])
                     del ranges[idx]
-                    self.codePointCount = self.codePointCount - (range[1] - range[0]) - 1
+                    self.codePointCount = self.codePointCount - (range_[1] - range_[0]) - 1
 
                 ranges.insert(idx, (lowCodePoint, highCodePoint))
                 self.codePointCount = self.codePointCount + (highCodePoint - lowCodePoint) + 1
                 return
-            elif highCodePoint < range[0]:
+            elif highCodePoint < range_[0]:
                 ranges.insert(idx, (lowCodePoint, highCodePoint))
                 self.codePointCount = self.codePointCount + (highCodePoint - lowCodePoint) + 1
                 return
@@ -459,13 +459,13 @@ class PropertyData:
                 self.addRangeUnorderedForMatchesAndRanges(firstUnicodeCodePoint, highCodePoint, self.unicodeMatches, self.unicodeRanges)
 
     def removeMatchFromRanges(self, codePoint, ranges):
-        for idx in xrange(len(ranges)):
-            range = ranges[idx]
-            if range[0] <= codePoint and codePoint <= range[1]:
+        for idx in iter(range(len(ranges))):
+            range_ = ranges[idx]
+            if range_[0] <= codePoint and codePoint <= range_[1]:
                 ranges.pop(idx)
-                if range[0] < codePoint and codePoint < range[1]:
-                    lowRange = (range[0], codePoint - 1)
-                    highRange = (codePoint + 1, range[1])
+                if range_[0] < codePoint and codePoint < range_[1]:
+                    lowRange = (range_[0], codePoint - 1)
+                    highRange = (codePoint + 1, range_[1])
                     # Since list.insert inserts before the index given, handle the high range first
                     if highRange[0] == highRange[1]:
                         self.addMatchUnordered(highRange[0])
@@ -476,14 +476,14 @@ class PropertyData:
                     else:
                         ranges.insert(idx, lowRange)
                 else:
-                    if range[0] == codePoint:
-                        range = (codePoint + 1, range[1])
+                    if range_[0] == codePoint:
+                        range_ = (codePoint + 1, range_[1])
                     else:
-                        range = (range[0], codePoint - 1)
-                    if range[0] == range[1]:
-                        self.addMatchUnordered(range[0])
+                        range_ = (range_[0], codePoint - 1)
+                    if range_[0] == range_[1]:
+                        self.addMatchUnordered(range_[0])
                     else:
-                        ranges.insert(idx, range)
+                        ranges.insert(idx, range_)
                 self.codePointCount = self.codePointCount - 1
                 return
 
@@ -557,7 +557,7 @@ class PropertyData:
 
     @classmethod
     def createAndDumpHashTable(self, file, propertyDict, tablePrefix):
-        propertyKeys = propertyDict.keys()
+        propertyKeys = list(propertyDict.keys())
         numberOfKeys = len(propertyKeys)
         hashSize = ceilingToPowerOf2(numberOfKeys * 2)
         hashMask = hashSize - 1
@@ -742,13 +742,13 @@ class Scripts:
                     lowCodePoint = int(codePoints[:dotDot], 16)
                     highCodePoint = int(codePoints[dotDot + 2:], 16)
                     currentPropertyData.addRange(lowCodePoint, highCodePoint)
-                    for codePoint in xrange(lowCodePoint, highCodePoint + 1):
+                    for codePoint in range(lowCodePoint, highCodePoint + 1):
                         commonScriptExtenstionPropertyData.removeMatch(codePoint)
                         inheritedScriptExtensionPropertyData.removeMatch(codePoint)
 
         # For the scripts that don't have any additional extension codePoints, copy the script
         # data to the script extension with the same name
-        for scriptName, propertyData in self.scriptsByName.iteritems():
+        for scriptName, propertyData in self.scriptsByName.items():
             if scriptName not in self.scriptExtensionsByName:
                 self.scriptExtensionsByName[scriptName] = propertyData
 
@@ -948,7 +948,7 @@ if __name__ == "__main__":
 
     aliases = Aliases()
 
-    propertyDataHFile = openOrExit(unicodeProertyDataHPath, "wb")
+    propertyDataHFile = openOrExit(unicodeProertyDataHPath, "w")
 
     propertyDataHFile.write(header)
 

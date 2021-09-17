@@ -28,13 +28,11 @@
 #define  _SILENCE_STDEXT_HASH_DEPRECATION_WARNINGS
 #include <hash_map>
 #include <hash_set>
-
 // The following is derived from _HASH_SEED, which is an internal constant from
 // include/xhash; since this is an internal constant we define our own rather
 // than relying on something that Microsoft could remove (and apparently has in
 // newer versions of Visual C++)
 #define GLASS_HASH_SEED (size_t)0xdeadbeef
-
 #include "GlassApplication.h"
 #include "GlassClipboard.h"
 #include "GlassDnD.h"

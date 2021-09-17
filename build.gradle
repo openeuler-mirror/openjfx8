@@ -213,6 +213,14 @@ void fail(String msg) {
     throw new GradleException("FAIL: " + msg);
 }
 
+boolean isGradleVersionGT4() {
+    def ver = gradle.gradleVersion.split("[\\.]");
+    def gradleMajor = Integer.parseInt(ver[0]);
+    if (gradleMajor > 4){
+        return true
+    }
+    return false
+}
 /******************************************************************************
  *                                                                            *
  *                   Definition of project properties                         *
@@ -332,7 +340,8 @@ defineProperty("COMPILE_PARFAIT", "false")
 ext.IS_COMPILE_PARFAIT = Boolean.parseBoolean(COMPILE_PARFAIT)
 
 // COMPILE_JFR specifies whether to build code that logs to JRockit Flight Recorder
-defineProperty("COMPILE_JFR", Boolean.toString(file("$JDK_HOME/jre/lib/jfr.jar").exists()))
+// defineProperty("COMPILE_JFR", Boolean.toString(file("$JDK_HOME/jre/lib/jfr.jar").exists()))
+defineProperty("COMPILE_JFR","false")
 ext.IS_COMPILE_JFR = Boolean.parseBoolean(COMPILE_JFR)
 
 // RETAIN_PACKAGER_TESTS specifies whether the tests in fxpackager should
@@ -1154,6 +1163,11 @@ allprojects {
         repositories {
             mavenCentral()
             ivy {
+                if (isGradleVersionGT4()){
+                    metadataSources {
+                        artifact()
+                    }
+                }
                 url "http://download.eclipse.org/eclipse/updates/4.6/R-4.6.3-201703010400/plugins/"
                 layout "pattern", {
                     artifact "[artifact].[ext]"
@@ -1166,6 +1180,11 @@ allprojects {
         repositories {
             ivy {
                 url JFX_DEPS_URL
+                if (isGradleVersionGT4()){
+                    metadataSources {
+                        artifact()
+                    }
+                }
                 layout "pattern", {
                     artifact "[artifact]-[revision](-[classifier]).[ext]"
                     artifact "[artifact].[ext]"
@@ -1178,12 +1197,22 @@ allprojects {
         repositories {
 
             ivy {
+                if (isGradleVersionGT4()){
+                    metadataSources {
+                        artifact()
+                    }
+                }
                 url libAVRepositoryURL
                 layout "pattern", {
                     artifact "[artifact].[ext]"
                 }
             }
             ivy {
+                if (isGradleVersionGT4()){
+                    metadataSources {
+                        artifact()
+                    }
+                }
                 url FFmpegRepositoryURL
                 layout "pattern", {
                     artifact "[artifact].[ext]"
@@ -1755,6 +1784,12 @@ project(":fxml") {
 project(":builders") {
     sourceCompatibility = 1.7
 
+    if (isGradleVersionGT4()){
+        java {
+            disableAutoTargetJvm()
+        }
+    }
+
     if (!COMPILE_SWING) sourceSets.main.java.exclude ("**/swing/**")
     if (!COMPILE_SWT)   sourceSets.main.java.exclude ("**/swt/**")
 
@@ -2044,7 +2079,7 @@ project(":fxpackager") {
                 exec({
                     commandLine("$WIN.fxpackager.linker",
                             IS_64 ? "/LIBPATH:$WIN.WINDOWS_KITS_LIBDIR/um/x64/" : "/LIBPATH:$WIN.WINDOWS_KITS_LIBDIR/um/x86/",
-                            IS_64 ? "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/lib/x64/" : "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/lib/x86/",
+                            IS_64 ? "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/lib/x64/" : "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/lib/x86/",
                             IS_64 ? "/LIBPATH:$WIN.WINDOWS_KITS_LIBDIR/ucrt/x64/" : "/LIBPATH:$WIN.WINDOWS_KITS_LIBDIR/ucrt/x86/",
                             "/nologo", "/opt:REF", "/incremental:no", "/manifest", "kernel32.lib", "advapi32.lib",
                             "/out:$buildDir/native/javapackager/javapackager.exe",
@@ -2223,7 +2258,7 @@ project(":media") {
 
     dependencies {
         if (IS_BUILD_LIBAV_STUBS) {           
-            media name: "ffmpeg-4.1.4", ext: "tar.gz"
+            media name: "ffmpeg-4.3.1", ext: "tar.gz"
         }
     }
 
@@ -2376,7 +2411,7 @@ project(":media") {
 
                             String sdkDir = System.getenv("BASECLASSES_SDK_DIR");
                             if (sdkDir == null) {
-                                sdkDir = "D:/buildtools/MicrosoftSDKs/Windows/v7.1" // Default value
+                                sdkDir = "D:/jenkins/workspace/test-buildtools/open_source/Windows-classic-samples/Windows-classic-samples-d42a2ea76a6d50c6790bbcf88a60de73cce069a9/Samples" // Default value
                                 winEnv["BASECLASSES_SDK_DIR"] = sdkDir
                             }
                             environment(winEnv)
@@ -2403,6 +2438,7 @@ project(":media") {
                 def copyLibAVStubs = {String fromDir, String toDir ->
                     FileCollection config = files("config.h")
                     FileCollection libavcodec = files("avcodec.h", "avfft.h", "dxva2.h", "vaapi.h", "vda.h",
+					                                  "bsf.h", "codec.h", "codec_desc.h", "codec_par.h", "codec_id.h", "packet.h",
                                                       "vdpau.h", "version.h", "xvmc.h", "old_codec_ids.h")
                     FileCollection libavdevice = files("avdevice.h", "version.h")
                     FileCollection libavfilter = files("avfiltergraph.h", "avfilter.h", "buffersink.h", "buffersrc.h", "version.h");
@@ -2460,8 +2496,8 @@ project(":media") {
                     doLast {
                         project.ext.libav = [:]
                         project.ext.libav.basedir = "${buildDir}/native/linux/ffmpeg"
-                        project.ext.libav.versions = [ "4.1.4" ]
-                        project.ext.libav.versionmap = [ "4.1.4" : "58" ]
+                        project.ext.libav.versions = [ "4.3.1" ]
+                        project.ext.libav.versionmap = [ "4.3.1" : "58" ]
 
                         libav.versions.each { version ->
                             def libavDir = "${libav.basedir}/ffmpeg-${version}"
@@ -2630,26 +2666,6 @@ project(":media") {
                     }
                 }
                 buildGStreamer.dependsOn buildGlib
-            } else if (t.name == "linux") {
-                def buildGlib = task("build${t.capital}Glib") {
-                    enabled = IS_COMPILE_MEDIA
-                    doLast {
-                        exec {
-                            commandLine ("make", "${makeJobsFlag}", "-C", "${nativeSrcDir}/gstreamer/projects/${projectDir}/libffi")
-                            args("OUTPUT_DIR=${nativeOutputDir}", "BUILD_TYPE=${buildType}", "BASE_NAME=ffi")
-                            args("CC=${mediaProperties.compiler}", "LINK=${mediaProperties.linker}", "AR=${mediaProperties.ar}")
-                            args(IS_64 ? "ARCH=x64" : "ARCH=x32", OS_ARCH.toLowerCase().contains("aarch") ? "OS_ARCH=aarch64" : "OS_ARCH=x86")
-                        }
-
-                        exec {
-                            commandLine ("make", "${makeJobsFlag}", "-C", "${nativeSrcDir}/gstreamer/projects/${projectDir}/glib-lite")
-                            args("OUTPUT_DIR=${nativeOutputDir}", "BUILD_TYPE=${buildType}", "BASE_NAME=glib-lite")
-                            args("CC=${mediaProperties.compiler}", "LINK=${mediaProperties.linker}", "LIB=${mediaProperties.lib}")
-                            args(IS_64 ? "ARCH=x64" : "ARCH=x32", OS_ARCH.toLowerCase().contains("aarch") ? "OS_ARCH=aarch64" : "OS_ARCH=x86")
-                        }
-                    }
-                }
-                buildGStreamer.dependsOn buildGlib
             }
         }
 
@@ -2774,7 +2790,7 @@ project(":web") {
                         cmakeArgs = " $cmakeArgs -DCMAKE_SYSTEM_NAME=Linux"
                         if (IS_64) {
                         if (OS_ARCH.toLowerCase().contains("aarch"))
-                            cmakeArgs = "$cmakeArgs -DCMAKE_SYSTEM_PROCESSOR=aarch64"
+                            cmakeArgs = "$cmakeArgs -DCMAKE_SYSTEM_PROCESSOR=aarch64 -DJAVA_AWT_LIBRARY=${JAVA_HOME}/jre/lib/aarch64 -DJAVA_JVM_LIBRARY=${JAVA_HOME}/jre/lib/aarch64"
                         else
                             cmakeArgs = "$cmakeArgs -DCMAKE_SYSTEM_PROCESSOR=x86_64"
                         } else {
@@ -3115,6 +3131,11 @@ compileTargets { t ->
         group = "Basic"
         description = "Creates the jfxrt.jar for the $t.name target"
         archiveName = "${buildDir}/${sdkDirName}/rt/lib/ext/jfxrt.jar";
+
+        if (isGradleVersionGT4()){
+            destinationDirectory = file("${buildDir}/${sdkDirName}/rt/lib/ext")
+            archiveFileName = "jfxrt.jar"
+        }
         includeEmptyDirs = false
         from("modules/base/build/classes/java/main",
              "modules/base/build/resources/main",
@@ -3236,6 +3257,10 @@ compileTargets { t ->
         group = "Basic"
         description = "Creates the jfxswt.jar for the $t.name target"
         archiveName = "${buildDir}/${sdkDirName}/rt/lib/jfxswt.jar";
+        if (isGradleVersionGT4()){
+            destinationDirectory = file("${buildDir}/${sdkDirName}/rt/lib/")
+            archiveFileName = "jfxswt.jar"
+        }
         includeEmptyDirs = false
         from("modules/swt/build/classes/java/main");
         from("modules/builders/build/classes/java/main");
@@ -3258,6 +3283,10 @@ compileTargets { t ->
         group = "Basic"
         description = "Creates the javafx-mx.jar"
         archiveName = "${buildDir}/${sdkDirName}/lib/javafx-mx.jar";
+        if (isGradleVersionGT4()){
+            destinationDirectory = file("${buildDir}/${sdkDirName}/rt/lib/")
+            archiveFileName = "javafx-mx.jar"
+        }
         includeEmptyDirs = false
         from "modules/jmx/build/classes/java/main"
         from "modules/jmx/build/resources/main"

@@ -7,9 +7,6 @@ TARGET_DIRS = $(BUILD_DIR)
 
 BASE_DIR = ../../..
 
-GLIB_VERSION = 2.56.1
-GLIB_DIR = $(BASE_DIR)/3rd_party/glib/glib-$(GLIB_VERSION)
-
 SRCBASE_DIR = $(BASE_DIR)/gstreamer-lite
 OBJBASE_DIR = $(BUILD_DIR)/obj/gstreamer-lite
 
@@ -75,23 +72,16 @@ INCLUDES = -I$(BASE_DIR)/plugins                          \
            -I$(SRCBASE_DIR)/gst-plugins-base/gst-libs     \
            -I$(SRCBASE_DIR)/gst-plugins-good/gst-libs     \
            -I$(SRCBASE_DIR)/gst-plugins-good/gst/isomp4   \
-           -I$(SRCBASE_DIR)/gst-plugins-bad/gst-libs      \
-           -I$(GLIB_DIR)                                  \
-           -I$(GLIB_DIR)/glib                             \
-           -I$(GLIB_DIR)/gmodule           
+           -I$(SRCBASE_DIR)/gst-plugins-bad/gst-libs  
 
-PACKAGES_INCLUDES := $(shell pkg-config --cflags alsa)
-PACKAGES_LIBS := $(shell pkg-config --libs alsa)
+PACKAGES_INCLUDES := $(shell pkg-config --cflags alsa glib-2.0)
+PACKAGES_LIBS := $(shell pkg-config --libs alsa glib-2.0 gobject-2.0 gmodule-2.0 gthread-2.0)
 
-LDFLAGS = -L$(BUILD_DIR) -lm -lglib-lite $(PACKAGES_LIBS) \
-          -static-libgcc -static-libstdc++ -Wl,--gc-sections,-z,relro,-z,now,-z,noexecstack
+LDFLAGS = -L$(BUILD_DIR) -lm -z relro -z now -z noexecstack $(PACKAGES_LIBS) 
 
 ifeq ($(ARCH), x32)
     CFLAGS += -m32
     LDFLAGS += -m32
-    INCLUDES += -I$(GLIB_DIR)/build/linux/x86
-else
-    INCLUDES += -I$(GLIB_DIR)/build/linux/x64
 endif
 
 SOURCES = \

@@ -36,9 +36,8 @@ def stringHash(str):
     hash = stringHashingStartValue
 
     strLength = len(str)
-    characterPairs = strLength / 2
+    characterPairs = int(strLength / 2)
     remainder = strLength & 1
-
     # Main loop
     while characterPairs > 0:
         hash = hash + ord(str[0])

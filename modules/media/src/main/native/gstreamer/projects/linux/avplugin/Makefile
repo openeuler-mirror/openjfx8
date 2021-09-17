@@ -7,9 +7,6 @@ TARGET_DIRS = $(BUILD_DIR)
 
 BASE_DIR = ../../..
 
-GLIB_VERSION = 2.56.1
-GLIB_DIR = $(BASE_DIR)/3rd_party/glib/glib-$(GLIB_VERSION)
-
 SRCBASE_DIR = ../../../plugins
 
 DIRLIST = av
@@ -27,7 +24,6 @@ CFLAGS = -fPIC                   \
          -Wextra                 \
          -Wformat-security       \
          -Werror=implicit-function-declaration \
-         -msse2                  \
          -fstack-protector-all   \
          -fbuiltin               \
          -DHAVE_STDINT_H         \
@@ -37,25 +33,29 @@ CFLAGS = -fPIC                   \
          -DG_DISABLE_DEPRECATED \
          -ffunction-sections -fdata-sections
 
+ifneq ($(OS_ARCH), aarch64)
+    CFLAGS += -msse2
+endif
+
 ifeq ($(BUILD_TYPE), Release)
     CFLAGS += -Os
 else
     CFLAGS += -g -Wall
 endif
 
+PACKAGES_INCLUDES := $(shell pkg-config --cflags glib-2.0)
+PACKAGES_LIBS     := $(shell pkg-config --libs glib-2.0 gobject-2.0)
+
 INCLUDES= -I../../../plugins                          \
           -I../../../plugins/av                       \
           -I../../../gstreamer-lite/gstreamer         \
           -I../../../gstreamer-lite/gstreamer/libs    \
-          -I$(GLIB_DIR)                               \
-          -I$(GLIB_DIR)/glib                          \
-          -I$(GLIB_DIR)/gmodule
+          $(PACKAGES_INCLUDES)
 
 LDFLAGS = -L$(BUILD_DIR)    \
           -z relro          \
           -lgstreamer-lite  \
-          -lglib-lite  \
-          -static-libgcc -static-libstdc++ -Wl,--gc-section,-z,now,-z,noexecstack
+          -z now -z noexecstack $(PACKAGES_LIBS)
 
 ifneq ($(strip $(LIBAV_DIR)),)
 INCLUDES += -I$(LIBAV_DIR)/include
@@ -68,9 +68,6 @@ endif
 ifeq ($(ARCH), x32)
     CFLAGS += -m32
     LDFLAGS += -m32
-    INCLUDES += -I$(GLIB_DIR)/build/linux/x86
-else
-    INCLUDES += -I$(GLIB_DIR)/build/linux/x64
 endif
 
 SOURCES = av/fxavcodecplugin.c  \

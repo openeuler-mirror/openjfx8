@@ -29,6 +29,10 @@ CFLAGS = -DTARGET_OS_LINUX=1     \
          -DG_DISABLE_DEPRECATED  \
          -ffunction-sections -fdata-sections
 
+ifneq ($(OS_ARCH), aarch64)
+    CFLAGS += -msse2
+endif
+
 CPPFLAGS = -fno-rtti -ffunction-sections -fdata-sections
 
 BASE_INCLUDES = -I$(SRCBASE_DIR) \
@@ -36,16 +40,17 @@ BASE_INCLUDES = -I$(SRCBASE_DIR) \
 
 ifdef HOST_COMPILE
 	GSTREAMER_LITE_DIR = ../../../gstreamer/gstreamer-lite
-	GLIB_LITE_DIR = ../../../gstreamer/3rd_party/glib/glib-2.56.1
 
 	CFLAGS += -fPIC \
                   -Wformat \
                   -Wextra \
                   -Wformat-security \
                   -Werror=implicit-function-declaration \
-		  -msse2 \
                   -fPIC -fstack-protector-all  \
 	          -DGSTREAMER_LITE
+
+	PACKAGES_INCLUDES := $(shell pkg-config --cflags glib-2.0)
+	PACKAGES_LIBS := $(shell pkg-config --libs glib-2.0 gobject-2.0 gmodule-2.0 gthread-2.0)
 
 	INCLUDES = $(BASE_INCLUDES) \
 		   -I$(JAVA_HOME)/include \
@@ -53,16 +58,13 @@ ifdef HOST_COMPILE
 	           -I$(GSTREAMER_LITE_DIR)/gstreamer \
 		   -I$(GSTREAMER_LITE_DIR)/gst-plugins-base/gst-libs \
 	           -I$(GSTREAMER_LITE_DIR)/gstreamer/libs \
-	           -I$(GLIB_LITE_DIR)/ \
-	           -I$(GLIB_LITE_DIR)/glib \
-	           -I$(GLIB_LITE_DIR)/gmodule
+                    $(PACKAGES_INCLUDES)
 
-	LDFLAGS = -Wl,-rpath,\$$ORIGIN -L$(BUILD_DIR) -lgstreamer-lite -lglib-lite \
-            -static-libgcc -static-libstdc++ -Wl,--gc-sections,-z,relro,-z,now,-z,noexecstack
+	LDFLAGS = -Wl,-rpath,\$$ORIGIN -L$(BUILD_DIR) -lgstreamer-lite $(PACKAGES_LIBS) -z relro -z now -z noexecstack
 else
 	CFLAGS += $(EXTRA_CFLAGS)
 	INCLUDES = $(BASE_INCLUDES)
-	LDFLAGS = -Wl,-rpath,\$$ORIGIN -L$(BUILD_DIR) $(EXTRA_LDFLAGS)
+	LDFLAGS = -Wl,-rpath,\$$ORIGIN -L$(BUILD_DIR) $(EXTRA_LDFLAGS) -z relro -z now -z noexecstack
 endif
 
 ifeq ($(BUILD_TYPE), Release)
@@ -74,9 +76,6 @@ endif
 ifeq ($(ARCH), x32)
     CFLAGS += -m32
     LDFLAGS += -m32
-    INCLUDES += -I$(GLIB_LITE_DIR)/build/linux/x86
-else
-    INCLUDES += -I$(GLIB_LITE_DIR)/build/linux/x64
 endif
 
 CPP_SOURCES = \

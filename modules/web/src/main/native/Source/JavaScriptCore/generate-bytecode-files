@@ -126,7 +126,7 @@ def writeStruct(bytecodeHFile, bytecode):
 
     writeInstructionAccessor(bytecodeHFile, "Opcode", "opcode")
     for offset in bytecode["offsets"]:
-        for name, typeName in offset.iteritems():
+        for name, typeName in offset.items():
             writeInstructionAccessor(bytecodeHFile, typeName, name)
 
     bytecodeHFile.write("\nprivate:\n")
@@ -134,7 +134,7 @@ def writeStruct(bytecodeHFile, bytecode):
 
     writeInstructionMember(bytecodeHFile, "Opcode", "opcode")
     for offset in bytecode["offsets"]:
-        for name, typeName in offset.iteritems():
+        for name, typeName in offset.items():
             writeInstructionMember(bytecodeHFile, typeName, name)
     bytecodeHFile.write("};\n\n")
 
@@ -206,16 +206,16 @@ if __name__ == "__main__":
         exit(0)
 
     if bytecodeHFilename:
-        bytecodeHFile = openOrExit(bytecodeHFilename, "wb")
+        bytecodeHFile = openOrExit(bytecodeHFilename, "w")
 
     if bytecodeStructsHFilename:
-        bytecodeStructsHFile = openOrExit(bytecodeStructsHFilename, "wb")
+        bytecodeStructsHFile = openOrExit(bytecodeStructsHFilename, "w")
 
     if initASMFileName:
-        initBytecodesFile = openOrExit(initASMFileName, "wb")
+        initBytecodesFile = openOrExit(initASMFileName, "w")
 
     try:
-        bytecodeSections = json.load(bytecodeFile, encoding = "utf-8")
+        bytecodeSections = json.load(bytecodeFile)
     except:
         print("Unexpected error parsing {0}: {1}".format(bytecodeJSONFile, sys.exc_info()))
 
@@ -281,7 +281,7 @@ if __name__ == "__main__":
                 firstMacro = False
                 bytecodeNum = bytecodeNum + 1
 
-            bytecodeHFile.write("\n")            
+            bytecodeHFile.write("\n")
 
         if initASMFileName and section['emitInASMFile']:
             prefix = ""

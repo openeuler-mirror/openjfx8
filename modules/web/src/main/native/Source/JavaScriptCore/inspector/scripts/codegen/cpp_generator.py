@@ -28,8 +28,8 @@ import logging
 import os.path
 import re
 
-from generator import ucfirst, Generator
-from models import PrimitiveType, ObjectType, ArrayType, EnumType, AliasedType, Frameworks
+from .generator import ucfirst, Generator
+from .models import PrimitiveType, ObjectType, ArrayType, EnumType, AliasedType, Frameworks
 
 log = logging.getLogger('global')
 
