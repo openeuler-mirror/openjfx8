@@ -27,6 +27,12 @@
 #include "config.h"
 #include "FELightingNEON.h"
 
+#if defined SYSTEM_PROCESSOR_AARCH64
+  __asm__(".symver powf,powf@GLIBC_2.17");
+#elif defined SYSTEM_PROCESSOR_AMD64
+  __asm__(".symver powf,powf@GLIBC_2.2.5");
+#endif
+
 #if CPU(ARM_NEON) && CPU(ARM_TRADITIONAL) && COMPILER(GCC_OR_CLANG)
 
 namespace WebCore {

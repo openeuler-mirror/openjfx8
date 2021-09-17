@@ -32,6 +32,12 @@
 #include "FELightingNEON.h"
 #include <wtf/ParallelJobs.h>
 
+#if defined SYSTEM_PROCESSOR_AARCH64
+  __asm__(".symver powf,powf@GLIBC_2.17");
+#elif defined SYSTEM_PROCESSOR_AMD64
+  __asm__(".symver powf,powf@GLIBC_2.2.5");
+#endif
+
 namespace WebCore {
 
 FELighting::FELighting(Filter& filter, LightingType lightingType, const Color& lightingColor, float surfaceScale, float diffuseConstant, float specularConstant, float specularExponent, float kernelUnitLengthX, float kernelUnitLengthY, Ref<LightSource>&& lightSource)

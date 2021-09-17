@@ -34,6 +34,12 @@
 #include <algorithm>
 #include <wtf/MathExtras.h>
 
+#if defined SYSTEM_PROCESSOR_AARCH64
+  __asm__(".symver powf,powf@GLIBC_2.17");
+#elif defined SYSTEM_PROCESSOR_AMD64
+  __asm__(".symver powf,powf@GLIBC_2.2.5");
+#endif
+
 namespace WebCore {
 
 void AudioParamTimeline::setValueAtTime(float value, float time)
