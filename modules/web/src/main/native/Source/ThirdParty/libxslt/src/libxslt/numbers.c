@@ -728,7 +728,7 @@ xsltNumberFormatGetValue(xmlXPathContextPtr context,
 /**
  * xsltNumberFormat:
  * @ctxt: the XSLT transformation context
- * @data: the formatting informations
+ * @data: the formatting information
  * @node: the data to format
  *
  * Convert one number.
@@ -898,7 +898,7 @@ xsltFormatNumberPreSuffix(xsltDecimalFormatPtr self, xmlChar **format, xsltForma
  * @self: the decimal format
  * @format: the format requested
  * @number: the value to format
- * @result: the place to ouput the result
+ * @result: the place to output the result
  *
  * format-number() uses the JDK 1.1 DecimalFormat class:
  *
@@ -1270,14 +1270,13 @@ OUTPUT_NUMBER:
     xmlBufferAdd(buffer, self->minusSign, xmlUTF8Strsize(self->minusSign, 1));
 
     /* Put the prefix into the buffer */
-    for (j = 0; j < prefix_length; j++) {
-    if ((pchar = *prefix++) == SYMBOL_QUOTE) {
+    for (j = 0; j < prefix_length; ) {
+    if (*prefix == SYMBOL_QUOTE)
+            prefix++;
         len = xmlUTF8Strsize(prefix, 1);
         xmlBufferAdd(buffer, prefix, len);
         prefix += len;
-        j += len - 1;   /* length of symbol less length of quote */
-    } else
-        xmlBufferAdd(buffer, &pchar, 1);
+        j += len;
     }
 
     /* Next do the integer part of the number */
