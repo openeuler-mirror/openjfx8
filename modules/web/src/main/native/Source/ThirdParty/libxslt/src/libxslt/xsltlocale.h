@@ -26,7 +26,7 @@
 #include <locale.h>
 #endif
 #ifdef HAVE_XLOCALE_H
-#include <xlocale.h>
+#include <locale.h>
 #endif
 
 typedef locale_t xsltLocale;

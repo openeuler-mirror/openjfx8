@@ -47,7 +47,7 @@
 #include <iostream>
 #include <dlfcn.h>
 #include <signal.h>
-
+#include <sys/wait.h>
 
 PosixPlatform::PosixPlatform(void) {
 }

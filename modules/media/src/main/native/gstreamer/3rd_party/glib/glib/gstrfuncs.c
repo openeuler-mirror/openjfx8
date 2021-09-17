@@ -39,7 +39,7 @@
 
 #ifdef HAVE_XLOCALE_H
 /* Needed on BSD/OS X for e.g. strtod_l */
-#include <xlocale.h>
+#include <locale.h>
 #endif
 
 #ifdef G_OS_WIN32
