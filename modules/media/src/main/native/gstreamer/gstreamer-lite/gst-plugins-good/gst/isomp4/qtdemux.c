@@ -12842,6 +12842,7 @@ qtdemux_reuse_and_configure_stream (GstQTDemux * qtdemux,
  * replacement until we can depend unconditionally on the real one in GLib */
 //disable check for running in low version glib.
 //#if !GLIB_CHECK_VERSION(2,54,0)
+#if defined(LINUX)
 #define g_ptr_array_find_with_equal_func qtdemux_ptr_array_find_with_equal_func
 static gboolean
 qtdemux_ptr_array_find_with_equal_func (GPtrArray * haystack,
@@ -12864,7 +12865,7 @@ qtdemux_ptr_array_find_with_equal_func (GPtrArray * haystack,
 
   return FALSE;
 }
-//#endif
+#endif
 
 static gboolean
 qtdemux_update_streams (GstQTDemux * qtdemux)

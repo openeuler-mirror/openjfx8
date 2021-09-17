@@ -252,9 +252,9 @@ LINUX.prismSW.lib = "prism_sw"
 
 LINUX.launcher = [:]
 LINUX.launcher.compiler = compiler
-LINUX.launcher.ccFlags = ["-fstack-protector-all", "-DJAVAARCH=\"$OS_ARCH\"", "-I$JDK_HOME/include", "-I$JDK_HOME/include/linux", "-c"]
+LINUX.launcher.ccFlags = ["-fstack-protector-all", "-DJAVAARCH=\"$OS_ARCH\"", "-I$JDK_HOME/include", "-I$JDK_HOME/include/linux", "-c", "-fPIE"]
 LINUX.launcher.linker = linker
-LINUX.launcher.linkFlags = ["-z", "relro", "-ldl"]
+LINUX.launcher.linkFlags = ["-z", "relro", "-z", "now", "-pie", "-ldl"]
 if (!IS_64) {
     LINUX.launcher.ccFlags += "-m32"
     LINUX.launcher.linkFlags += "-m32"
@@ -265,7 +265,7 @@ LINUX.launcherlibrary.compiler = compiler
 LINUX.launcherlibrary.ccFlags = ["-fstack-protector-all", "-DJAVAARCH=\"$OS_ARCH\"", "-I$JDK_HOME/include", "-I$JDK_HOME/include/linux", "-c", "-fPIC",
 "-std=gnu++98", "-ffunction-sections", "-fdata-sections"]
 LINUX.launcherlibrary.linker = linker
-LINUX.launcherlibrary.linkFlags = ["-z", "relro", "-ldl", "-lpthread", "-shared", "-static-libgcc", "-lstdc++", "-Wl,--gc-sections"]
+LINUX.launcherlibrary.linkFlags = ["-z", "relro", "-z", "now", "-ldl", "-lpthread", "-shared", "-static-libgcc", "-lstdc++", "-Wl,--gc-sections"]
 if (!IS_64) {
     LINUX.launcherlibrary.ccFlags += "-m32"
     LINUX.launcherlibrary.linkFlags += "-m32"
