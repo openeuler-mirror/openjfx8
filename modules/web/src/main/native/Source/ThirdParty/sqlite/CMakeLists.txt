@@ -22,6 +22,14 @@ set(Sqlite_DEFINES
     "SQLITE_OMIT_TRACE"
 )
 
+if (CMAKE_SYSTEM_NAME MATCHES "Linux")
+if (LOWERCASE_CMAKE_SYSTEM_PROCESSOR MATCHES "^aarch64")
+    set(Sqlite_DEFINES "AARCH64")
+elseif (LOWERCASE_CMAKE_SYSTEM_PROCESSOR MATCHES "(x64|x86_64|amd64)")
+    set(Sqlite_DEFINES "AMD64")
+endif ()
+endif ()
+
 if (WIN32)
     set(Sqlite_COMPILE_FLAGS
         # 'zTrace' unreferenced variable in src/vdbe.c
