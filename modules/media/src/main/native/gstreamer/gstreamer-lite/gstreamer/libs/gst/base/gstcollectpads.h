@@ -137,7 +137,7 @@ typedef enum {
  * @pos: position in the buffer
  * @segment: last segment received.
  * @dts: the signed version of the DTS converted to running time. To access
- *       this memeber, use %GST_COLLECT_PADS_DTS macro. (Since 1.6)
+ *       this member, use %GST_COLLECT_PADS_DTS macro. (Since: 1.6)
  *
  * Structure used by the collect_pads.
  */
@@ -253,7 +253,7 @@ typedef gboolean (*GstCollectPadsQueryFunction)        (GstCollectPads *pads, Gs
  * @pads: a #GstCollectPads
  * @data: a #GstCollectData
  * @inbuffer: (transfer full): the input #GstBuffer
- * @outbuffer: the output #GstBuffer
+ * @outbuffer: (out): the output #GstBuffer
  * @user_data: user data
  *
  * A function that will be called when @inbuffer is received on the pad managed
@@ -431,7 +431,7 @@ void            gst_collect_pads_set_waiting   (GstCollectPads *pads, GstCollect
 /* convenience helper */
 
 GST_BASE_API
-GstFlowReturn   gst_collect_pads_clip_running_time (GstCollectPads * pads,
+GstFlowReturn gst_collect_pads_clip_running_time (GstCollectPads * pads,
                                                     GstCollectData * cdata,
                                                     GstBuffer * buf, GstBuffer ** outbuf,
                                                     gpointer user_data);

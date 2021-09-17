@@ -111,10 +111,6 @@
 GST_DEBUG_CATEGORY (videoencoder_debug);
 #define GST_CAT_DEFAULT videoencoder_debug
 
-#define GST_VIDEO_ENCODER_GET_PRIVATE(obj)  \
-    (G_TYPE_INSTANCE_GET_PRIVATE ((obj), GST_TYPE_VIDEO_ENCODER, \
-        GstVideoEncoderPrivate))
-
 /* properties */
 
 #define DEFAULT_QOS                 FALSE
@@ -211,6 +207,8 @@ forced_key_unit_event_new (GstClockTime running_time, gboolean all_headers,
 }
 
 static GstElementClass *parent_class = NULL;
+static gint private_offset = 0;
+
 static void gst_video_encoder_class_init (GstVideoEncoderClass * klass);
 static void gst_video_encoder_init (GstVideoEncoder * enc,
     GstVideoEncoderClass * klass);
@@ -277,19 +275,31 @@ gst_video_encoder_get_type (void)
       0,
       (GInstanceInitFunc) gst_video_encoder_init,
     };
+#ifndef GSTREAMER_LITE
     const GInterfaceInfo preset_interface_info = {
       NULL,                     /* interface_init */
       NULL,                     /* interface_finalize */
       NULL                      /* interface_data */
     };
+#endif // GSTREAMER_LITE
 
     _type = g_type_register_static (GST_TYPE_ELEMENT,
         "GstVideoEncoder", &info, G_TYPE_FLAG_ABSTRACT);
+    private_offset =
+        g_type_add_instance_private (_type, sizeof (GstVideoEncoderPrivate));
+#ifndef GSTREAMER_LITE
     g_type_add_interface_static (_type, GST_TYPE_PRESET,
         &preset_interface_info);
+#endif // GSTREAMER_LITE
     g_once_init_leave (&type, _type);
   }
   return type;
+}
+
+static inline GstVideoEncoderPrivate *
+gst_video_encoder_get_instance_private (GstVideoEncoder * self)
+{
+  return (G_STRUCT_MEMBER_P (self, private_offset));
 }
 
 static void
@@ -338,7 +348,8 @@ gst_video_encoder_class_init (GstVideoEncoderClass * klass)
 
   parent_class = g_type_class_peek_parent (klass);
 
-  g_type_class_add_private (klass, sizeof (GstVideoEncoderPrivate));
+  if (private_offset != 0)
+    g_type_class_adjust_private_offset (klass, &private_offset);
 
   gobject_class->set_property = gst_video_encoder_set_property;
   gobject_class->get_property = gst_video_encoder_get_property;
@@ -491,7 +502,7 @@ gst_video_encoder_init (GstVideoEncoder * encoder, GstVideoEncoderClass * klass)
 
   GST_DEBUG_OBJECT (encoder, "gst_video_encoder_init");
 
-  priv = encoder->priv = GST_VIDEO_ENCODER_GET_PRIVATE (encoder);
+  priv = encoder->priv = gst_video_encoder_get_instance_private (encoder);
 
   pad_template =
       gst_element_class_get_pad_template (GST_ELEMENT_CLASS (klass), "sink");
@@ -939,6 +950,9 @@ gst_video_encoder_push_event (GstVideoEncoder * encoder, GstEvent * event)
 
       if (encoder->priv->time_adjustment != GST_CLOCK_TIME_NONE) {
         segment.start += encoder->priv->time_adjustment;
+        if (GST_CLOCK_TIME_IS_VALID (segment.position)) {
+          segment.position += encoder->priv->time_adjustment;
+        }
         if (GST_CLOCK_TIME_IS_VALID (segment.stop)) {
           segment.stop += encoder->priv->time_adjustment;
         }
@@ -2287,7 +2301,9 @@ gst_video_encoder_finish_frame (GstVideoEncoder * encoder,
         discont = FALSE;
       }
 
+      GST_VIDEO_ENCODER_STREAM_UNLOCK (encoder);
       gst_pad_push (encoder->srcpad, gst_buffer_ref (tmpbuf));
+      GST_VIDEO_ENCODER_STREAM_LOCK (encoder);
     }
     priv->new_headers = FALSE;
   }
@@ -2325,8 +2341,11 @@ gst_video_encoder_finish_frame (GstVideoEncoder * encoder,
   gst_video_encoder_release_frame (encoder, frame);
   frame = NULL;
 
-  if (ret == GST_FLOW_OK)
+  if (ret == GST_FLOW_OK) {
+    GST_VIDEO_ENCODER_STREAM_UNLOCK (encoder);
     ret = gst_pad_push (encoder->srcpad, buffer);
+    GST_VIDEO_ENCODER_STREAM_LOCK (encoder);
+  }
 
 done:
   /* handed out */
@@ -2496,7 +2515,7 @@ gst_video_encoder_get_oldest_frame (GstVideoEncoder * encoder)
 
 /**
  * gst_video_encoder_get_frame:
- * @encoder: a #GstVideoEnccoder
+ * @encoder: a #GstVideoEncoder
  * @frame_number: system_frame_number of a frame
  *
  * Get a pending unfinished #GstVideoCodecFrame
@@ -2595,7 +2614,7 @@ gst_video_encoder_merge_tags (GstVideoEncoder * encoder,
  * @allocator: (out) (allow-none) (transfer full): the #GstAllocator
  * used
  * @params: (out) (allow-none) (transfer full): the
- * #GstAllocatorParams of @allocator
+ * #GstAllocationParams of @allocator
  *
  * Lets #GstVideoEncoder sub-classes to know the memory @allocator
  * used by the base class and its @params.
@@ -2626,7 +2645,7 @@ gst_video_encoder_get_allocator (GstVideoEncoder * encoder,
  * For streams with reordered frames this can be used to ensure that there
  * is enough time to accomodate first DTS, which may be less than first PTS
  *
- * Since 1.6
+ * Since: 1.6
  */
 void
 gst_video_encoder_set_min_pts (GstVideoEncoder * encoder, GstClockTime min_pts)

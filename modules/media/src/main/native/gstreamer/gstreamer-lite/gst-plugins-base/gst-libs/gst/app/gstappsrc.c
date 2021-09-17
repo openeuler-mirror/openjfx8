@@ -103,9 +103,9 @@
 
 typedef enum
 {
-  NOONE_WAITING,
-  STREAM_WAITING,               /* streaming thread is waiting for application thread */
-  APP_WAITING,                  /* application thread is waiting for streaming thread */
+  NOONE_WAITING = 0,
+  STREAM_WAITING = 1 << 0,      /* streaming thread is waiting for application thread */
+  APP_WAITING = 1 << 1,         /* application thread is waiting for streaming thread */
 } GstAppSrcWaitStatus;
 
 struct _GstAppSrcPrivate
@@ -242,6 +242,7 @@ static guint gst_app_src_signals[LAST_SIGNAL] = { 0 };
 
 #define gst_app_src_parent_class parent_class
 G_DEFINE_TYPE_WITH_CODE (GstAppSrc, gst_app_src, GST_TYPE_BASE_SRC,
+    G_ADD_PRIVATE (GstAppSrc)
     G_IMPLEMENT_INTERFACE (GST_TYPE_URI_HANDLER, gst_app_src_uri_handler_init));
 
 static void
@@ -372,7 +373,7 @@ gst_app_src_class_init (GstAppSrcClass * klass)
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   /**
-   * GstAppSrc::empty-percent:
+   * GstAppSrc::min-percent:
    *
    * Make appsrc emit the "need-data" signal when the amount of bytes in the
    * queue drops below this percentage of max-bytes.
@@ -562,8 +563,6 @@ gst_app_src_class_init (GstAppSrcClass * klass)
   klass->push_buffer_list = gst_app_src_push_buffer_list_action;
   klass->push_sample = gst_app_src_push_sample_action;
   klass->end_of_stream = gst_app_src_end_of_stream;
-
-  g_type_class_add_private (klass, sizeof (GstAppSrcPrivate));
 }
 
 static void
@@ -571,8 +570,7 @@ gst_app_src_init (GstAppSrc * appsrc)
 {
   GstAppSrcPrivate *priv;
 
-  priv = appsrc->priv = G_TYPE_INSTANCE_GET_PRIVATE (appsrc, GST_TYPE_APP_SRC,
-      GstAppSrcPrivate);
+  priv = appsrc->priv = gst_app_src_get_instance_private (appsrc);
 
   g_mutex_init (&priv->mutex);
   g_cond_init (&priv->cond);
@@ -1202,7 +1200,7 @@ gst_app_src_create (GstBaseSrc * bsrc, guint64 offset, guint size,
         }
 
         if (caps_changed)
-        gst_app_src_do_negotiate (bsrc);
+          gst_app_src_do_negotiate (bsrc);
 
         /* Lock has released so now may need
          *- flushing
@@ -1217,7 +1215,7 @@ gst_app_src_create (GstBaseSrc * bsrc, guint64 offset, guint size,
 
       if (GST_IS_BUFFER (obj)) {
         *buf = GST_BUFFER (obj);
-      buf_size = gst_buffer_get_size (*buf);
+        buf_size = gst_buffer_get_size (*buf);
         GST_LOG_OBJECT (appsrc, "have buffer %p of size %u", *buf, buf_size);
       } else {
         GstBufferList *buffer_list;
@@ -1242,10 +1240,10 @@ gst_app_src_create (GstBaseSrc * bsrc, guint64 offset, guint size,
         priv->offset += buf_size;
 
       /* signal that we removed an item */
-      if (priv->wait_status == APP_WAITING)
-      g_cond_broadcast (&priv->cond);
+      if ((priv->wait_status & APP_WAITING))
+        g_cond_broadcast (&priv->cond);
 
-      /* see if we go lower than the empty-percent */
+      /* see if we go lower than the min-percent */
       if (priv->min_percent && priv->max_bytes) {
         if (priv->queued_bytes * 100 / priv->max_bytes <= priv->min_percent)
           /* ignore flushing state, we got a buffer and we will return it now.
@@ -1277,9 +1275,9 @@ gst_app_src_create (GstBaseSrc * bsrc, guint64 offset, guint size,
       goto eos;
 
     /* nothing to return, wait a while for new data or flushing. */
-    priv->wait_status = STREAM_WAITING;
+    priv->wait_status |= STREAM_WAITING;
     g_cond_wait (&priv->cond, &priv->mutex);
-    priv->wait_status = NOONE_WAITING;
+    priv->wait_status &= ~STREAM_WAITING;
   }
   g_mutex_unlock (&priv->mutex);
   return ret;
@@ -1341,11 +1339,11 @@ gst_app_src_set_caps (GstAppSrc * appsrc, const GstCaps * caps)
     gpointer t;
 
     new_caps = caps ? gst_caps_copy (caps) : NULL;
-  GST_DEBUG_OBJECT (appsrc, "setting caps to %" GST_PTR_FORMAT, caps);
+    GST_DEBUG_OBJECT (appsrc, "setting caps to %" GST_PTR_FORMAT, caps);
 
     while ((t = gst_queue_array_peek_tail (priv->queue)) && GST_IS_CAPS (t)) {
       gst_caps_unref (gst_queue_array_pop_tail (priv->queue));
-  }
+    }
     gst_queue_array_push_tail (priv->queue, new_caps);
     gst_caps_replace (&priv->last_caps, new_caps);
   }
@@ -1840,9 +1838,9 @@ gst_app_src_push_internal (GstAppSrc * appsrc, GstBuffer * buffer,
         GST_DEBUG_OBJECT (appsrc, "waiting for free space");
         /* we are filled, wait until a buffer gets popped or when we
          * flush. */
-        priv->wait_status = APP_WAITING;
+        priv->wait_status |= APP_WAITING;
         g_cond_wait (&priv->cond, &priv->mutex);
-        priv->wait_status = NOONE_WAITING;
+        priv->wait_status &= ~APP_WAITING;
       } else {
         /* no need to wait for free space, we just pump more data into the
          * queue hoping that the caller reacts to the enough-data signal and
@@ -1860,15 +1858,15 @@ gst_app_src_push_internal (GstAppSrc * appsrc, GstBuffer * buffer,
     gst_queue_array_push_tail (priv->queue, buflist);
     priv->queued_bytes += gst_buffer_list_calculate_size (buflist);
   } else {
-  GST_DEBUG_OBJECT (appsrc, "queueing buffer %p", buffer);
-  if (!steal_ref)
-    gst_buffer_ref (buffer);
+    GST_DEBUG_OBJECT (appsrc, "queueing buffer %p", buffer);
+    if (!steal_ref)
+      gst_buffer_ref (buffer);
     gst_queue_array_push_tail (priv->queue, buffer);
-  priv->queued_bytes += gst_buffer_get_size (buffer);
+    priv->queued_bytes += gst_buffer_get_size (buffer);
   }
 
-  if (priv->wait_status == STREAM_WAITING)
-  g_cond_broadcast (&priv->cond);
+  if ((priv->wait_status & STREAM_WAITING))
+    g_cond_broadcast (&priv->cond);
 
   g_mutex_unlock (&priv->mutex);
 
@@ -1983,6 +1981,9 @@ gst_app_src_push_buffer_list (GstAppSrc * appsrc, GstBufferList * buffer_list)
  * buffers that the appsrc element will push to its source pad. Any
  * previous caps that were set on appsrc will be replaced by the caps
  * associated with the sample if not equal.
+ *
+ * This function does not take ownership of the
+ * sample so the sample needs to be unreffed after calling this function.
  *
  * When the block property is TRUE, this function can block until free
  * space becomes available in the queue.

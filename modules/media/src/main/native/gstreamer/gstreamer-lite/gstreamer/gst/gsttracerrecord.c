@@ -76,8 +76,8 @@ build_field_template (GQuark field_id, const GValue * value, gpointer user_data)
   }
 
   sub = gst_value_get_structure (value);
-//AMTODO  gst_structure_get (sub, "type", G_TYPE_GTYPE, &type, "flags",
-//AMTODO      GST_TYPE_TRACER_VALUE_FLAGS, &flags, NULL);
+  gst_structure_get (sub, "type", G_TYPE_GTYPE, &type, "flags",
+      GST_TYPE_TRACER_VALUE_FLAGS, &flags, NULL);
 
   if (flags & GST_TRACER_VALUE_FLAGS_OPTIONAL) {
     gchar *opt_name = g_strconcat ("have-", g_quark_to_string (field_id), NULL);
@@ -208,6 +208,7 @@ gst_tracer_record_new (const gchar * name, const gchar * firstfield, ...)
     G_VALUE_COLLECT_INIT (&val, type, varargs, G_VALUE_NOCOPY_CONTENTS, &err);
     if (G_UNLIKELY (err)) {
       g_critical ("%s", err);
+      g_free (err);
       break;
     }
     /* see boxed_proxy_collect_value */

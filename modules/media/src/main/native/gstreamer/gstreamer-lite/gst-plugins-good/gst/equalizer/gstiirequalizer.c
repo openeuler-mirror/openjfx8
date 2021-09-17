@@ -65,12 +65,20 @@ static void update_coefficients (GstIirEqualizer * equ);
     " channels=(int)[1,MAX],"                                     \
     " layout=(string)interleaved"
 
+#ifndef GSTREAMER_LITE
 #define gst_iir_equalizer_parent_class parent_class
 G_DEFINE_TYPE_WITH_CODE (GstIirEqualizer, gst_iir_equalizer,
     GST_TYPE_AUDIO_FILTER,
     G_IMPLEMENT_INTERFACE (GST_TYPE_CHILD_PROXY,
         gst_iir_equalizer_child_proxy_interface_init)
     G_IMPLEMENT_INTERFACE (GST_TYPE_PRESET, NULL));
+#else // GSTREAMER_LITE
+#define gst_iir_equalizer_parent_class parent_class
+G_DEFINE_TYPE_WITH_CODE (GstIirEqualizer, gst_iir_equalizer,
+    GST_TYPE_AUDIO_FILTER,
+    G_IMPLEMENT_INTERFACE (GST_TYPE_CHILD_PROXY,
+        gst_iir_equalizer_child_proxy_interface_init));
+#endif // GSTREAMER_LITE
 
 
 /* child object */
@@ -334,7 +342,7 @@ gst_iir_equalizer_band_get_type (void)
         g_type_register_static (GST_TYPE_OBJECT, "GstIirEqualizerBand",
         &type_info, 0);
 #ifdef GSTREAMER_LITE
-     }
+  }
      G_UNLOCK(type_init_mutex);
 #endif // GSTREAMER_LITE
   }
@@ -905,20 +913,20 @@ gst_iir_equalizer_setup (GstAudioFilter * audio, const GstAudioInfo * info)
 
   switch (GST_AUDIO_INFO_FORMAT (info)) {
     case GST_AUDIO_FORMAT_S16:
-          equ->history_size = history_size_gint16;
-          equ->process = gst_iir_equ_process_gint16;
-          break;
+      equ->history_size = history_size_gint16;
+      equ->process = gst_iir_equ_process_gint16;
+      break;
     case GST_AUDIO_FORMAT_F32:
-          equ->history_size = history_size_gfloat;
-          equ->process = gst_iir_equ_process_gfloat;
-          break;
+      equ->history_size = history_size_gfloat;
+      equ->process = gst_iir_equ_process_gfloat;
+      break;
     case GST_AUDIO_FORMAT_F64:
-          equ->history_size = history_size_gdouble;
-          equ->process = gst_iir_equ_process_gdouble;
-          break;
-        default:
-          return FALSE;
-      }
+      equ->history_size = history_size_gdouble;
+      equ->process = gst_iir_equ_process_gdouble;
+      break;
+    default:
+      return FALSE;
+  }
 
   alloc_history (equ, info);
   return TRUE;

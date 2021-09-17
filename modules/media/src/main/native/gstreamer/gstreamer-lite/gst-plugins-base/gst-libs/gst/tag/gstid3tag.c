@@ -252,7 +252,7 @@ gst_tag_extract_id3v1_string (GstTagList * list, const gchar * tag,
 
 /**
  * gst_tag_list_new_from_id3v1:
- * @data: 128 bytes of data containing the ID3v1 tag
+ * @data: (array fixed-size=128): 128 bytes of data containing the ID3v1 tag
  *
  * Parses the data containing an ID3v1 tag and returns a #GstTagList from the
  * parsed data.
@@ -262,7 +262,7 @@ gst_tag_extract_id3v1_string (GstTagList * list, const gchar * tag,
 GstTagList *
 gst_tag_list_new_from_id3v1 (const guint8 * data)
 {
-  guint year;
+  gint64 year;
   gchar *ystr;
   GstTagList *list;
 
@@ -275,9 +275,9 @@ gst_tag_list_new_from_id3v1 (const guint8 * data)
   gst_tag_extract_id3v1_string (list, GST_TAG_ARTIST, (gchar *) & data[33], 30);
   gst_tag_extract_id3v1_string (list, GST_TAG_ALBUM, (gchar *) & data[63], 30);
   ystr = g_strndup ((gchar *) & data[93], 4);
-  year = strtoul (ystr, NULL, 10);
+  year = g_ascii_strtoll (ystr, NULL, 10);
   g_free (ystr);
-  if (year > 0) {
+  if (year > 0 && year <= 9999) {
     GstDateTime *dt = gst_date_time_new_y (year);
 
     gst_tag_list_add (list, GST_TAG_MERGE_REPLACE, GST_TAG_DATE_TIME, dt, NULL);
@@ -337,7 +337,7 @@ gst_tag_id3_genre_get (const guint id)
 /**
  * gst_tag_list_add_id3_image:
  * @tag_list: a tag list
- * @image_data: the (encoded) image
+ * @image_data: (array length=image_data_len): the (encoded) image
  * @image_data_len: the length of the encoded image data at @image_data
  * @id3_picture_type: picture type as per the ID3 (v2.4.0) specification for
  *    the APIC frame (0 = unknown/other)

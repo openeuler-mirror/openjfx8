@@ -189,12 +189,14 @@ check_valid_channel_positions (const GstAudioChannelPosition * position,
  * @size: The size of the memory.
  * @format: The %GstAudioFormat of the buffer.
  * @channels: The number of channels.
- * @from: (array): The channel positions in the buffer.
- * @to: (array): The channel positions to convert to.
+ * @from: (array length=channels): The channel positions in the buffer.
+ * @to: (array length=channels): The channel positions to convert to.
  *
  * Reorders @data from the channel positions @from to the channel
  * positions @to. @from and @to must contain the same number of
  * positions and the same positions, only in a different order.
+ *
+ * Note: this function assumes the audio data is in interleaved layout
  *
  * Returns: %TRUE if the reordering was possible.
  */
@@ -248,13 +250,38 @@ gst_audio_reorder_channels (gpointer data, gsize size, GstAudioFormat format,
   return TRUE;
 }
 
+static gboolean
+gst_audio_meta_reorder_channels (GstAudioMeta * meta,
+    const GstAudioChannelPosition * from, const GstAudioChannelPosition * to)
+{
+  gint reorder_map[64] = { 0, };
+  gsize tmp_offsets[64] = { 0, };
+  gint i;
+
+  g_return_val_if_fail (meta, FALSE);
+  g_return_val_if_fail (meta->info.channels > 0, FALSE);
+  g_return_val_if_fail (meta->info.channels <= 64, FALSE);
+  g_return_val_if_fail (meta->offsets != NULL, FALSE);
+
+  if (!gst_audio_get_channel_reorder_map (meta->info.channels, from, to,
+          reorder_map))
+    return FALSE;
+
+  memcpy (tmp_offsets, meta->offsets, meta->info.channels * sizeof (gsize));
+  for (i = 0; i < meta->info.channels; i++) {
+    meta->offsets[reorder_map[i]] = tmp_offsets[i];
+  }
+
+  return TRUE;
+}
+
 /**
  * gst_audio_buffer_reorder_channels:
  * @buffer: The buffer to reorder.
  * @format: The %GstAudioFormat of the buffer.
  * @channels: The number of channels.
- * @from: (array): The channel positions in the buffer.
- * @to: (array): The channel positions to convert to.
+ * @from: (array length=channels): The channel positions in the buffer.
+ * @to: (array length=channels): The channel positions to convert to.
  *
  * Reorders @buffer from the channel positions @from to the channel
  * positions @to. @from and @to must contain the same number of
@@ -269,7 +296,8 @@ gst_audio_buffer_reorder_channels (GstBuffer * buffer,
     const GstAudioChannelPosition * from, const GstAudioChannelPosition * to)
 {
   GstMapInfo info;
-  gboolean ret;
+  GstAudioMeta *meta;
+  gboolean ret = TRUE;
 
   g_return_val_if_fail (GST_IS_BUFFER (buffer), FALSE);
   g_return_val_if_fail (gst_buffer_is_writable (buffer), FALSE);
@@ -277,15 +305,20 @@ gst_audio_buffer_reorder_channels (GstBuffer * buffer,
   if (gst_audio_channel_positions_equal (from, to, channels))
     return TRUE;
 
-  if (!gst_buffer_map (buffer, &info, GST_MAP_READWRITE))
-    return FALSE;
+  meta = gst_buffer_get_audio_meta (buffer);
+  if (meta && meta->info.layout == GST_AUDIO_LAYOUT_NON_INTERLEAVED) {
+    g_return_val_if_fail (channels == meta->info.channels, FALSE);
 
-  ret =
-      gst_audio_reorder_channels (info.data, info.size, format, channels, from,
-      to);
+    ret = gst_audio_meta_reorder_channels (meta, from, to);
+  } else {
+    if (!gst_buffer_map (buffer, &info, GST_MAP_READWRITE))
+      return FALSE;
 
-  gst_buffer_unmap (buffer, &info);
+    ret = gst_audio_reorder_channels (info.data, info.size, format, channels,
+        from, to);
 
+    gst_buffer_unmap (buffer, &info);
+  }
   return ret;
 }
 
@@ -390,15 +423,15 @@ no_channel_mask:
     GST_ERROR ("no channel-mask property given");
     return FALSE;
   }
-  }
+}
 
 
 /**
  * gst_audio_get_channel_reorder_map:
  * @channels: The number of channels.
- * @from: (array): The channel positions to reorder from.
- * @to: (array): The channel positions to reorder to.
- * @reorder_map: (array): Pointer to the reorder map.
+ * @from: (array length=channels): The channel positions to reorder from.
+ * @to: (array length=channels): The channel positions to reorder to.
+ * @reorder_map: (array length=channels): Pointer to the reorder map.
  *
  * Returns a reorder map for @from to @to that can be used in
  * custom channel reordering code, e.g. to convert from or to the
@@ -642,7 +675,7 @@ position_to_string (GstAudioChannelPosition pos)
  * Returns: (transfer full): a newly allocated string representing
  * @position
  *
- * Since 1.10
+ * Since: 1.10
  */
 gchar *
 gst_audio_channel_positions_to_string (const GstAudioChannelPosition * position,

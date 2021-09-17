@@ -33,6 +33,9 @@
  * implementations.
  *
  */
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 
 #include <string.h>
 
@@ -295,8 +298,8 @@ gst_audio_ring_buffer_parse_caps (GstAudioRingBufferSpec * spec, GstCaps * caps)
     gst_structure_get_int (structure, "channels", &info.channels);
     if (!g_strcmp0 (gst_structure_get_string (structure, "stream-format"),
             "adts"))
-    spec->type = (i == 2) ? GST_AUDIO_RING_BUFFER_FORMAT_TYPE_MPEG2_AAC :
-        GST_AUDIO_RING_BUFFER_FORMAT_TYPE_MPEG4_AAC;
+      spec->type = (i == 2) ? GST_AUDIO_RING_BUFFER_FORMAT_TYPE_MPEG2_AAC :
+          GST_AUDIO_RING_BUFFER_FORMAT_TYPE_MPEG4_AAC;
     else
       spec->type = (i == 2) ?
           GST_AUDIO_RING_BUFFER_FORMAT_TYPE_MPEG2_AAC_RAW :
@@ -352,7 +355,7 @@ parse_error:
  * @src_fmt: the source format
  * @src_val: the source value
  * @dest_fmt: the destination format
- * @dest_val: a location to store the converted value
+ * @dest_val: (out): a location to store the converted value
  *
  * Convert @src_val in @src_fmt to the equivalent value in @dest_fmt. The result
  * will be put in @dest_val.
@@ -426,7 +429,7 @@ gst_audio_ring_buffer_set_callback_full (GstAudioRingBuffer * buf,
 
   if (old_notify) {
     old_notify (old_data);
-}
+  }
 }
 
 
@@ -1418,91 +1421,91 @@ G_STMT_START {                                  \
   }                                             \
 } G_STMT_END
 
-#define FWD_SAMPLES(s,se,d,de,F)            \
-G_STMT_START {                  \
-  /* no rate conversion */          \
-  guint towrite = MIN (se + bpf - s, de - d);   \
-  /* simple copy */             \
-  if (!skip)                    \
-    F (d, s, towrite);                  \
-  in_samples -= towrite / bpf;          \
-  out_samples -= towrite / bpf;         \
-  s += towrite;                 \
-  GST_DEBUG ("copy %u bytes", towrite);     \
+#define FWD_SAMPLES(s,se,d,de,F)          \
+G_STMT_START {          \
+  /* no rate conversion */      \
+  guint towrite = MIN (se + bpf - s, de - d); \
+  /* simple copy */       \
+  if (!skip)          \
+    F (d, s, towrite);              \
+  in_samples -= towrite / bpf;      \
+  out_samples -= towrite / bpf;     \
+  s += towrite;         \
+  GST_DEBUG ("copy %u bytes", towrite);   \
 } G_STMT_END
 
 /* in_samples >= out_samples, rate > 1.0 */
-#define FWD_UP_SAMPLES(s,se,d,de,F)         \
-G_STMT_START {                  \
-  guint8 *sb = s, *db = d;          \
-  while (s <= se && d < de) {           \
-    if (!skip)                  \
-      F (d, s, bpf);                        \
-    s += bpf;                   \
-    *accum += outr;             \
-    if ((*accum << 1) >= inr) {         \
-      *accum -= inr;                \
-      d += bpf;                 \
-    }                       \
-  }                     \
-  in_samples -= (s - sb)/bpf;           \
-  out_samples -= (d - db)/bpf;          \
+#define FWD_UP_SAMPLES(s,se,d,de,F)     \
+G_STMT_START {          \
+  guint8 *sb = s, *db = d;      \
+  while (s <= se && d < de) {     \
+    if (!skip)          \
+      F (d, s, bpf);                    \
+    s += bpf;         \
+    *accum += outr;       \
+    if ((*accum << 1) >= inr) {     \
+      *accum -= inr;        \
+      d += bpf;         \
+    }           \
+  }           \
+  in_samples -= (s - sb)/bpf;     \
+  out_samples -= (d - db)/bpf;      \
   GST_DEBUG ("fwd_up end %d/%d",*accum,*toprocess); \
 } G_STMT_END
 
 /* out_samples > in_samples, for rates smaller than 1.0 */
-#define FWD_DOWN_SAMPLES(s,se,d,de,F)       \
-G_STMT_START {                  \
-  guint8 *sb = s, *db = d;          \
-  while (s <= se && d < de) {           \
-    if (!skip)                  \
-      F (d, s, bpf);                        \
-    d += bpf;                   \
-    *accum += inr;              \
-    if ((*accum << 1) >= outr) {        \
-      *accum -= outr;               \
-      s += bpf;                 \
-    }                       \
-  }                     \
-  in_samples -= (s - sb)/bpf;           \
-  out_samples -= (d - db)/bpf;          \
-  GST_DEBUG ("fwd_down end %d/%d",*accum,*toprocess);   \
+#define FWD_DOWN_SAMPLES(s,se,d,de,F)     \
+G_STMT_START {          \
+  guint8 *sb = s, *db = d;      \
+  while (s <= se && d < de) {     \
+    if (!skip)          \
+      F (d, s, bpf);                    \
+    d += bpf;         \
+    *accum += inr;        \
+    if ((*accum << 1) >= outr) {    \
+      *accum -= outr;       \
+      s += bpf;         \
+    }           \
+  }           \
+  in_samples -= (s - sb)/bpf;     \
+  out_samples -= (d - db)/bpf;      \
+  GST_DEBUG ("fwd_down end %d/%d",*accum,*toprocess); \
 } G_STMT_END
 
-#define REV_UP_SAMPLES(s,se,d,de,F)         \
-G_STMT_START {                  \
-  guint8 *sb = se, *db = d;         \
-  while (s <= se && d < de) {           \
-    if (!skip)                  \
-      F (d, se, bpf);                       \
-    se -= bpf;                  \
-    *accum += outr;             \
-    while (d < de && (*accum << 1) >= inr) {    \
-      *accum -= inr;                \
-      d += bpf;                 \
-    }                       \
-  }                     \
-  in_samples -= (sb - se)/bpf;          \
-  out_samples -= (d - db)/bpf;          \
+#define REV_UP_SAMPLES(s,se,d,de,F)     \
+G_STMT_START {          \
+  guint8 *sb = se, *db = d;     \
+  while (s <= se && d < de) {     \
+    if (!skip)          \
+      F (d, se, bpf);                     \
+    se -= bpf;          \
+    *accum += outr;       \
+    while (d < de && (*accum << 1) >= inr) {  \
+      *accum -= inr;        \
+      d += bpf;         \
+    }           \
+  }           \
+  in_samples -= (sb - se)/bpf;      \
+  out_samples -= (d - db)/bpf;      \
   GST_DEBUG ("rev_up end %d/%d",*accum,*toprocess); \
 } G_STMT_END
 
-#define REV_DOWN_SAMPLES(s,se,d,de,F)       \
-G_STMT_START {                  \
-  guint8 *sb = se, *db = d;         \
-  while (s <= se && d < de) {           \
-    if (!skip)                  \
-      F (d, se, bpf);                   \
-    d += bpf;                   \
-    *accum += inr;              \
+#define REV_DOWN_SAMPLES(s,se,d,de,F)     \
+G_STMT_START {          \
+  guint8 *sb = se, *db = d;     \
+  while (s <= se && d < de) {     \
+    if (!skip)          \
+      F (d, se, bpf);             \
+    d += bpf;         \
+    *accum += inr;        \
     while (s <= se && (*accum << 1) >= outr) {  \
-      *accum -= outr;               \
-      se -= bpf;                \
-    }                       \
-  }                     \
-  in_samples -= (sb - se)/bpf;          \
-  out_samples -= (d - db)/bpf;          \
-  GST_DEBUG ("rev_down end %d/%d",*accum,*toprocess);   \
+      *accum -= outr;       \
+      se -= bpf;        \
+    }           \
+  }           \
+  in_samples -= (sb - se)/bpf;      \
+  out_samples -= (d - db)/bpf;      \
+  GST_DEBUG ("rev_down end %d/%d",*accum,*toprocess); \
 } G_STMT_END
 
 static guint
@@ -1667,10 +1670,10 @@ not_started:
  * gst_audio_ring_buffer_commit:
  * @buf: the #GstAudioRingBuffer to commit
  * @sample: the sample position of the data
- * @data: the data to commit
+ * @data: (array length=in_samples): the data to commit
  * @in_samples: the number of samples in the data to commit
  * @out_samples: the number of samples to write to the ringbuffer
- * @accum: accumulator for rate conversion.
+ * @accum: (inout): accumulator for rate conversion.
  *
  * Commit @in_samples samples pointed to by @data to the ringbuffer @buf.
  *
@@ -1720,9 +1723,9 @@ gst_audio_ring_buffer_commit (GstAudioRingBuffer * buf, guint64 * sample,
  * gst_audio_ring_buffer_read:
  * @buf: the #GstAudioRingBuffer to read from
  * @sample: the sample position of the data
- * @data: where the data should be read
+ * @data: (array length=len): where the data should be read
  * @len: the number of samples in data to read
- * @timestamp: where the timestamp is returned
+ * @timestamp: (out): where the timestamp is returned
  *
  * Read @len samples from the ringbuffer into the memory pointed
  * to by @data.
@@ -1823,7 +1826,7 @@ gst_audio_ring_buffer_read (GstAudioRingBuffer * buf, guint64 sample,
       /* Reorder from device order to GStreamer order */
       for (i = 0; i < sampleslen; i++) {
         for (j = 0; j < channels; j++) {
-          memcpy (data + reorder_map[j] * bps, ptr + j * bps, bps);
+          memcpy (data + i * bpf + reorder_map[j] * bps, ptr + j * bps, bps);
         }
         ptr += bpf;
       }
@@ -1840,7 +1843,7 @@ gst_audio_ring_buffer_read (GstAudioRingBuffer * buf, guint64 sample,
 
   if (buf->timestamps && timestamp) {
     *timestamp = buf->timestamps[readseg % segtotal];
-    GST_INFO_OBJECT (buf, "Retrieved timestamp %" GST_TIME_FORMAT
+    GST_DEBUG_OBJECT (buf, "Retrieved timestamp %" GST_TIME_FORMAT
         " @ %d", GST_TIME_ARGS (*timestamp), readseg % segtotal);
   }
 
@@ -1857,9 +1860,10 @@ not_started:
 /**
  * gst_audio_ring_buffer_prepare_read:
  * @buf: the #GstAudioRingBuffer to read from
- * @segment: the segment to read
- * @readptr: the pointer to the memory where samples can be read
- * @len: the number of bytes to read
+ * @segment: (out): the segment to read
+ * @readptr: (out) (array length=len):
+ *     the pointer to the memory where samples can be read
+ * @len: (out): the number of bytes to read
  *
  * Returns a pointer to memory where the data from segment @segment
  * can be found. This function is mostly used by subclasses.
@@ -2011,7 +2015,7 @@ position_less_channels (const GstAudioChannelPosition * pos, guint channels)
 /**
  * gst_audio_ring_buffer_set_channel_positions:
  * @buf: the #GstAudioRingBuffer
- * @position: the device channel positions
+ * @position: (array): the device channel positions
  *
  * Tell the ringbuffer about the device's channel positions. This must
  * be called in when the ringbuffer is acquired.
@@ -2080,7 +2084,7 @@ gst_audio_ring_buffer_set_timestamp (GstAudioRingBuffer * buf, gint readseg,
 {
   g_return_if_fail (GST_IS_AUDIO_RING_BUFFER (buf));
 
-  GST_INFO_OBJECT (buf, "Storing timestamp %" GST_TIME_FORMAT
+  GST_DEBUG_OBJECT (buf, "Storing timestamp %" GST_TIME_FORMAT
       " @ %d", GST_TIME_ARGS (timestamp), readseg);
 
   GST_OBJECT_LOCK (buf);
