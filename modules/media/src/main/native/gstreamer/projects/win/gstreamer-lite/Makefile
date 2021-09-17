@@ -30,6 +30,9 @@ SYSTEM_LIBS = glib-lite.lib \
               DSound.lib
 
 LDFLAGS = -out:$(shell cygpath -ma $(TARGET)) -nologo -incremental:no -libpath:$(shell cygpath -ma $(BUILD_DIR)) -dll $(SYSTEM_LIBS) \
+          -libpath:$(LIBPATH1) \
+          -libpath:$(LIBPATH2) \
+          -libpath:$(LIBPATH3) \
           -manifest -manifestfile:$(MANIFEST) -manifestuac:"level='asInvoker' uiAccess='false'" \
           -subsystem:windows -tlbid:1 -dynamicbase -nxcompat -errorreport:queue -implib:$(IMPLIB) \
           -def:$(DEF_DIR)/gstreamer-lite.def

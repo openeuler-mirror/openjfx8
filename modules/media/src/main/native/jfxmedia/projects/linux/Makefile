@@ -42,9 +42,9 @@ ifdef HOST_COMPILE
                   -Wformat \
                   -Wextra \
                   -Wformat-security \
-                  -fstack-protector \
                   -Werror=implicit-function-declaration \
 		  -msse2 \
+                  -fPIC -fstack-protector-all  \
 	          -DGSTREAMER_LITE
 
 	INCLUDES = $(BASE_INCLUDES) \
@@ -58,8 +58,7 @@ ifdef HOST_COMPILE
 	           -I$(GLIB_LITE_DIR)/gmodule
 
 	LDFLAGS = -Wl,-rpath,\$$ORIGIN -L$(BUILD_DIR) -lgstreamer-lite -lglib-lite \
-            -z relro \
-            -static-libgcc -static-libstdc++ -Wl,--gc-sections
+            -static-libgcc -static-libstdc++ -Wl,--gc-sections,-z,relro,-z,now,-z,noexecstack
 else
 	CFLAGS += $(EXTRA_CFLAGS)
 	INCLUDES = $(BASE_INCLUDES)

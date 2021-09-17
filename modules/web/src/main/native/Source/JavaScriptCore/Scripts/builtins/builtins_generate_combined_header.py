@@ -55,7 +55,7 @@ class BuiltinsCombinedHeaderGenerator(BuiltinsGenerator):
         sections.append(Template(Templates.HeaderIncludeGuard).substitute(args))
         sections.append(self.generate_forward_declarations())
         sections.append(Template(Templates.NamespaceTop).substitute(args))
-        for object in self.model().objects:
+        for object in sorted(self.model().objects,key=lambda object: object.object_name):
             sections.append(self.generate_section_for_object(object))
         sections.append(self.generate_section_for_code_table_macro())
         sections.append(self.generate_section_for_code_name_macro())
@@ -84,7 +84,7 @@ enum class ConstructAbility : unsigned;
     def generate_externs_for_object(self, object):
         lines = []
 
-        for function in object.functions:
+        for function in sorted(object.functions,key=lambda function:function.function_name):
             function_args = {
                 'codeName': BuiltinsGenerator.mangledNameForFunction(function) + 'Code',
             }
@@ -103,7 +103,8 @@ extern const JSC::ConstructAbility s_%(codeName)sConstructAbility;""" % function
 
         lines = []
         lines.append("#define %(macroPrefix)s_FOREACH_%(objectMacro)s_BUILTIN_DATA(macro) \\" % args)
-        for function in object.functions:
+
+        for function in sorted(object.functions,key=lambda function:function.function_name):
             function_args = {
                 'funcName': function.function_name,
                 'mangledName': BuiltinsGenerator.mangledNameForFunction(function),

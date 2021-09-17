@@ -24,9 +24,9 @@ CFLAGS = -fPIC                   \
          -Wextra                 \
          -Wformat-security       \
          -Werror=implicit-function-declaration \
-         -fstack-protector       \
          -msse2                  \
          -fbuiltin               \
+         -fstack-protector-all	 \
          -DHAVE_STDINT_H         \
          -DLINUX                 \
          -DENABLE_PULL_MODE      \
@@ -54,8 +54,7 @@ INCLUDES = -I$(SRCBASE_DIR) \
            -I$(GLIB_DIR)/gmodule
 
 LDFLAGS = -L$(BUILD_DIR) -lgstreamer-lite -lglib-lite \
-          -z relro \
-          -static-libgcc -static-libstdc++ -Wl,--gc-sections
+          -static-libgcc -static-libstdc++ -Wl,--gc-sections,-z,relro,-z,now,-z,noexecstack
 
 ifeq ($(ARCH), x32)
     CFLAGS += -m32

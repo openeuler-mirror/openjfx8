@@ -351,7 +351,7 @@ defineProperty("BUILD_SRC_ZIP", "false")
 ext.IS_BUILD_SRC_ZIP = Boolean.parseBoolean(BUILD_SRC_ZIP)
 
 // Specifies whether to run full tests (true) or smoke tests (false)
-defineProperty("FULL_TEST", "false")
+defineProperty("FULL_TEST", "true")
 ext.IS_FULL_TEST = Boolean.parseBoolean(FULL_TEST);
 
 // Specifies whether to run robot-based visual tests (only used when FULL_TEST is also enabled)
@@ -367,7 +367,7 @@ defineProperty("AWT_TEST", "true")
 ext.IS_AWT_TEST = Boolean.parseBoolean(AWT_TEST);
 
 // Specify the build configuration (Release, Debug, or DebugNative)
-defineProperty("CONF", "Debug")
+defineProperty("CONF", "Release")
 ext.IS_DEBUG_JAVA = CONF == "Debug" || CONF == "DebugNative"
 ext.IS_DEBUG_NATIVE = CONF == "DebugNative"
 
@@ -1246,7 +1246,7 @@ project(":base") {
     // We need to take the VersionInfo.java file and replace the various
     // properties within it
     def replacements = [
-        "BUILD_TIMESTAMP": new java.util.Date(),
+        "BUILD_TIMESTAMP": "Mon Mar 25 23:51:34 CST 2019",
         "HUDSON_JOB_NAME": HUDSON_JOB_NAME,
         "HUDSON_BUILD_NUMBER": HUDSON_BUILD_NUMBER,
         "PROMOTED_BUILD_NUMBER": PROMOTED_BUILD_NUMBER,
@@ -1996,7 +1996,11 @@ project(":fxpackager") {
             doLast {
                 mkdir "$buildDir/javapackager"
                 exec({
-                    commandLine("$WIN.fxpackager.linker", "/nologo", "/opt:REF", "/incremental:no", "/manifest", "kernel32.lib", "advapi32.lib",
+                    commandLine("$WIN.fxpackager.linker",
+                            IS_64 ? "/LIBPATH:$WIN.WINDOWS_KITS_LIBDIR/um/x64/" : "/LIBPATH:$WIN.WINDOWS_KITS_LIBDIR/um/x86/",
+                            IS_64 ? "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/lib/x64/" : "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/lib/x86/",
+                            IS_64 ? "/LIBPATH:$WIN.WINDOWS_KITS_LIBDIR/ucrt/x64/" : "/LIBPATH:$WIN.WINDOWS_KITS_LIBDIR/ucrt/x86/",
+                            "/nologo", "/opt:REF", "/incremental:no", "/manifest", "kernel32.lib", "advapi32.lib",
                             "/out:$buildDir/native/javapackager/javapackager.exe",
                             "$buildDir/native/javapackager/javapackager.obj",
                             "$buildDir/native/javapackager/javapackager.res")
@@ -2320,7 +2324,7 @@ project(":media") {
 
                             String sdkDir = System.getenv("BASECLASSES_SDK_DIR");
                             if (sdkDir == null) {
-                                sdkDir = "C:/Program Files/Microsoft SDKs/Windows/v7.1" // Default value
+                                sdkDir = "D:/buildtools/MicrosoftSDKs/Windows/v7.1" // Default value
                                 winEnv["BASECLASSES_SDK_DIR"] = sdkDir
                             }
                             environment(winEnv)
@@ -3129,7 +3133,7 @@ compileTargets { t ->
                             from ("modules/media/build/native/${t.name}/${mediaBuildType}/${library(name)}") }
                     } else if (t.name == "linux") {
                         from("modules/media/build/native/${t.name}/${mediaBuildType}") { include "libavplugin*.so" }
-                    }
+                    } else from ("modules/media/build/native/${t.name}/${mediaBuildType}/${library("glib-lite")}")
                 } else {
                     if (t.name != "android" && t.name != "dalvik" ) {
                         [ "fxplugins", "glib-lite", "gstreamer-lite", "jfxmedia" ].each { name ->

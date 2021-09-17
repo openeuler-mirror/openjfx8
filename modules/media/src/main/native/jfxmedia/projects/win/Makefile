@@ -44,9 +44,14 @@ INCLUDES = $(BASE_INCLUDES) \
            -I$(GSTREAMER_LITE_DIR)/gstreamer \
            -I$(GSTREAMER_LITE_DIR)/gst-plugins-base/gst-libs \
            -I$(GSTREAMER_LITE_DIR)/gst-plugins-base/win32/common \
-           -I$(GSTREAMER_LITE_DIR)/gstreamer/libs
+           -I$(GSTREAMER_LITE_DIR)/gstreamer/libs \
+           -I$(INCLUDE1) \
+           -I$(INCLUDE2) \
+           -I$(INCLUDE3) \
+           -I$(INCLUDE4)
 
 CFLAGS = -DWIN32 \
+         -GS    \
          -D_WINDOWS \
          -D_USRDLL \
          -DJFXMEDIA_JNI_EXPORTS \
@@ -77,6 +82,9 @@ MANIFEST = $(shell cygpath -ma "$(BUILD_DIR)/$(BASE_NAME).manifest")
 PDB      = $(shell cygpath -ma "$(BUILD_DIR)/$(BASE_NAME).pdb")
 
 LDFLAGS = -dll -out:$(shell cygpath -ma $(TARGET)) -incremental:no -nologo -libpath:$(shell cygpath -ma $(BUILD_DIR)) $(LIBS) \
+          -libpath:$(LIBPATH1) \
+          -libpath:$(LIBPATH2) \
+          -libpath:$(LIBPATH3) \
           -manifest -manifestfile:$(MANIFEST) -manifestuac:"level='asInvoker' uiAccess='false'" \
           -subsystem:windows -dynamicbase -nxcompat -errorreport:queue
 

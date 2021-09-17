@@ -297,7 +297,7 @@ set(JFXWebKit_OUTPUT_NAME "jfxwebkit")
 set(JFXWebKit_LIBRARY_TYPE SHARED)
 
 if (MSVC)
-    set_source_files_properties(${WEBKIT_LEGACY_FILES} PROPERTIES COMPILE_FLAGS "/FI config.h")
+    set_source_files_properties(${WEBKIT_LEGACY_FILES} PROPERTIES COMPILE_FLAGS "/FI /GS config.h")
 else ()
     set_source_files_properties(${WEBKIT_LEGACY_FILES} PROPERTIES COMPILE_FLAGS "-include config.h")
 endif()
