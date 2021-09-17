@@ -138,12 +138,8 @@ extern HMODULE _priv_gst_dll_handle;
 #include <link.h>
 #include <dlfcn.h>
 
-// For libav (libavcodec.so)
-static const int AVCODEC_LIBAV_EXPLICIT_VERSIONS[] = { 53, 54, 55, 56 };
-// For ffmpeg (libavcodec-ffmpeg.so)
-static const int AVCODEC_FFMPEG_EXPLICIT_VERSIONS[] = { 56 };
 // For libav or ffmpeg (libavcodec.so)
-static const int AVCODEC_EXPLICIT_VERSIONS[] = { 57 };
+static const int AVCODEC_EXPLICIT_VERSIONS[] = { 58 };
 
 /*
  * Callback passed to dl_iterate_phdr(): finds the path of
@@ -1430,38 +1426,7 @@ gst_registry_scan_path_level (GstRegistryScanContext * context,
           dlclose(avcHandle);
           avcHandle = NULL;
         }
-      }
-
-      // Look for libavcodec-ffmpeg. For 56 only
-      if (avcHandle == NULL) {
-        vi = (sizeof(AVCODEC_FFMPEG_EXPLICIT_VERSIONS)/sizeof(AVCODEC_FFMPEG_EXPLICIT_VERSIONS[0]));
-        while(!avcHandle && --vi >= 0) {
-          int version = AVCODEC_FFMPEG_EXPLICIT_VERSIONS[vi];
-          gchar* libname = g_strdup_printf("libavcodec-ffmpeg.so.%d", version);
-          avcHandle = dlopen(libname, RTLD_NOW);
-          g_free(libname);
-        }
-
-        if (avcHandle) {
-          plugin_version = AVCODEC_FFMPEG_EXPLICIT_VERSIONS[vi];
-          isAVCFFMPEG = TRUE;
-        }
-      }
-
-      // Looks for libav 56 and below
-      if (avcHandle == NULL) {
-        vi = (sizeof(AVCODEC_LIBAV_EXPLICIT_VERSIONS)/sizeof(AVCODEC_LIBAV_EXPLICIT_VERSIONS[0]));
-        while(!avcHandle && --vi >= 0) {
-          int version = AVCODEC_LIBAV_EXPLICIT_VERSIONS[vi];
-          gchar* libname = g_strdup_printf("libavcodec.so.%d", version);
-          avcHandle = dlopen(libname, RTLD_NOW);
-          g_free(libname);
-        }
-
-        if (avcHandle) {
-          plugin_version = AVCODEC_LIBAV_EXPLICIT_VERSIONS[vi];
-        }
-      }
+      }      
 
       if (avcHandle) {
         dlclose(avcHandle);
