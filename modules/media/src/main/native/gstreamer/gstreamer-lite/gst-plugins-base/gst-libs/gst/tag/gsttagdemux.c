@@ -167,6 +167,7 @@ static void gst_tag_demux_class_init (gpointer g_class, gpointer d);
 static void gst_tag_demux_init (GstTagDemux * obj, GstTagDemuxClass * klass);
 
 static gpointer parent_class;   /* NULL */
+static gint private_offset = 0;
 
 /* Cannot use boilerplate macros here because we want the abstract flag */
 GType
@@ -189,9 +190,18 @@ gst_tag_demux_get_type (void)
 
     object_type = g_type_register_static (GST_TYPE_ELEMENT,
         "GstTagDemux", &object_info, G_TYPE_FLAG_ABSTRACT);
+
+    private_offset =
+        g_type_add_instance_private (object_type, sizeof (GstTagDemuxPrivate));
   }
 
   return object_type;
+}
+
+static inline GstTagDemuxPrivate *
+gst_tag_demux_get_instance_private (GstTagDemux * self)
+{
+  return (G_STRUCT_MEMBER_P (self, private_offset));
 }
 
 static void
@@ -218,7 +228,8 @@ gst_tag_demux_class_init (gpointer klass, gpointer d)
 
   element_class->change_state = GST_DEBUG_FUNCPTR (gst_tag_demux_change_state);
 
-  g_type_class_add_private (klass, sizeof (GstTagDemuxPrivate));
+  if (private_offset != 0)
+    g_type_class_adjust_private_offset (klass, &private_offset);
 
   /* subclasses must set at least one of these */
   tagdemux_class->min_start_size = 0;
@@ -267,8 +278,7 @@ gst_tag_demux_init (GstTagDemux * demux, GstTagDemuxClass * gclass)
   GstElementClass *element_klass = GST_ELEMENT_CLASS (gclass);
   GstPadTemplate *tmpl;
 
-  demux->priv = g_type_instance_get_private ((GTypeInstance *) demux,
-      GST_TYPE_TAG_DEMUX);
+  demux->priv = gst_tag_demux_get_instance_private (demux);
 
   /* sink pad */
   tmpl = gst_element_class_get_pad_template (element_klass, "sink");
@@ -329,37 +339,26 @@ gst_tag_demux_set_src_caps (GstTagDemux * tagdemux, GstCaps * new_caps)
 
   if (old_caps == NULL || !gst_caps_is_equal (new_caps, old_caps)) {
     GstEvent *event;
-    guint group_id;
-    gboolean have_group_id;
-    gchar *stream_id = gst_pad_create_stream_id (tagdemux->priv->srcpad,
-        GST_ELEMENT_CAST (tagdemux), NULL);
 
     gst_caps_replace (&tagdemux->priv->src_caps, new_caps);
 
-      GST_DEBUG_OBJECT (tagdemux, "Changing src pad caps to %" GST_PTR_FORMAT,
-          tagdemux->priv->src_caps);
+    GST_DEBUG_OBJECT (tagdemux, "Changing src pad caps to %" GST_PTR_FORMAT,
+        tagdemux->priv->src_caps);
 
     event =
         gst_pad_get_sticky_event (tagdemux->priv->sinkpad,
         GST_EVENT_STREAM_START, 0);
-    if (event) {
-      if (gst_event_parse_group_id (event, &group_id))
-        have_group_id = TRUE;
-      else
-        have_group_id = FALSE;
-      gst_event_unref (event);
-  } else {
-      have_group_id = TRUE;
-      group_id = gst_util_group_id_next ();
-  }
-
-    event = gst_event_new_stream_start (stream_id);
-    if (have_group_id)
-      gst_event_set_group_id (event, group_id);
-
+    if (!event) {
+      gchar *stream_id = gst_pad_create_stream_id (tagdemux->priv->srcpad,
+          GST_ELEMENT_CAST (tagdemux), NULL);
+      GST_DEBUG_OBJECT (tagdemux, "Creating new STREAM_START event");
+      event = gst_event_new_stream_start (stream_id);
+      g_free (stream_id);
+      gst_event_set_group_id (event, gst_util_group_id_next ());
+    }
     gst_pad_push_event (tagdemux->priv->srcpad, event);
-    g_free (stream_id);
-      gst_pad_set_caps (tagdemux->priv->srcpad, tagdemux->priv->src_caps);
+
+    gst_pad_set_caps (tagdemux->priv->srcpad, tagdemux->priv->src_caps);
   } else {
     /* Caps never changed */
   }
@@ -674,7 +673,7 @@ gst_tag_demux_chain_buffer (GstTagDemux * demux, GstBuffer * buf,
           "probability of %u", caps, probability);
 
       gst_tag_demux_set_src_caps (demux, caps);
-        gst_caps_unref (caps);
+      gst_caps_unref (caps);
 
       /* Move onto streaming and fall-through to push out existing
        * data */
@@ -746,8 +745,8 @@ gst_tag_demux_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
         gst_tag_demux_chain_buffer (demux, gst_buffer_new (), TRUE);
 
         if (!gst_pad_has_current_caps (demux->priv->srcpad)) {
-        GST_ELEMENT_ERROR (demux, STREAM, TYPE_NOT_FOUND, (NULL), (NULL));
-      }
+          GST_ELEMENT_ERROR (demux, STREAM, TYPE_NOT_FOUND, (NULL), (NULL));
+        }
       }
       ret = gst_pad_event_default (pad, parent, event);
       break;
@@ -932,63 +931,63 @@ static gboolean
 gst_tag_demux_seek_push (GstTagDemux * tagdemux, GstEvent * event)
 {
   gboolean res = FALSE;
-      gdouble rate;
-      GstFormat format;
+  gdouble rate;
+  GstFormat format;
   GstSeekType start_type, stop_type;
-      GstSeekFlags flags;
+  GstSeekFlags flags;
   gint64 start, stop;
 
-      gst_event_parse_seek (event, &rate, &format, &flags,
+  gst_event_parse_seek (event, &rate, &format, &flags,
       &start_type, &start, &stop_type, &stop);
 
-      if (format == GST_FORMAT_BYTES &&
-          tagdemux->priv->state == GST_TAG_DEMUX_STREAMING &&
-          gst_pad_is_linked (tagdemux->priv->sinkpad)) {
-        GstEvent *upstream;
+  if (format == GST_FORMAT_BYTES &&
+      tagdemux->priv->state == GST_TAG_DEMUX_STREAMING &&
+      gst_pad_is_linked (tagdemux->priv->sinkpad)) {
+    GstEvent *upstream;
 
     switch (start_type) {
-          case GST_SEEK_TYPE_SET:
+      case GST_SEEK_TYPE_SET:
         if (start == -1)
           start = 0;
         start += tagdemux->priv->strip_start;
-            break;
-          case GST_SEEK_TYPE_END:
-            /* Adjust the seek to be relative to the start of any end tag
-             * (note: 10 bytes before end is represented by stop=-10) */
+        break;
+      case GST_SEEK_TYPE_END:
+        /* Adjust the seek to be relative to the start of any end tag
+         * (note: 10 bytes before end is represented by stop=-10) */
         if (start > 0)
           start = 0;
         start -= tagdemux->priv->strip_end;
-            break;
-          case GST_SEEK_TYPE_NONE:
-          default:
-            break;
+        break;
+      case GST_SEEK_TYPE_NONE:
+      default:
+        break;
+    }
+    switch (stop_type) {
+      case GST_SEEK_TYPE_SET:
+        if (stop != -1) {
+          /* -1 means the end of the file, pass it upstream intact */
+          stop += tagdemux->priv->strip_start;
         }
-        switch (stop_type) {
-          case GST_SEEK_TYPE_SET:
-            if (stop != -1) {
-              /* -1 means the end of the file, pass it upstream intact */
-              stop += tagdemux->priv->strip_start;
-            }
-            break;
-          case GST_SEEK_TYPE_END:
-            /* Adjust the seek to be relative to the start of any end tag
-             * (note: 10 bytes before end is represented by stop=-10) */
-            if (stop > 0)
-              stop = 0;
-            stop -= tagdemux->priv->strip_end;
-            break;
-          case GST_SEEK_TYPE_NONE:
-          default:
-            break;
-        }
-        upstream = gst_event_new_seek (rate, format, flags,
+        break;
+      case GST_SEEK_TYPE_END:
+        /* Adjust the seek to be relative to the start of any end tag
+         * (note: 10 bytes before end is represented by stop=-10) */
+        if (stop > 0)
+          stop = 0;
+        stop -= tagdemux->priv->strip_end;
+        break;
+      case GST_SEEK_TYPE_NONE:
+      default:
+        break;
+    }
+    upstream = gst_event_new_seek (rate, format, flags,
         start_type, start, stop_type, stop);
-        res = gst_pad_push_event (tagdemux->priv->sinkpad, upstream);
+    res = gst_pad_push_event (tagdemux->priv->sinkpad, upstream);
   } else if (format == GST_FORMAT_TIME &&
       tagdemux->priv->state == GST_TAG_DEMUX_STREAMING &&
       gst_pad_is_linked (tagdemux->priv->sinkpad)) {
     res = gst_pad_push_event (tagdemux->priv->sinkpad, gst_event_ref (event));
-      }
+  }
 
   return res;
 }
@@ -1046,7 +1045,7 @@ gst_tag_demux_srcpad_event (GstPad * pad, GstObject * parent, GstEvent * event)
 
 /* Read and interpret any end tag when activating in pull_range.
  * Returns FALSE if pad activation should fail. */
-static gboolean
+static GstFlowReturn
 gst_tag_demux_pull_end_tag (GstTagDemux * demux, GstTagList ** tags)
 {
   GstTagDemuxResult parse_ret;
@@ -1055,7 +1054,6 @@ gst_tag_demux_pull_end_tag (GstTagDemux * demux, GstTagList ** tags)
   GstTagList *new_tags = NULL;
   GstBuffer *buffer = NULL;
   gboolean have_tag;
-  gboolean res = FALSE;
   guint64 offset;
   guint tagsize;
   gsize bsize;
@@ -1067,12 +1065,12 @@ gst_tag_demux_pull_end_tag (GstTagDemux * demux, GstTagList ** tags)
 
   if (klass->min_end_size == 0) {
     GST_DEBUG_OBJECT (demux, "Not looking for tag at the end");
-    return TRUE;
+    return GST_FLOW_OK;
   }
 
   if (demux->priv->upstream_size < klass->min_end_size) {
     GST_DEBUG_OBJECT (demux, "File too small");
-    return TRUE;
+    return GST_FLOW_OK;
   }
 
   /* Pull enough to identify the tag and retrieve its total size */
@@ -1092,6 +1090,7 @@ gst_tag_demux_pull_end_tag (GstTagDemux * demux, GstTagList ** tags)
   if (bsize < klass->min_end_size) {
     GST_DEBUG_OBJECT (demux, "Only managed to read %" G_GSIZE_FORMAT " bytes"
         "from file (required: %u bytes)", bsize, klass->min_end_size);
+    flow_ret = GST_FLOW_EOS;
     goto done;
   }
 
@@ -1099,6 +1098,7 @@ gst_tag_demux_pull_end_tag (GstTagDemux * demux, GstTagList ** tags)
 
   if (!have_tag) {
     GST_DEBUG_OBJECT (demux, "Could not find tag at end");
+    flow_ret = GST_FLOW_OK;
     goto done;
   }
 
@@ -1134,6 +1134,7 @@ gst_tag_demux_pull_end_tag (GstTagDemux * demux, GstTagList ** tags)
       if (bsize < tagsize) {
         GST_DEBUG_OBJECT (demux, "Only managed to read %" G_GSIZE_FORMAT
             " bytes from file", bsize);
+        flow_ret = GST_FLOW_EOS;
         goto done;
       }
     }
@@ -1150,13 +1151,13 @@ gst_tag_demux_pull_end_tag (GstTagDemux * demux, GstTagList ** tags)
 
     switch (parse_ret) {
       case GST_TAG_DEMUX_RESULT_OK:
-        res = TRUE;
+        flow_ret = GST_FLOW_OK;
         demux->priv->strip_end = newsize;
         GST_DEBUG_OBJECT (demux, "Read tag at end, size %d",
             demux->priv->strip_end);
         break;
       case GST_TAG_DEMUX_RESULT_BROKEN_TAG:
-        res = TRUE;
+        flow_ret = GST_FLOW_OK;
         demux->priv->strip_end = newsize;
         GST_WARNING_OBJECT (demux, "Ignoring broken tag at end, size %d",
             demux->priv->strip_end);
@@ -1177,12 +1178,12 @@ done:
     gst_tag_list_unref (new_tags);
   if (buffer)
     gst_buffer_unref (buffer);
-  return res;
+  return flow_ret;
 }
 
 /* Read and interpret any tag at the start when activating in
  * pull_range. Returns FALSE if pad activation should fail. */
-static gboolean
+static GstFlowReturn
 gst_tag_demux_pull_start_tag (GstTagDemux * demux, GstTagList ** tags)
 {
   GstTagDemuxResult parse_ret;
@@ -1191,7 +1192,6 @@ gst_tag_demux_pull_start_tag (GstTagDemux * demux, GstTagList ** tags)
   GstTagList *new_tags = NULL;
   GstBuffer *buffer = NULL;
   gboolean have_tag;
-  gboolean res = FALSE;
   guint req, tagsize;
   gsize bsize;
 
@@ -1202,7 +1202,7 @@ gst_tag_demux_pull_start_tag (GstTagDemux * demux, GstTagList ** tags)
 
   if (klass->min_start_size == 0) {
     GST_DEBUG_OBJECT (demux, "Not looking for tag at the beginning");
-    return TRUE;
+    return GST_FLOW_OK;
   }
 
   /* Handle tag at start. Try with 4kB to start with */
@@ -1221,6 +1221,7 @@ gst_tag_demux_pull_start_tag (GstTagDemux * demux, GstTagList ** tags)
   if (bsize < klass->min_start_size) {
     GST_DEBUG_OBJECT (demux, "Only managed to read %" G_GSIZE_FORMAT
         " bytes from file - no tag in this file", bsize);
+    flow_ret = GST_FLOW_EOS;
     goto done;
   }
 
@@ -1228,7 +1229,7 @@ gst_tag_demux_pull_start_tag (GstTagDemux * demux, GstTagList ** tags)
 
   if (!have_tag) {
     GST_DEBUG_OBJECT (demux, "Could not find start tag");
-    res = TRUE;
+    flow_ret = GST_FLOW_OK;
     goto done;
   }
 
@@ -1260,6 +1261,7 @@ gst_tag_demux_pull_start_tag (GstTagDemux * demux, GstTagList ** tags)
             " bytes from file", bsize);
         GST_ELEMENT_ERROR (demux, STREAM, DECODE,
             (_("Failed to read tag: not enough data")), (NULL));
+        flow_ret = GST_FLOW_EOS;
         goto done;
       }
     }
@@ -1273,12 +1275,12 @@ gst_tag_demux_pull_start_tag (GstTagDemux * demux, GstTagList ** tags)
 
     switch (parse_ret) {
       case GST_TAG_DEMUX_RESULT_OK:
-        res = TRUE;
+        flow_ret = GST_FLOW_OK;
         demux->priv->strip_start = newsize;
         GST_DEBUG_OBJECT (demux, "Read start tag of size %d", newsize);
         break;
       case GST_TAG_DEMUX_RESULT_BROKEN_TAG:
-        res = TRUE;
+        flow_ret = GST_FLOW_OK;
         demux->priv->strip_start = newsize;
         GST_WARNING_OBJECT (demux, "Ignoring broken start tag of size %d",
             demux->priv->strip_start);
@@ -1299,7 +1301,7 @@ done:
     gst_tag_list_unref (new_tags);
   if (buffer)
     gst_buffer_unref (buffer);
-  return res;
+  return flow_ret;
 }
 
 /* This function operates similarly to gst_type_find_element_loop
@@ -1329,8 +1331,15 @@ gst_tag_demux_element_find (GstTagDemux * demux)
   demux->priv->strip_end = 0;
 
   /* 1 - Read tags */
-  s_tag_ok = gst_tag_demux_pull_start_tag (demux, &start_tags);
-  e_tag_ok = gst_tag_demux_pull_end_tag (demux, &end_tags);
+  ret = gst_tag_demux_pull_start_tag (demux, &start_tags);
+  if (ret != GST_FLOW_OK && ret != GST_FLOW_EOS)
+    goto read_tag_error;
+  s_tag_ok = ret == GST_FLOW_OK;
+  ret = gst_tag_demux_pull_end_tag (demux, &end_tags);
+  if (ret != GST_FLOW_OK && ret != GST_FLOW_EOS)
+    goto read_tag_error;
+  e_tag_ok = ret == GST_FLOW_OK;
+  ret = GST_FLOW_OK;
 
   klass = GST_TAG_DEMUX_CLASS (G_OBJECT_GET_CLASS (demux));
 
@@ -1349,6 +1358,7 @@ gst_tag_demux_element_find (GstTagDemux * demux)
   if (end_tags)
     gst_tag_list_unref (end_tags);
 
+  /* Only happens if both are EOS, i.e. not enough data could be read */
   if (!e_tag_ok && !s_tag_ok)
     goto no_tags;
 
@@ -1364,11 +1374,13 @@ gst_tag_demux_element_find (GstTagDemux * demux)
   if (GST_PAD_MODE (demux->priv->srcpad) == GST_PAD_MODE_PULL)
     goto skip_typefinding;
 
-  caps = gst_type_find_helper_get_range (GST_OBJECT (demux), NULL,
+  ret = gst_type_find_helper_get_range_full (GST_OBJECT (demux), NULL,
       (GstTypeFindHelperGetRangeFunction) gst_tag_demux_read_range,
       demux->priv->upstream_size
       - (demux->priv->strip_start + demux->priv->strip_end), NULL,
-      &probability);
+      &caps, &probability);
+  if (ret != GST_FLOW_OK)
+    goto read_tag_error;
 
   GST_INFO_OBJECT (demux, "Found type %" GST_PTR_FORMAT " with a "
       "probability of %u", caps, probability);
@@ -1383,7 +1395,7 @@ gst_tag_demux_element_find (GstTagDemux * demux)
 
   /* 6 Set the srcpad caps now that we know them */
   gst_tag_demux_set_src_caps (demux, caps);
-      gst_caps_unref (caps);
+  gst_caps_unref (caps);
 
 skip_typefinding:
 
@@ -1399,6 +1411,12 @@ no_size:
     GST_ELEMENT_ERROR (demux, STREAM, TYPE_NOT_FOUND,
         ("Could not get stream size"), (NULL));
     return GST_FLOW_ERROR;
+  }
+read_tag_error:
+  {
+    if (ret == GST_FLOW_NOT_LINKED || ret < GST_FLOW_EOS)
+      GST_ELEMENT_FLOW_ERROR (demux, ret);
+    return ret;
   }
 no_tags:
   {
@@ -1447,7 +1465,7 @@ gst_tag_demux_element_loop (GstTagDemux * demux)
         demux->priv->need_newseg = FALSE;
         /* FIXME: check segment, should be 0-N for downstream */
         gst_tag_demux_send_new_segment (demux);
-  }
+      }
 
       /* Send our own pending tag event */
       if (demux->priv->send_tag_event) {
@@ -1470,7 +1488,7 @@ gst_tag_demux_element_loop (GstTagDemux * demux)
 
       ret = gst_pad_push (demux->priv->srcpad, outbuf);
       break;
-  }
+    }
     default:
       ret = GST_FLOW_ERROR;
       break;
@@ -1508,7 +1526,7 @@ pause:
             gst_event_new_segment_done (GST_FORMAT_BYTES, stop));
       } else {
         push_eos = TRUE;
-  }
+      }
     } else if (ret == GST_FLOW_NOT_LINKED || ret < GST_FLOW_EOS) {
       /* for fatal errors we post an error message */
       GST_ELEMENT_FLOW_ERROR (demux, ret);
@@ -1820,7 +1838,6 @@ gst_tag_demux_send_tag_event (GstTagDemux * demux)
     return;
 #endif // GSTREAMER_LITE
 
-    GST_EVENT_TIMESTAMP (event) = 0;
     GST_DEBUG_OBJECT (demux, "Sending tag event on src pad");
     gst_pad_push_event (demux->priv->srcpad, event);
   }

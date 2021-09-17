@@ -66,6 +66,8 @@ C_SOURCES = \
 			gqueue.c \
 			grand.c \
 			gregex.c \
+ 			grcbox.c \
+ 			grefcount.c \
 			gscanner.c \
 			gsequence.c \
 			gshell.c \
@@ -126,6 +128,7 @@ COMPILER_FLAGS = -nologo -W3 -WX- -EHsc -GS -fp:precise -Gm- \
 INCLUDES = $(addprefix -I$(SRCBASE_DIR)/glib/,$(DIRLIST)) \
            -I$(SRCBASE_DIR) \
            -I$(SRCBASE_DIR)/build/win32/vs100 \
+           -I$(SRCBASE_DIR)/build/win32 \
            -I$(INCLUDE1) \
            -I$(INCLUDE2) \
            -I$(INCLUDE3) \

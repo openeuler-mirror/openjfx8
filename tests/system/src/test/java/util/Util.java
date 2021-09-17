@@ -39,7 +39,7 @@ import junit.framework.AssertionFailedError;
 public class Util {
 
     // Test timeout value in milliseconds
-    public static final int TIMEOUT = 5000;
+    public static final int TIMEOUT = 50000;
 
     private static interface Future {
         public abstract boolean await(long timeout, TimeUnit unit);

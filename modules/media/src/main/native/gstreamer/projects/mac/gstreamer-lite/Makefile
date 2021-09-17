@@ -7,8 +7,7 @@ TARGET_DIRS = $(BUILD_DIR)
 
 BASE_DIR = ../../..
 
-GLIB_VERSION = 2.56.1
-GLIB_DIR = $(BASE_DIR)/3rd_party/glib/glib-$(GLIB_VERSION)
+GLIB_DIR = $(BASE_DIR)/3rd_party/glib
 
 SRCBASE_DIR = $(BASE_DIR)/gstreamer-lite
 OBJBASE_DIR = $(BUILD_DIR)/obj/gstreamer-lite
@@ -122,7 +121,6 @@ C_SOURCES = gstreamer/gst/gst.c \
             gstreamer/gst/gstpluginfeature.c \
             gstreamer/gst/gstpluginloader.c \
             gstreamer/gst/gstpoll.c \
-            gstreamer/gst/gstpreset.c \
             gstreamer/gst/gstprotection.c \
             gstreamer/gst/gstquark.c \
             gstreamer/gst/gstquery.c \
@@ -169,6 +167,7 @@ C_SOURCES = gstreamer/gst/gst.c \
             gst-plugins-base/gst-libs/gst/audio/audio.c \
             gst-plugins-base/gst-libs/gst/audio/audio-channels.c \
             gst-plugins-base/gst-libs/gst/audio/audio-channel-mixer.c \
+	    gst-plugins-base/gst-libs/gst/audio/audio-buffer.c \
             gst-plugins-base/gst-libs/gst/audio/audio-converter.c \
             gst-plugins-base/gst-libs/gst/audio/audio-resampler.c \
             gst-plugins-base/gst-libs/gst/audio/audio-enumtypes.c \
@@ -195,8 +194,6 @@ C_SOURCES = gstreamer/gst/gst.c \
             gst-plugins-base/gst-libs/gst/fft/kiss_fftr_f32.c \
             gst-plugins-base/gst-libs/gst/pbutils/codec-utils.c \
             gst-plugins-base/gst-libs/gst/pbutils/descriptions.c \
-            gst-plugins-base/gst-libs/gst/pbutils/encoding-profile.c \
-            gst-plugins-base/gst-libs/gst/pbutils/encoding-target.c \
             gst-plugins-base/gst-libs/gst/pbutils/gstdiscoverer.c \
             gst-plugins-base/gst-libs/gst/pbutils/gstdiscoverer-types.c \
             gst-plugins-base/gst-libs/gst/pbutils/gstpluginsbaseversion.c \

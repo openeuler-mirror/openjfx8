@@ -75,9 +75,9 @@
 
 typedef enum
 {
-  NOONE_WAITING,
-  STREAM_WAITING,               /* streaming thread is waiting for application thread */
-  APP_WAITING,                  /* application thread is waiting for streaming thread */
+  NOONE_WAITING = 0,
+  STREAM_WAITING = 1 << 0,      /* streaming thread is waiting for application thread */
+  APP_WAITING = 1 << 1,         /* application thread is waiting for streaming thread */
 } GstAppSinkWaitStatus;
 
 struct _GstAppSinkPrivate
@@ -107,6 +107,8 @@ struct _GstAppSinkPrivate
   GstAppSinkCallbacks callbacks;
   gpointer user_data;
   GDestroyNotify notify;
+
+  GstSample *sample;
 };
 
 GST_DEBUG_CATEGORY_STATIC (app_sink_debug);
@@ -128,12 +130,12 @@ enum
   LAST_SIGNAL
 };
 
-#define DEFAULT_PROP_EOS        TRUE
-#define DEFAULT_PROP_EMIT_SIGNALS   FALSE
-#define DEFAULT_PROP_MAX_BUFFERS    0
-#define DEFAULT_PROP_DROP       FALSE
-#define DEFAULT_PROP_WAIT_ON_EOS    TRUE
-#define DEFAULT_PROP_BUFFER_LIST    FALSE
+#define DEFAULT_PROP_EOS    TRUE
+#define DEFAULT_PROP_EMIT_SIGNALS FALSE
+#define DEFAULT_PROP_MAX_BUFFERS  0
+#define DEFAULT_PROP_DROP   FALSE
+#define DEFAULT_PROP_WAIT_ON_EOS  TRUE
+#define DEFAULT_PROP_BUFFER_LIST  FALSE
 
 enum
 {
@@ -186,6 +188,7 @@ static guint gst_app_sink_signals[LAST_SIGNAL] = { 0 };
 
 #define gst_app_sink_parent_class parent_class
 G_DEFINE_TYPE_WITH_CODE (GstAppSink, gst_app_sink, GST_TYPE_BASE_SINK,
+    G_ADD_PRIVATE (GstAppSink)
     G_IMPLEMENT_INTERFACE (GST_TYPE_URI_HANDLER,
         gst_app_sink_uri_handler_init));
 
@@ -284,7 +287,7 @@ gst_app_sink_class_init (GstAppSinkClass * klass)
       NULL, NULL, NULL, GST_TYPE_FLOW_RETURN, 0, G_TYPE_NONE);
   /**
    * GstAppSink::new-sample:
-   * @appsink: the appsink element that emited the signal
+   * @appsink: the appsink element that emitted the signal
    *
    * Signal that a new sample is available.
    *
@@ -445,8 +448,6 @@ gst_app_sink_class_init (GstAppSinkClass * klass)
   klass->pull_sample = gst_app_sink_pull_sample;
   klass->try_pull_preroll = gst_app_sink_try_pull_preroll;
   klass->try_pull_sample = gst_app_sink_try_pull_sample;
-
-  g_type_class_add_private (klass, sizeof (GstAppSinkPrivate));
 }
 
 static void
@@ -454,13 +455,12 @@ gst_app_sink_init (GstAppSink * appsink)
 {
   GstAppSinkPrivate *priv;
 
-  priv = appsink->priv =
-      G_TYPE_INSTANCE_GET_PRIVATE (appsink, GST_TYPE_APP_SINK,
-      GstAppSinkPrivate);
+  priv = appsink->priv = gst_app_sink_get_instance_private (appsink);
 
   g_mutex_init (&priv->mutex);
   g_cond_init (&priv->cond);
   priv->queue = gst_queue_array_new (16);
+  priv->sample = gst_sample_new (NULL, NULL, NULL, NULL);
 
   priv->emit_signals = DEFAULT_PROP_EMIT_SIGNALS;
   priv->max_buffers = DEFAULT_PROP_MAX_BUFFERS;
@@ -496,6 +496,10 @@ gst_app_sink_dispose (GObject * obj)
   gst_buffer_replace (&priv->preroll_buffer, NULL);
   gst_caps_replace (&priv->preroll_caps, NULL);
   gst_caps_replace (&priv->last_caps, NULL);
+  if (priv->sample) {
+    gst_sample_unref (priv->sample);
+    priv->sample = NULL;
+  }
   g_mutex_unlock (&priv->mutex);
 
   G_OBJECT_CLASS (parent_class)->dispose (obj);
@@ -666,6 +670,11 @@ gst_app_sink_start (GstBaseSink * psink)
   priv->started = TRUE;
   gst_segment_init (&priv->preroll_segment, GST_FORMAT_TIME);
   gst_segment_init (&priv->last_segment, GST_FORMAT_TIME);
+  priv->sample = gst_sample_make_writable (priv->sample);
+  gst_sample_set_buffer (priv->sample, NULL);
+  gst_sample_set_buffer_list (priv->sample, NULL);
+  gst_sample_set_caps (priv->sample, NULL);
+  gst_sample_set_segment (priv->sample, NULL);
   g_mutex_unlock (&priv->mutex);
 
   return TRUE;
@@ -703,7 +712,7 @@ gst_app_sink_setcaps (GstBaseSink * sink, GstCaps * caps)
   GST_DEBUG_OBJECT (appsink, "receiving CAPS");
   gst_queue_array_push_tail (priv->queue, gst_event_new_caps (caps));
   if (!priv->preroll_buffer)
-  gst_caps_replace (&priv->preroll_caps, caps);
+    gst_caps_replace (&priv->preroll_caps, caps);
   g_mutex_unlock (&priv->mutex);
 
   return TRUE;
@@ -739,20 +748,34 @@ gst_app_sink_event (GstBaseSink * sink, GstEvent * event)
        * consumed, which is a bit confusing for the application
        */
       while (priv->num_buffers > 0 && !priv->flushing && priv->wait_on_eos) {
-        priv->wait_status = STREAM_WAITING;
+        if (priv->unlock) {
+          /* we are asked to unlock, call the wait_preroll method */
+          g_mutex_unlock (&priv->mutex);
+          if (gst_base_sink_wait_preroll (sink) != GST_FLOW_OK) {
+            /* Directly go out of here */
+            gst_event_unref (event);
+            return FALSE;
+          }
+
+          /* we are allowed to continue now */
+          g_mutex_lock (&priv->mutex);
+          continue;
+        }
+
+        priv->wait_status |= STREAM_WAITING;
         g_cond_wait (&priv->cond, &priv->mutex);
-        priv->wait_status = NOONE_WAITING;
+        priv->wait_status &= ~STREAM_WAITING;
       }
       if (priv->flushing)
         emit = FALSE;
       g_mutex_unlock (&priv->mutex);
 
       if (emit) {
-      /* emit EOS now */
-      if (priv->callbacks.eos)
-        priv->callbacks.eos (appsink, priv->user_data);
-      else
-        g_signal_emit (appsink, gst_app_sink_signals[SIGNAL_EOS], 0);
+        /* emit EOS now */
+        if (priv->callbacks.eos)
+          priv->callbacks.eos (appsink, priv->user_data);
+        else
+          g_signal_emit (appsink, gst_app_sink_signals[SIGNAL_EOS], 0);
       }
 
       break;
@@ -789,8 +812,8 @@ gst_app_sink_preroll (GstBaseSink * psink, GstBuffer * buffer)
   GST_DEBUG_OBJECT (appsink, "setting preroll buffer %p", buffer);
   gst_buffer_replace (&priv->preroll_buffer, buffer);
 
-  if (priv->wait_status == APP_WAITING)
-  g_cond_signal (&priv->cond);
+  if ((priv->wait_status & APP_WAITING))
+    g_cond_signal (&priv->cond);
 
   emit = priv->emit_signals;
   g_mutex_unlock (&priv->mutex);
@@ -838,10 +861,14 @@ dequeue_buffer (GstAppSink * appsink)
           gst_event_parse_caps (event, &caps);
           GST_DEBUG_OBJECT (appsink, "activating caps %" GST_PTR_FORMAT, caps);
           gst_caps_replace (&priv->last_caps, caps);
+          priv->sample = gst_sample_make_writable (priv->sample);
+          gst_sample_set_caps (priv->sample, priv->last_caps);
           break;
         }
         case GST_EVENT_SEGMENT:
           gst_event_copy_segment (event, &priv->last_segment);
+          priv->sample = gst_sample_make_writable (priv->sample);
+          gst_sample_set_segment (priv->sample, &priv->last_segment);
           GST_DEBUG_OBJECT (appsink, "activated segment %" GST_SEGMENT_FORMAT,
               &priv->last_segment);
           break;
@@ -874,6 +901,7 @@ restart:
   if (G_UNLIKELY (!priv->last_caps &&
           gst_pad_has_current_caps (GST_BASE_SINK_PAD (psink)))) {
     priv->last_caps = gst_pad_get_current_caps (GST_BASE_SINK_PAD (psink));
+    gst_sample_set_caps (priv->sample, priv->last_caps);
     GST_DEBUG_OBJECT (appsink, "activating pad caps %" GST_PTR_FORMAT,
         priv->last_caps);
   }
@@ -905,9 +933,9 @@ restart:
       }
 
       /* wait for a buffer to be removed or flush */
-      priv->wait_status = STREAM_WAITING;
+      priv->wait_status |= STREAM_WAITING;
       g_cond_wait (&priv->cond, &priv->mutex);
-      priv->wait_status = NOONE_WAITING;
+      priv->wait_status &= ~STREAM_WAITING;
 
       if (priv->flushing)
         goto flushing;
@@ -917,8 +945,8 @@ restart:
   gst_queue_array_push_tail (priv->queue, gst_mini_object_ref (data));
   priv->num_buffers++;
 
-  if (priv->wait_status == APP_WAITING)
-  g_cond_signal (&priv->cond);
+  if ((priv->wait_status & APP_WAITING))
+    g_cond_signal (&priv->cond);
 
   emit = priv->emit_signals;
   g_mutex_unlock (&priv->mutex);
@@ -1015,9 +1043,25 @@ gst_app_sink_query (GstBaseSink * bsink, GstQuery * query)
       g_mutex_lock (&priv->mutex);
       GST_DEBUG_OBJECT (appsink, "waiting buffers to be consumed");
       while (priv->num_buffers > 0 || priv->preroll_buffer) {
-        priv->wait_status = STREAM_WAITING;
+        if (priv->unlock) {
+          /* we are asked to unlock, call the wait_preroll method */
+          g_mutex_unlock (&priv->mutex);
+          if (gst_base_sink_wait_preroll (bsink) != GST_FLOW_OK) {
+            /* Directly go out of here */
+            return FALSE;
+          }
+
+          /* we are allowed to continue now */
+          g_mutex_lock (&priv->mutex);
+          continue;
+        }
+
+        priv->wait_status |= STREAM_WAITING;
         g_cond_wait (&priv->cond, &priv->mutex);
-        priv->wait_status = NOONE_WAITING;
+        priv->wait_status &= ~STREAM_WAITING;
+
+        if (priv->flushing)
+          break;
       }
       g_mutex_unlock (&priv->mutex);
       ret = GST_BASE_SINK_CLASS (parent_class)->query (bsink, query);
@@ -1531,14 +1575,14 @@ gst_app_sink_try_pull_preroll (GstAppSink * appsink, GstClockTime timeout)
 
     /* nothing to return, wait */
     GST_DEBUG_OBJECT (appsink, "waiting for the preroll buffer");
-    priv->wait_status = APP_WAITING;
+    priv->wait_status |= APP_WAITING;
     if (timeout_valid) {
       if (!g_cond_wait_until (&priv->cond, &priv->mutex, end_time))
         goto expired;
     } else {
-    g_cond_wait (&priv->cond, &priv->mutex);
-  }
-    priv->wait_status = NOONE_WAITING;
+      g_cond_wait (&priv->cond, &priv->mutex);
+    }
+    priv->wait_status &= ~APP_WAITING;
   }
   sample =
       gst_sample_new (priv->preroll_buffer, priv->preroll_caps,
@@ -1553,7 +1597,7 @@ gst_app_sink_try_pull_preroll (GstAppSink * appsink, GstClockTime timeout)
 expired:
   {
     GST_DEBUG_OBJECT (appsink, "timeout expired, return NULL");
-    priv->wait_status = NOONE_WAITING;
+    priv->wait_status &= ~APP_WAITING;
     g_mutex_unlock (&priv->mutex);
     return NULL;
   }
@@ -1629,30 +1673,34 @@ gst_app_sink_try_pull_sample (GstAppSink * appsink, GstClockTime timeout)
 
     /* nothing to return, wait */
     GST_DEBUG_OBJECT (appsink, "waiting for a buffer");
-    priv->wait_status = APP_WAITING;
+    priv->wait_status |= APP_WAITING;
     if (timeout_valid) {
       if (!g_cond_wait_until (&priv->cond, &priv->mutex, end_time))
         goto expired;
     } else {
-    g_cond_wait (&priv->cond, &priv->mutex);
-  }
-    priv->wait_status = NOONE_WAITING;
+      g_cond_wait (&priv->cond, &priv->mutex);
+    }
+    priv->wait_status &= ~APP_WAITING;
   }
 
   obj = dequeue_buffer (appsink);
   if (GST_IS_BUFFER (obj)) {
     GST_DEBUG_OBJECT (appsink, "we have a buffer %p", obj);
-    sample = gst_sample_new (GST_BUFFER_CAST (obj), priv->last_caps,
-        &priv->last_segment, NULL);
+    priv->sample = gst_sample_make_writable (priv->sample);
+    gst_sample_set_buffer_list (priv->sample, NULL);
+    gst_sample_set_buffer (priv->sample, GST_BUFFER_CAST (obj));
+    sample = gst_sample_ref (priv->sample);
   } else {
     GST_DEBUG_OBJECT (appsink, "we have a list %p", obj);
-    sample = gst_sample_new (NULL, priv->last_caps, &priv->last_segment, NULL);
-    gst_sample_set_buffer_list (sample, GST_BUFFER_LIST_CAST (obj));
+    priv->sample = gst_sample_make_writable (priv->sample);
+    gst_sample_set_buffer (priv->sample, NULL);
+    gst_sample_set_buffer_list (priv->sample, GST_BUFFER_LIST_CAST (obj));
+    sample = gst_sample_ref (priv->sample);
   }
   gst_mini_object_unref (obj);
 
-  if (priv->wait_status == STREAM_WAITING)
-  g_cond_signal (&priv->cond);
+  if ((priv->wait_status & STREAM_WAITING))
+    g_cond_signal (&priv->cond);
 
   g_mutex_unlock (&priv->mutex);
 
@@ -1662,7 +1710,7 @@ gst_app_sink_try_pull_sample (GstAppSink * appsink, GstClockTime timeout)
 expired:
   {
     GST_DEBUG_OBJECT (appsink, "timeout expired, return NULL");
-    priv->wait_status = NOONE_WAITING;
+    priv->wait_status &= ~APP_WAITING;
     g_mutex_unlock (&priv->mutex);
     return NULL;
   }

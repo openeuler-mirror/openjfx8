@@ -233,7 +233,7 @@ void WindowContextBase::enableOrResetIME() {
             return;
         }
 
-        XIMCallback startCallback = {(XPointer) jview, (XIMProc) im_preedit_start};
+        XIMCallback startCallback = {(XPointer) jview, (XIMProc) (void *) im_preedit_start};
         XIMCallback doneCallback = {(XPointer) jview, im_preedit_done};
         XIMCallback drawCallback = {(XPointer) jview, im_preedit_draw};
         XIMCallback caretCallback = {(XPointer) jview, im_preedit_caret};

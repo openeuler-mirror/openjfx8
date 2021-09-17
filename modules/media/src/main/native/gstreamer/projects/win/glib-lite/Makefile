@@ -3,16 +3,14 @@
 #
 LINK = link.exe
 
-GLIB_VERSION = 2.56.1
-
 export THIRD_PARTY_DIR = 3rd_party
-export GLIB_BASE_DIR = $(THIRD_PARTY_DIR)/glib/glib-$(GLIB_VERSION)
+export GLIB_BASE_DIR = $(THIRD_PARTY_DIR)/glib
 
 FFI_TARGET = libffi.lib
-GLIB_TARGET = libglib-$(GLIB_VERSION).lib
-GMODULE_TARGET = libmodule-$(GLIB_VERSION).lib
-GOBJECT_TARGET = libgobject-$(GLIB_VERSION).lib
-GTHREAD_TARGET = libgthread-$(GLIB_VERSION).lib
+GLIB_TARGET = libglib.lib
+GMODULE_TARGET = libmodule.lib
+GOBJECT_TARGET = libgobject.lib
+GTHREAD_TARGET = libgthread.lib
 MODULES = $(FFI_TARGET) $(GLIB_TARGET) $(GMODULE_TARGET) $(GOBJECT_TARGET) $(GTHREAD_TARGET)
 
 export BUILD_DIR = $(shell cygpath -u "$(OUTPUT_DIR)/$(BUILD_TYPE)")
@@ -37,12 +35,13 @@ LDFLAGS = -out:$(shell cygpath -ma $(TARGET)) -nologo -incremental:no -libpath:$
           -libpath:$(LIBPATH2) \
           -libpath:$(LIBPATH3) \
           -manifest -manifestfile:$(MANIFEST) -manifestuac:"level='asInvoker' uiAccess='false'" \
-          -subsystem:windows -tlbid:1 -dynamicbase -nxcompat -errorreport:queue -implib:$(IMPLIB)
+          -subsystem:windows -tlbid:1 -dynamicbase -nxcompat -errorreport:queue -implib:$(IMPLIB) \
+          -def:$(DEF_DIR)/glib-lite.def
 
 ifeq ($(BUILD_TYPE), Release)
-    LDFLAGS += -def:$(DEF_DIR)/glib-lite.def -opt:ref -opt:icf
+    LDFLAGS += -opt:ref -opt:icf
 else # debug
-    LDFLAGS += -debug -def:$(DEF_DIR)/glib-liteD.def -pdb:$(shell cygpath -ma $(PDB))
+    LDFLAGS += -debug -pdb:$(shell cygpath -ma $(PDB))
 endif
 
 ifeq ($(ARCH), x32)

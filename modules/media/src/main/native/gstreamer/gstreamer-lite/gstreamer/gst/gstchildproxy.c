@@ -209,7 +209,7 @@ gst_child_proxy_lookup (GstChildProxy * object, const gchar * name,
   g_return_val_if_fail (GST_IS_CHILD_PROXY (object), FALSE);
   g_return_val_if_fail (name != NULL, FALSE);
 
-  obj = g_object_ref (object);
+  obj = G_OBJECT (g_object_ref (object));
 
   current = names = g_strsplit (name, "::", -1);
   /* find the owner of the property */
@@ -452,6 +452,7 @@ cant_copy:
         (GST_IS_OBJECT (object) ? GST_OBJECT_NAME (object) : ""), error);
     g_value_unset (&value);
     g_object_unref (target);
+    g_free (error);
     return;
   }
 }

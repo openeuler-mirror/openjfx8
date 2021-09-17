@@ -392,7 +392,7 @@ gst_segment_do_seek (GstSegment * segment, gdouble rate,
  * negative stream-time.
  *
  * This function is typically used by elements that need to synchronize buffers
- * against the clock or eachother.
+ * against the clock or each other.
  *
  * @position can be any value and the result of this function for values outside
  * of the segment is extrapolated.
@@ -699,7 +699,7 @@ gst_segment_position_from_stream_time (const GstSegment * segment,
   if (res == 1)
     return position;
 
-    return -1;
+  return -1;
 }
 
 /**
@@ -714,7 +714,7 @@ gst_segment_position_from_stream_time (const GstSegment * segment,
  * negative running-time.
  *
  * This function is typically used by elements that need to synchronize buffers
- * against the clock or eachother.
+ * against the clock or each other.
  *
  * @position can be any value and the result of this function for values outside
  * of the segment is extrapolated.
@@ -751,17 +751,20 @@ gst_segment_to_running_time_full (const GstSegment * segment, GstFormat format,
   if (G_LIKELY (segment->rate > 0.0)) {
     start = segment->start + offset;
 
-  /* bring to uncorrected position in segment */
+    /* bring to uncorrected position in segment */
     if (position < start) {
       /* negative value */
       result = start - position;
       res = -1;
     } else {
-  result = position - start;
+      result = position - start;
       res = 1;
     }
   } else {
     stop = segment->stop;
+
+    if (stop == -1 && segment->duration != -1)
+      stop = segment->start + segment->duration;
 
     /* cannot continue if no stop position set or invalid offset */
     g_return_val_if_fail (stop != -1, 0);
@@ -774,10 +777,10 @@ gst_segment_to_running_time_full (const GstSegment * segment, GstFormat format,
       /* negative value */
       result = position - stop;
       res = -1;
-  } else {
+    } else {
       result = stop - position;
       res = 1;
-  }
+    }
   }
 
   if (running_time) {
@@ -800,7 +803,7 @@ gst_segment_to_running_time_full (const GstSegment * segment, GstFormat format,
       /* negative and base is smaller, subtract base and remainder is
        * negative */
       *running_time = result - segment->base;
-}
+    }
   }
   return res;
 
@@ -853,17 +856,17 @@ gst_segment_to_running_time (const GstSegment * segment, GstFormat format,
   }
   /* after the segment boundary */
   if (G_UNLIKELY (segment->stop != -1 && position > segment->stop)) {
-      GST_DEBUG ("position(%" G_GUINT64_FORMAT ") > stop(%" G_GUINT64_FORMAT
+    GST_DEBUG ("position(%" G_GUINT64_FORMAT ") > stop(%" G_GUINT64_FORMAT
         ")", position, segment->stop);
-      return -1;
-    }
+    return -1;
+  }
 
   if (gst_segment_to_running_time_full (segment, format, position,
           &result) == 1)
     return result;
 
-      return -1;
-    }
+  return -1;
+}
 
 /**
  * gst_segment_clip:
@@ -1002,8 +1005,9 @@ gst_segment_position_from_running_time (const GstSegment * segment,
  * When 1 is returned, @running_time resulted in a positive position returned
  * in @position.
  *
- * When this function returns -1, the returned @position should be negated
- * to get the real negative segment position.
+ * When this function returns -1, the returned @position was < 0, and the value
+ * in the position variable should be negated to get the real negative segment
+ * position.
  *
  * Returns: a 1 or -1 on success, 0 on failure.
  *
@@ -1039,21 +1043,24 @@ gst_segment_position_from_running_time_full (const GstSegment * segment,
       /* move into the segment at the right rate */
       if (G_UNLIKELY (abs_rate != 1.0))
         *position = ceil (*position * abs_rate);
-    /* bring to corrected position in segment */
+      /* bring to corrected position in segment */
       *position += start + segment->offset;
       res = 1;
-  } else {
+    } else {
       *position = base - running_time;
       if (G_UNLIKELY (abs_rate != 1.0))
         *position = ceil (*position * abs_rate);
-      if (start + segment->offset > *position) {
-        *position -= start + segment->offset;
-        res = -1;
-      } else {
+      if (start + segment->offset >= *position) {
+        /* The TS is before the segment, but the result is >= 0 */
         *position = start + segment->offset - *position;
         res = 1;
-  }
-}
+      } else {
+        /* The TS is before the segment, and the result is < 0
+         * so negate the return result */
+        *position = *position - (start + segment->offset);
+        res = -1;
+      }
+    }
   } else {
     if (G_LIKELY (running_time >= base)) {
       *position = running_time - base;
@@ -1067,15 +1074,24 @@ gst_segment_position_from_running_time_full (const GstSegment * segment,
         res = 1;
       }
     } else {
+      /* This case is tricky. Requested running time precedes the
+       * segment base, so in a reversed segment where rate < 0, that
+       * means it's before the alignment point of (stop - offset).
+       * Before = always bigger than (stop-offset), which is usually +ve,
+       * but could be -ve is offset is big enough. -ve position implies
+       * that the offset has clipped away the entire segment anyway */
       *position = base - running_time;
       if (G_UNLIKELY (abs_rate != 1.0))
         *position = ceil (*position * abs_rate);
-      if (G_UNLIKELY (stop < segment->offset - *position)) {
-        *position -= segment->offset - stop;
-        res = -1;
-      } else {
+
+      if (G_LIKELY (stop + *position >= segment->offset)) {
         *position = stop + *position - segment->offset;
         res = 1;
+      } else {
+        /* Requested position is still negative because offset is big,
+         * so negate the result */
+        *position = segment->offset - *position - stop;
+        res = -1;
       }
     }
   }

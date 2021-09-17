@@ -5,15 +5,13 @@ CPP = cl.exe
 LINK = link.exe
 MAKEDEPEND = makedepend.exe
 
-GLIB_VERSION = 2.56.1
-
 BUILD_DIR = $(shell cygpath -u "$(OUTPUT_DIR)/$(BUILD_TYPE)")
 
 SRCBASE_DIR = ../..
 OBJBASE_DIR = $(BUILD_DIR)/obj/jfxmedia-jni
 
 GSTREAMER_LITE_DIR = ../../../gstreamer/gstreamer-lite
-GLIB_LITE_DIR = ../../../gstreamer/3rd_party/glib/glib-$(GLIB_VERSION)
+GLIB_LITE_DIR = ../../../gstreamer/3rd_party/glib
 
 DIRLIST = jni \
           PipelineManagement \

@@ -275,6 +275,12 @@ defineProperty("javaRuntimeVersion", System.getProperty("java.runtime.version"))
 defineProperty("javaVersion", javaRuntimeVersion.split("-")[0])
 defineProperty("javaBuildNumber", javaRuntimeVersion.substring(javaRuntimeVersion.lastIndexOf("-b") + 2))
 
+defineProperty("libAVRepositoryURL", "https://libav.org/releases/")
+defineProperty("FFmpegRepositoryURL", "https://www.ffmpeg.org/releases/")
+
+// JFX_DEPS_URL specifies the optional location of an alternate local repository
+defineProperty("JFX_DEPS_URL", "${buildDir}/../respositories/")
+
 loadProperties("$projectDir/build.properties")
 
 def String closedCacheStubRuntime = cygpath("$projectDir") + "/../caches/sdk/rt"
@@ -297,19 +303,28 @@ defineProperty("GRADLE_VERSION_CHECK", "true")
 ext.IS_GRADLE_VERSION_CHECK = Boolean.parseBoolean(GRADLE_VERSION_CHECK)
 
 // COMPILE_WEBKIT specifies whether to build all of webkit.
-defineProperty("COMPILE_WEBKIT", "false")
+defineProperty("COMPILE_WEBKIT", "true")
 ext.IS_COMPILE_WEBKIT = Boolean.parseBoolean(COMPILE_WEBKIT)
 
 // COMPILE_MEDIA specifies whether to build all of media.
-defineProperty("COMPILE_MEDIA", "false")
+defineProperty("COMPILE_MEDIA", "true")
 ext.IS_COMPILE_MEDIA = Boolean.parseBoolean(COMPILE_MEDIA)
+
+// BUILD_LIBAV_STUBS specifies whether to download and build libav/ffmpeg libraries
+defineProperty("BUILD_LIBAV_STUBS", "true")
+ext.IS_BUILD_LIBAV_STUBS = IS_LINUX ? Boolean.parseBoolean(BUILD_LIBAV_STUBS) : false
+
+// BUILD_WORKING_LIBAV specifies whether to build libav/ffmpeg libraries with
+// decoder, demuxer, etc. required to run media. Valid only if BUILD_LIBAV_STUBS is true.
+defineProperty("BUILD_WORKING_LIBAV", "true")
+ext.IS_BUILD_WORKING_LIBAV = IS_LINUX ? Boolean.parseBoolean(BUILD_WORKING_LIBAV) : false
 
 // COMPILE_PANGO specifies whether to build javafx_font_pango.
 defineProperty("COMPILE_PANGO", "${IS_LINUX}")
 ext.IS_COMPILE_PANGO = Boolean.parseBoolean(COMPILE_PANGO)
 
 // COMPILE_HARFBUZZ specifies whether to use Harfbuzz.
-defineProperty("COMPILE_HARFBUZZ", "false")
+defineProperty("COMPILE_HARFBUZZ", "true")
 ext.IS_COMPILE_HARFBUZZ = Boolean.parseBoolean(COMPILE_HARFBUZZ)
 
 // COMPILE_PARFAIT specifies whether to build parfait
@@ -322,12 +337,12 @@ ext.IS_COMPILE_JFR = Boolean.parseBoolean(COMPILE_JFR)
 
 // RETAIN_PACKAGER_TESTS specifies whether the tests in fxpackager should
 // keep generated files instead of attempting to automatically delete them
-defineProperty("RETAIN_PACKAGER_TESTS", "false")
+defineProperty("RETAIN_PACKAGER_TESTS", "true")
 ext.IS_RETAIN_PACKAGER_TESTS = Boolean.parseBoolean(RETAIN_PACKAGER_TESTS)
 
 // TEST_PACKAGER_DMG whether tests that create DMG files via hdiutil
 // should be run.  On OSX 10.7 this tends to hang automated builds
-defineProperty("TEST_PACKAGER_DMG", "false")
+defineProperty("TEST_PACKAGER_DMG", "true")
 ext.IS_TEST_PACKAGER_DMG = Boolean.parseBoolean(TEST_PACKAGER_DMG)
 
 // BUILD_TOOLS_DOWNLOAD_SCRIPT specifies a path of a gradle script which downloads
@@ -347,7 +362,7 @@ defineProperty("BUILD_JAVADOC", "false")
 ext.IS_BUILD_JAVADOC = Boolean.parseBoolean(BUILD_JAVADOC)
 
 // Specifies whether to build the javafx-src bundle
-defineProperty("BUILD_SRC_ZIP", "false")
+defineProperty("BUILD_SRC_ZIP", "true")
 ext.IS_BUILD_SRC_ZIP = Boolean.parseBoolean(BUILD_SRC_ZIP)
 
 // Specifies whether to run full tests (true) or smoke tests (false)
@@ -713,7 +728,7 @@ if (IS_WINDOWS && OS_ARCH != "x86" && OS_ARCH != "amd64") {
     throw new Exception("Unknown and unsupported build architecture: $OS_ARCH")
 } else if (IS_MAC && OS_ARCH != "x86_64") {
     throw new Exception("Unknown and unsupported build architecture: $OS_ARCH")
-} else if (IS_LINUX && OS_ARCH != "i386" && OS_ARCH != "amd64") {
+} else if (IS_LINUX && OS_ARCH != "i386" && OS_ARCH != "amd64" && OS_ARCH != "aarch64") {
     throw new Exception("Unknown and unsupported build architecture: $OS_ARCH")
 }
 
@@ -1140,6 +1155,36 @@ allprojects {
             mavenCentral()
             ivy {
                 url "http://download.eclipse.org/eclipse/updates/4.6/R-4.6.3-201703010400/plugins/"
+                layout "pattern", {
+                    artifact "[artifact].[ext]"
+                }
+            }
+        }
+    }
+
+    if (JFX_DEPS_URL != "") {
+        repositories {
+            ivy {
+                url JFX_DEPS_URL
+                layout "pattern", {
+                    artifact "[artifact]-[revision](-[classifier]).[ext]"
+                    artifact "[artifact].[ext]"
+                }
+            }
+        }
+    }
+
+    if (JFX_DEPS_URL == "" && IS_BUILD_LIBAV_STUBS) {
+        repositories {
+
+            ivy {
+                url libAVRepositoryURL
+                layout "pattern", {
+                    artifact "[artifact].[ext]"
+                }
+            }
+            ivy {
+                url FFmpegRepositoryURL
                 layout "pattern", {
                     artifact "[artifact].[ext]"
                 }
@@ -2175,6 +2220,15 @@ project(":media") {
         }
     }
 
+    dependencies {
+        if (IS_BUILD_LIBAV_STUBS) {
+            media name: "libav-9.14", ext: "tar.gz"
+            media name: "libav-11.4", ext: "tar.gz"
+            media name: "libav-12.1", ext: "tar.gz"
+            media name: "ffmpeg-3.3.3", ext: "tar.gz"
+        }
+    }
+
     compileToolsJava {
         enabled = IS_COMPILE_MEDIA
         classpath = sourceSets.main.output;
@@ -2265,7 +2319,7 @@ project(":media") {
                     } else {
                         args ("CC=${mediaProperties.compiler}", "LINK=${mediaProperties.linker}", "LIB=${mediaProperties.lib}")
                         if (t.name == "linux") {
-                            args(IS_64 ? "ARCH=x64" : "ARCH=x32")
+                            args(IS_64 ? "ARCH=x64" : "ARCH=x32", OS_ARCH.toLowerCase().contains("aarch") ? "OS_ARCH=aarch64" : "OS_ARCH=x86")
                         }
 
                         if (t.name.startsWith("arm")) {
@@ -2295,7 +2349,7 @@ project(":media") {
                         } else {
                             args ("CC=${mediaProperties.compiler}", "LINK=${mediaProperties.linker}", "LIB=${mediaProperties.lib}")
                             if (t.name == "linux") {
-                                args(IS_64 ? "ARCH=x64" : "ARCH=x32")
+                                args(IS_64 ? "ARCH=x64" : "ARCH=x32", OS_ARCH.toLowerCase().contains("aarch") ? "OS_ARCH=aarch64" : "OS_ARCH=x86")
                             }
                         }
                     }
@@ -2333,7 +2387,7 @@ project(":media") {
                         } else {
                             args ("CC=${mediaProperties.compiler}", "LINK=${mediaProperties.linker}", "LIB=${mediaProperties.lib}")
                             if (t.name == "linux") {
-                                args(IS_64 ? "ARCH=x64" : "ARCH=x32")
+                                args(IS_64 ? "ARCH=x64" : "ARCH=x32", OS_ARCH.toLowerCase().contains("aarch") ? "OS_ARCH=aarch64" : "OS_ARCH=x86")
                             }
                         }
                     }
@@ -2343,20 +2397,303 @@ project(":media") {
             buildNative.dependsOn buildPlugins
 
             if (t.name == "linux") {
-                def buildAVPlugin = task( "buildAVPlugin", dependsOn: [buildPlugins]) {
+                // Pre-defined command line arguments
+                def cfgCMDArgs = ["sh", "configure"]
+                def commonCfgArgs = ["--enable-shared", "--disable-debug", "--disable-static", "--disable-yasm", "--disable-doc", "--disable-programs", "--disable-everything"]
+                def codecsCfgArgs = ["--enable-decoder=aac,mp3,mp3float,h264", "--enable-parser=aac,h264", "--enable-demuxer=aac,h264,mpegts,mpegtsraw"]
+
+                def copyLibAVStubs = {String fromDir, String toDir ->
+                    FileCollection config = files("config.h")
+                    FileCollection libavcodec = files("avcodec.h", "avfft.h", "dxva2.h", "vaapi.h", "vda.h",
+                                                      "vdpau.h", "version.h", "xvmc.h", "old_codec_ids.h")
+                    FileCollection libavdevice = files("avdevice.h", "version.h")
+                    FileCollection libavfilter = files("avfiltergraph.h", "avfilter.h", "buffersink.h", "buffersrc.h", "version.h");
+                    FileCollection libavformat = files("avformat.h", "avio.h", "version.h")
+                    FileCollection libavresample = files("avresample.h", "version.h")
+                    FileCollection libavutil = files("adler32.h", "blowfish.h", "error.h", "log.h", "pixfmt.h",
+                                                     "aes.h", "bswap.h", "eval.h", "lzo.h", "random_seed.h",
+                                                     "attributes.h", "buffer.h", "fifo.h", "macros.h", "rational.h",
+                                                     "audio_fifo.h", "channel_layout.h", "file.h", "mathematics.h", "samplefmt.h",
+                                                     "avassert.h", "common.h", "frame.h", "md5.h", "sha.h",
+                                                     "avconfig.h", "imgutils.h", "mem.h", "time.h", "avstring.h",
+                                                     "cpu_internal.h", "intfloat.h", "opt.h", "version.h", "avutil.h",
+                                                     "crc.h", "intreadwrite.h", "parseutils.h", "xtea.h", "base64.h",
+                                                     "dict.h", "lfg.h", "pixdesc.h", "intfloat_readwrite.h", "old_pix_fmts.h", "audioconvert.h",
+                                                     "cpu.h")
+                    FileCollection libavutil_x86 = files("cpu.h") // Use cpu.h from x86 instead of libavutil root if exist
+                    FileCollection libswscale = files("swscale.h", "version.h")
+
+                    def copyLibAVFiles = {FileCollection files, String fDir, String tDir ->
+                        File dir = file(tDir)
+                        dir.mkdirs()
+
+                        files.each { File file ->
+                            copy {
+                                from fDir
+                                into tDir
+                                include file.name
+                            }
+                        }
+                    }
+
+                    copyLibAVFiles(config, fromDir, "${toDir}/include")
+                    copyLibAVFiles(libavcodec, "${fromDir}/libavcodec", "${toDir}/include/libavcodec")
+                    copyLibAVFiles(libavdevice, "${fromDir}/libavdevice", "${toDir}/include/libavdevice")
+                    copyLibAVFiles(libavfilter, "${fromDir}/libavfilter", "${toDir}/include/libavfilter")
+                    copyLibAVFiles(libavformat, "${fromDir}/libavformat", "${toDir}/include/libavformat")
+                    copyLibAVFiles(libavresample, "${fromDir}/libavresample", "${toDir}/include/libavresample")
+                    copyLibAVFiles(libavutil, "${fromDir}/libavutil", "${toDir}/include/libavutil")
+                    copyLibAVFiles(libavutil_x86, "${fromDir}/libavutil/x86", "${toDir}/include/libavutil")
+                    copyLibAVFiles(libswscale, "${fromDir}/libswscale", "${toDir}/include/libswscale")
+
+                    // Copy libs
+                    FileTree libs = fileTree(dir: "${fromDir}", include: "**/*.so*")
+                    libs.each {File file ->
+                        copy {
+                            from file
+                            into "${toDir}/lib"
+                        }
+                    }
+                }
+
+                def buildLibAVStubs = task("buildLibAVStubs", dependsOn: []) {
+                    enabled = IS_BUILD_LIBAV_STUBS
+
+                    doLast {
+                        project.ext.libav = [:]
+                        project.ext.libav.basedir = "${buildDir}/native/linux/libav"
+                        project.ext.libav.versions = [ "9.14", "11.4", "12.1" ]
+                        project.ext.libav.versionmap = [ "9.14" : "54", "11.4" : "56", "12.1" : "57" ]
+
+                        libav.versions.each { version ->
+                            def libavDir = "${libav.basedir}/libav-${version}"
+                            for (File f : configurations.media.files) {
+                                if (f.name.startsWith("libav-${version}")) {
+                                    File dir = file(libavDir)
+                                    dir.mkdirs()
+                                    def libavTar = "${libav.basedir}/libav-${version}.tar"
+                                    ant.gunzip(src: f, dest: libavTar)
+                                    ant.untar(src: libavTar, dest: libav.basedir)
+                                }
+                            }
+                        }
+
+                        libav.versions.each { version ->
+                            def libavDir = "${libav.basedir}/libav-${version}"
+                            File dir = file(libavDir)
+                            if (dir.exists()) {
+                                def configFile = "${libav.basedir}/libav-${version}/config.h"
+                                File cfgFile = file(configFile)
+                                if (!cfgFile.exists()) {
+                                    // Add execute permissions to version.sh, otherwise build fails
+                                    exec {
+                                        workingDir("$libavDir")
+                                        commandLine("chmod", "+x", "version.sh")
+                                    }
+                                    exec {
+                                        workingDir("$libavDir")
+                                        if (IS_BUILD_WORKING_LIBAV) {
+                                            commandLine(cfgCMDArgs + commonCfgArgs + codecsCfgArgs)
+                                        } else {
+                                            commandLine(cfgCMDArgs + commonCfgArgs)
+                                        }
+                                    }
+                                }
+                                exec {
+                                    workingDir("$libavDir")
+                                    commandLine("make")
+                                }
+                            }
+                        }
+
+                        libav.versions.each { version ->
+                            def fromDir = "${libav.basedir}/libav-${version}"
+                            def majorVersion = libav.versionmap[version]
+                            def toDir = "${libav.basedir}/libav-${majorVersion}"
+                            copyLibAVStubs(fromDir, toDir)
+                        }
+                    }
+                }
+
+                def buildLibAVFFmpegStubs = task("buildLibAVFFmpegStubs", dependsOn: []) {
+                    enabled = IS_BUILD_LIBAV_STUBS
+
+                    def extraCfgArgs = ["--build-suffix=-ffmpeg"]
+
+                    doLast {
+                        project.ext.libav = [:]
+                        project.ext.libav.basedir = "${buildDir}/native/linux/libavffmpeg"
+                        project.ext.libav.versions = [ "11.4" ]
+                        project.ext.libav.versionmap = [ "11.4" : "56" ]
+
+                        libav.versions.each { version ->
+                            def libavDir = "${libav.basedir}/libav-${version}"
+                            for (File f : configurations.media.files) {
+                                if (f.name.startsWith("libav-${version}")) {
+                                    File dir = file(libavDir)
+                                    dir.mkdirs()
+                                    def libavTar = "${libav.basedir}/libav-${version}.tar"
+                                    ant.gunzip(src: f, dest: libavTar)
+                                    ant.untar(src: libavTar, dest: libav.basedir)
+                                }
+                            }
+                        }
+
+                        libav.versions.each { version ->
+                            def libavDir = "${libav.basedir}/libav-${version}"
+                            File dir = file(libavDir)
+                            if (dir.exists()) {
+                                def configFile = "${libav.basedir}/libav-${version}/config.h"
+                                File cfgFile = file(configFile)
+                                if (!cfgFile.exists()) {
+                                    // Patch *.v files, so we have *_FFMPEG_$MAJOR instead of *_$MAJOR, otherwise library will not be loaded
+                                    FileTree vfiles = fileTree(dir: "${libavDir}", include: "**/*.v")
+                                    vfiles.each {File file ->
+                                        String data = file.getText("UTF-8")
+                                        data = data.replace("_\$MAJOR", "_FFMPEG_\$MAJOR")
+                                        file.write(data, "UTF-8")
+                                    }
+                                    // Add execute permissions to version.sh, otherwise build fails
+                                    exec {
+                                        workingDir("$libavDir")
+                                        commandLine("chmod", "+x", "version.sh")
+                                    }
+                                    exec {
+                                        workingDir("$libavDir")
+                                        if (IS_BUILD_WORKING_LIBAV) {
+                                            commandLine(cfgCMDArgs + commonCfgArgs + codecsCfgArgs + extraCfgArgs)
+                                        } else {
+                                            commandLine(cfgCMDArgs + commonCfgArgs + extraCfgArgs)
+                                        }
+                                    }
+                                }
+                                exec {
+                                    workingDir("$libavDir")
+                                    commandLine("make")
+                                }
+                            }
+                        }
+
+                        libav.versions.each { version ->
+                            def fromDir = "${libav.basedir}/libav-${version}"
+                            def majorVersion = libav.versionmap[version]
+                            def toDir = "${libav.basedir}/libav-${majorVersion}"
+                            copyLibAVStubs(fromDir, toDir)
+
+                            // Special case to copy *-ffmpeg.so to *.so
+                            FileTree libs = fileTree(dir: "${fromDir}", include: "**/*-ffmpeg.so")
+                            libs.each {File file ->
+                                copy {
+                                    from file
+                                    into "${toDir}/lib"
+                                    rename { String fileName ->
+                                        fileName.replace("-ffmpeg", "")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                def buildFFmpegStubs = task("buildFFmpegStubs", dependsOn: []) {
+                    enabled = IS_BUILD_LIBAV_STUBS
+
+                    doLast {
+                        project.ext.libav = [:]
+                        project.ext.libav.basedir = "${buildDir}/native/linux/ffmpeg"
+                        project.ext.libav.versions = [ "3.3.3" ]
+                        project.ext.libav.versionmap = [ "3.3.3" : "57" ]
+
+                        libav.versions.each { version ->
+                            def libavDir = "${libav.basedir}/ffmpeg-${version}"
+                            for (File f : configurations.media.files) {
+                                if (f.name.startsWith("ffmpeg-${version}")) {
+                                    File dir = file(libavDir)
+                                    dir.mkdirs()
+                                    def libavTar = "${libav.basedir}/ffmpeg-${version}.tar"
+                                    ant.gunzip(src: f, dest: libavTar)
+                                    ant.untar(src: libavTar, dest: libav.basedir)
+                                }
+                            }
+                        }
+
+                        libav.versions.each { version ->
+                            def libavDir = "${libav.basedir}/ffmpeg-${version}"
+                            File dir = file(libavDir)
+                            if (dir.exists()) {
+                                def configFile = "${libav.basedir}/ffmpeg-${version}/config.h"
+                                File cfgFile = file(configFile)
+                                if (!cfgFile.exists()) {
+                                    // Add execute permissions to version.sh, otherwise build fails
+                                    exec {
+                                        workingDir("$libavDir")
+                                        commandLine("chmod", "+x", "version.sh")
+                                    }
+                                    exec {
+                                        workingDir("$libavDir")
+                                        if (IS_BUILD_WORKING_LIBAV) {
+                                            commandLine(cfgCMDArgs + commonCfgArgs + codecsCfgArgs)
+                                        } else {
+                                            commandLine(cfgCMDArgs + commonCfgArgs)
+                                        }
+                                    }
+                                }
+                                exec {
+                                    workingDir("$libavDir")
+                                    commandLine("make")
+                                }
+                            }
+                        }
+
+                        libav.versions.each { version ->
+                            def fromDir = "${libav.basedir}/ffmpeg-${version}"
+                            def majorVersion = libav.versionmap[version]
+                            def toDir = "${libav.basedir}/ffmpeg-${majorVersion}"
+                            copyLibAVStubs(fromDir, toDir)
+                        }
+                    }
+                }
+
+
+                def buildAVPlugin = task( "buildAVPlugin", dependsOn: [buildPlugins,buildLibAVStubs, buildLibAVFFmpegStubs, buildFFmpegStubs]) {
                     enabled = IS_COMPILE_MEDIA
 
                     doLast {
-                        if (project.ext.properties.containsKey("libav")) {
+                        if (IS_BUILD_LIBAV_STUBS) {
+                            project.ext.libav = [:]
+                            project.ext.libav.basedir = "${buildDir}/native/linux/libav/libav"
+                            project.ext.libav.versions = [ "53", "54", "55", "56", "57" ]
+                            project.ext.libav.libavffmpeg = [:]
+                            project.ext.libav.libavffmpeg.basedir = "${buildDir}/native/linux/libavffmpeg/libav"
+                            project.ext.libav.libavffmpeg.versions = [ "56" ]
+                            project.ext.libav.ffmpeg = [:]
+                            project.ext.libav.ffmpeg.basedir = "${buildDir}/native/linux/ffmpeg/ffmpeg"
+                            project.ext.libav.ffmpeg.versions = [ "57" ]
+
                             project.ext.libav.versions.each { version ->
                                 def libavDir = "${project.ext.libav.basedir}-${version}"
                                 File dir = file(libavDir)
                                 if (dir.exists()) {
                                     exec {
                                         commandLine ("make", "${makeJobsFlag}", "-C", "${nativeSrcDir}/gstreamer/projects/linux/avplugin")
-                                        args("CC=${mediaProperties.compiler}", "OUTPUT_DIR=${nativeOutputDir}", "BUILD_TYPE=${buildType}",
+                                        args("CC=${mediaProperties.compiler}", "LINKER=${mediaProperties.linker}",
+                                             "OUTPUT_DIR=${nativeOutputDir}", "BUILD_TYPE=${buildType}",
                                              "BASE_NAME=avplugin", "VERSION=${version}", "LIBAV_DIR=${libavDir}",
-                                             "SUFFIX=", IS_64 ? "ARCH=x64" : "ARCH=x32")
+                                             "SUFFIX=", IS_64 ? "ARCH=x64" : "ARCH=x32", OS_ARCH.toLowerCase().contains("aarch") ? "OS_ARCH=aarch64" : "OS_ARCH=x86")
+                                    }
+                                }
+                            }
+
+                            project.ext.libav.libavffmpeg.versions.each { version ->
+                                def libavDir = "${project.ext.libav.libavffmpeg.basedir}-${version}"
+                                File dir = file(libavDir)
+                                if (dir.exists()) {
+                                    exec {
+                                        commandLine ("make", "${makeJobsFlag}", "-C", "${nativeSrcDir}/gstreamer/projects/linux/avplugin")
+                                        args("CC=${mediaProperties.compiler}", "LINKER=${mediaProperties.linker}",
+                                             "OUTPUT_DIR=${nativeOutputDir}", "BUILD_TYPE=${buildType}",
+                                             "BASE_NAME=avplugin", "VERSION=${version}", "LIBAV_DIR=${libavDir}",
+                                             "SUFFIX=-ffmpeg", IS_64 ? "ARCH=x64" : "ARCH=x32", OS_ARCH.toLowerCase().contains("aarch") ? "OS_ARCH=aarch64" : "OS_ARCH=x86")
                                     }
                                 }
                             }
@@ -2370,7 +2707,7 @@ project(":media") {
                                         args("CC=${mediaProperties.compiler}", "LINKER=${mediaProperties.linker}",
                                              "OUTPUT_DIR=${nativeOutputDir}", "BUILD_TYPE=${buildType}",
                                              "BASE_NAME=avplugin", "VERSION=${version}", "LIBAV_DIR=${libavDir}",
-                                             "SUFFIX=-ffmpeg", IS_64 ? "ARCH=x64" : "ARCH=x32")
+                                             "SUFFIX=-ffmpeg", IS_64 ? "ARCH=x64" : "ARCH=x32", OS_ARCH.toLowerCase().contains("aarch") ? "OS_ARCH=aarch64" : "OS_ARCH=x86")
                                     }
                                 }
                             }
@@ -2379,7 +2716,7 @@ project(":media") {
                             exec {
                                 commandLine ("make", "${makeJobsFlag}", "-C", "${nativeSrcDir}/gstreamer/projects/linux/avplugin")
                                 args("CC=${mediaProperties.compiler}", "OUTPUT_DIR=${nativeOutputDir}", "BUILD_TYPE=${buildType}",
-                                     "BASE_NAME=avplugin", IS_64 ? "ARCH=x64" : "ARCH=x32")
+                                     "BASE_NAME=avplugin", IS_64 ? "ARCH=x64" : "ARCH=x32", OS_ARCH.toLowerCase().contains("aarch") ? "OS_ARCH=aarch64" : "OS_ARCH=x86")
                             }
                         }
                     }
@@ -2461,14 +2798,14 @@ project(":media") {
                             commandLine ("make", "${makeJobsFlag}", "-C", "${nativeSrcDir}/gstreamer/projects/${projectDir}/libffi")
                             args("OUTPUT_DIR=${nativeOutputDir}", "BUILD_TYPE=${buildType}", "BASE_NAME=ffi")
                             args("CC=${mediaProperties.compiler}", "LINK=${mediaProperties.linker}", "AR=${mediaProperties.ar}")
-                            args(IS_64 ? "ARCH=x64" : "ARCH=x32")
+                            args(IS_64 ? "ARCH=x64" : "ARCH=x32", OS_ARCH.toLowerCase().contains("aarch") ? "OS_ARCH=aarch64" : "OS_ARCH=x86")
                         }
 
                         exec {
                             commandLine ("make", "${makeJobsFlag}", "-C", "${nativeSrcDir}/gstreamer/projects/${projectDir}/glib-lite")
                             args("OUTPUT_DIR=${nativeOutputDir}", "BUILD_TYPE=${buildType}", "BASE_NAME=glib-lite")
                             args("CC=${mediaProperties.compiler}", "LINK=${mediaProperties.linker}", "LIB=${mediaProperties.lib}")
-                            args(IS_64 ? "ARCH=x64" : "ARCH=x32")
+                            args(IS_64 ? "ARCH=x64" : "ARCH=x32", OS_ARCH.toLowerCase().contains("aarch") ? "OS_ARCH=aarch64" : "OS_ARCH=x86")
                         }
                     }
                 }
@@ -2596,8 +2933,14 @@ project(":web") {
                     } else if (t.name == "linux") {
                         cmakeArgs = " $cmakeArgs -DCMAKE_SYSTEM_NAME=Linux"
                         if (IS_64) {
+                        if (OS_ARCH.toLowerCase().contains("aarch"))
+                            cmakeArgs = "$cmakeArgs -DCMAKE_SYSTEM_PROCESSOR=aarch64"
+                        else
                             cmakeArgs = "$cmakeArgs -DCMAKE_SYSTEM_PROCESSOR=x86_64"
                         } else {
+                        if (OS_ARCH.toLowerCase().contains("arm"))
+                            fail("ARM target is not supported as of now.")
+                        else
                             cmakeArgs = "$cmakeArgs -DCMAKE_SYSTEM_PROCESSOR=i586"
                         }
                         // TODO: Use cflags and ldflags from all platforms
@@ -2931,7 +3274,7 @@ compileTargets { t ->
     def jfxrtTask = task("jfxrt$t.capital", type: Jar) {
         group = "Basic"
         description = "Creates the jfxrt.jar for the $t.name target"
-        archiveName = "build/${sdkDirName}/rt/lib/ext/jfxrt.jar";
+        archiveName = "${buildDir}/${sdkDirName}/rt/lib/ext/jfxrt.jar";
         includeEmptyDirs = false
         from("modules/base/build/classes/java/main",
              "modules/base/build/resources/main",
@@ -3052,7 +3395,7 @@ compileTargets { t ->
         enabled = COMPILE_SWT
         group = "Basic"
         description = "Creates the jfxswt.jar for the $t.name target"
-        archiveName = "build/${sdkDirName}/rt/lib/jfxswt.jar";
+        archiveName = "${buildDir}/${sdkDirName}/rt/lib/jfxswt.jar";
         includeEmptyDirs = false
         from("modules/swt/build/classes/java/main");
         from("modules/builders/build/classes/java/main");
@@ -3074,7 +3417,7 @@ compileTargets { t ->
     def jmxTask = task ("jmx${t.capital}", type: Jar) {
         group = "Basic"
         description = "Creates the javafx-mx.jar"
-        archiveName = "build/${sdkDirName}/lib/javafx-mx.jar";
+        archiveName = "${buildDir}/${sdkDirName}/lib/javafx-mx.jar";
         includeEmptyDirs = false
         from "modules/jmx/build/classes/java/main"
         from "modules/jmx/build/resources/main"

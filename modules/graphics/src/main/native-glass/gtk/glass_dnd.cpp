@@ -556,7 +556,7 @@ static GdkDragContext *get_drag_context() {
     return ctx;
 }
 
-static gboolean dnd_finish_callback() {
+static gboolean dnd_finish_callback(gpointer) {
     if (dnd_window) {
         dnd_set_performed_action(
                 translate_gdk_action_to_glass(
@@ -1084,6 +1084,12 @@ gboolean DragView::get_drag_image_offset(int* x, int* y) {
     return offset_set;
 }
 
+static void pixbufDestroyNotifyFunc(guchar *pixels, gpointer) {
+    if (pixels != NULL) {
+        g_free(pixels);
+    }
+}
+
 GdkPixbuf* DragView::get_drag_image(gboolean* is_raw_image, gint* width, gint* height) {
     GdkPixbuf *pixbuf = NULL;
     gboolean is_raw = FALSE;
@@ -1111,7 +1117,7 @@ GdkPixbuf* DragView::get_drag_image(gboolean* is_raw_image, gint* width, gint* h
                     if (data) {
                         memcpy(data, (raw + whsz), nraw - whsz);
                         pixbuf = gdk_pixbuf_new_from_data(data, GDK_COLORSPACE_RGB, TRUE, 8,
-                                w, h, w * 4, (GdkPixbufDestroyNotify) g_free, NULL);
+                                w, h, w * 4, pixbufDestroyNotifyFunc, NULL); 
                     }
                 }
             }
