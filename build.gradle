@@ -213,6 +213,14 @@ void fail(String msg) {
     throw new GradleException("FAIL: " + msg);
 }
 
+boolean isGradleVersionGT4() {
+    def ver = gradle.gradleVersion.split("[\\.]");
+    def gradleMajor = Integer.parseInt(ver[0]);
+    if (gradleMajor > 4){
+        return true
+    }
+    return false
+}
 /******************************************************************************
  *                                                                            *
  *                   Definition of project properties                         *
@@ -332,7 +340,8 @@ defineProperty("COMPILE_PARFAIT", "false")
 ext.IS_COMPILE_PARFAIT = Boolean.parseBoolean(COMPILE_PARFAIT)
 
 // COMPILE_JFR specifies whether to build code that logs to JRockit Flight Recorder
-defineProperty("COMPILE_JFR", Boolean.toString(file("$JDK_HOME/jre/lib/jfr.jar").exists()))
+// defineProperty("COMPILE_JFR", Boolean.toString(file("$JDK_HOME/jre/lib/jfr.jar").exists()))
+defineProperty("COMPILE_JFR","false")
 ext.IS_COMPILE_JFR = Boolean.parseBoolean(COMPILE_JFR)
 
 // RETAIN_PACKAGER_TESTS specifies whether the tests in fxpackager should
@@ -1154,6 +1163,11 @@ allprojects {
         repositories {
             mavenCentral()
             ivy {
+                if (isGradleVersionGT4()){
+                    metadataSources {
+                        artifact()
+                    }
+                }
                 url "http://download.eclipse.org/eclipse/updates/4.6/R-4.6.3-201703010400/plugins/"
                 layout "pattern", {
                     artifact "[artifact].[ext]"
@@ -1166,6 +1180,11 @@ allprojects {
         repositories {
             ivy {
                 url JFX_DEPS_URL
+                if (isGradleVersionGT4()){
+                    metadataSources {
+                        artifact()
+                    }
+                }
                 layout "pattern", {
                     artifact "[artifact]-[revision](-[classifier]).[ext]"
                     artifact "[artifact].[ext]"
@@ -1178,12 +1197,22 @@ allprojects {
         repositories {
 
             ivy {
+                if (isGradleVersionGT4()){
+                    metadataSources {
+                        artifact()
+                    }
+                }
                 url libAVRepositoryURL
                 layout "pattern", {
                     artifact "[artifact].[ext]"
                 }
             }
             ivy {
+                if (isGradleVersionGT4()){
+                    metadataSources {
+                        artifact()
+                    }
+                }
                 url FFmpegRepositoryURL
                 layout "pattern", {
                     artifact "[artifact].[ext]"
@@ -1754,6 +1783,12 @@ project(":fxml") {
 
 project(":builders") {
     sourceCompatibility = 1.7
+
+    if (isGradleVersionGT4()){
+        java {
+            disableAutoTargetJvm()
+        }
+    }
 
     if (!COMPILE_SWING) sourceSets.main.java.exclude ("**/swing/**")
     if (!COMPILE_SWT)   sourceSets.main.java.exclude ("**/swt/**")
@@ -3096,6 +3131,11 @@ compileTargets { t ->
         group = "Basic"
         description = "Creates the jfxrt.jar for the $t.name target"
         archiveName = "${buildDir}/${sdkDirName}/rt/lib/ext/jfxrt.jar";
+
+        if (isGradleVersionGT4()){
+            destinationDirectory = file("${buildDir}/${sdkDirName}/rt/lib/ext")
+            archiveFileName = "jfxrt.jar"
+        }
         includeEmptyDirs = false
         from("modules/base/build/classes/java/main",
              "modules/base/build/resources/main",
@@ -3217,6 +3257,10 @@ compileTargets { t ->
         group = "Basic"
         description = "Creates the jfxswt.jar for the $t.name target"
         archiveName = "${buildDir}/${sdkDirName}/rt/lib/jfxswt.jar";
+        if (isGradleVersionGT4()){
+            destinationDirectory = file("${buildDir}/${sdkDirName}/rt/lib/")
+            archiveFileName = "jfxswt.jar"
+        }
         includeEmptyDirs = false
         from("modules/swt/build/classes/java/main");
         from("modules/builders/build/classes/java/main");
@@ -3239,6 +3283,10 @@ compileTargets { t ->
         group = "Basic"
         description = "Creates the javafx-mx.jar"
         archiveName = "${buildDir}/${sdkDirName}/lib/javafx-mx.jar";
+        if (isGradleVersionGT4()){
+            destinationDirectory = file("${buildDir}/${sdkDirName}/rt/lib/")
+            archiveFileName = "javafx-mx.jar"
+        }
         includeEmptyDirs = false
         from "modules/jmx/build/classes/java/main"
         from "modules/jmx/build/resources/main"

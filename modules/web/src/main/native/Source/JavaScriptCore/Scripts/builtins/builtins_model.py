@@ -210,7 +210,7 @@ class BuiltinsCollection:
 
         result = []
 
-        for owner, years in owner_to_years.items():
+        for owner, years in list(owner_to_years.items()):
             sorted_years = list(years)
             sorted_years.sort()
             result.append("%s %s" % (', '.join(sorted_years), owner))
@@ -231,7 +231,7 @@ class BuiltinsCollection:
         for object in [o for o in self.objects if 'internal' in o.annotations]:
             result.extend(object.functions)
 
-        result.sort()
+        #result.sort()
         return result
 
     # Private methods.
@@ -304,4 +304,4 @@ class BuiltinsCollection:
             functionBounds.append((start, end))
 
         functionStrings = [text[start:end].strip() for (start, end) in functionBounds]
-        return map(BuiltinFunction.fromString, functionStrings)
+        return list(map(BuiltinFunction.fromString, functionStrings))

@@ -36,8 +36,18 @@ logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.ERROR)
 log = logging.getLogger('global')
 
 from lazywriter import LazyFileWriter
+from builtins_model import *
+from builtins_templates import *
+from builtins_generator import *
+from builtins_generate_combined_header import *
+from builtins_generate_combined_implementation import *
+from builtins_generate_separate_header import *
+from builtins_generate_separate_implementation import *
+from builtins_generate_wrapper_header import *
+from builtins_generate_wrapper_implementation import *
+from builtins_generate_internals_wrapper_header import *
+from builtins_generate_internals_wrapper_implementation import *
 
-from builtins import *
 
 
 def concatenated_output_filename(builtins_files, framework_name, generate_only_wrapper_files):
@@ -132,7 +142,7 @@ if __name__ == '__main__':
     cli_parser.add_option("-t", "--test", action="store_true", help="Enable test mode.")
 
     arg_options, arg_values = cli_parser.parse_args()
-    if len(arg_values) is 0 and not arg_options.input_directory:
+    if len(arg_values) == 0 and not arg_options.input_directory:
         raise ParseException("At least one input file or directory expected.")
 
     if not arg_options.output_directory:
@@ -146,7 +156,7 @@ if __name__ == '__main__':
         for filepath in os.listdir(arg_options.input_directory):
             input_filepaths.append(os.path.join(arg_options.input_directory, filepath))
 
-    input_filepaths = sorted(filter(lambda name: fnmatch.fnmatch(name, '*.js'), input_filepaths))
+    input_filepaths = sorted([name for name in input_filepaths if fnmatch.fnmatch(name, '*.js')])
 
     options = {
         'output_path': arg_options.output_directory,
@@ -159,7 +169,7 @@ if __name__ == '__main__':
 
     log.debug("Generating code for builtins.")
     log.debug("Parsed options:")
-    for option, value in options.items():
+    for option, value in list(options.items()):
         log.debug("    %s: %s" % (option, value))
     log.debug("")
     log.debug("Input files:")
