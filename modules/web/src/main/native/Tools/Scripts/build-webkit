@@ -277,7 +277,7 @@ if (isCMakeBuild()) {
         # If the user environment is not setting a specific number of process,
         # then don't pass the number of jobs to Ninja. Because Ninja will
         # automatically determine the number of jobs to run in parallel.
-        $makeArgs .= ($makeArgs ? " " : "") . "-j" . numberOfCPUs() if $makeArgs !~ /-j\s*\d+/;
+        $makeArgs .= ($makeArgs ? " " : "") . "-j" . (totalMemory() < 8 ? 4 : numberOfCPUs()) if $makeArgs !~ /-j\s*\d+/;
     }
 
     my $maxCPULoad = maxCPULoad() if $makeArgs !~ /-l\s*\d+\.?\d*/;

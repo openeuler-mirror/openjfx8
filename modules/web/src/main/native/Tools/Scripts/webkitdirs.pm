@@ -131,6 +131,7 @@ our @EXPORT_OK;
 my $architecture;
 my $asanIsEnabled;
 my $numberOfCPUs;
+my $totalMemory;
 my $maxCPULoad;
 my $baseProductDir;
 my @baseProductDirOption;
@@ -444,6 +445,19 @@ sub determineNumberOfCPUs
         chomp($numberOfCPUs = `sysctl -n hw.ncpu`);
     } else {
         $numberOfCPUs = 1;
+    }
+}
+
+sub determineTotalMemory
+{
+    return if defined $totalMemory;
+    if (isLinux()) {
+        chomp($totalMemory = int(`free -m | awk '{print \$2'} | sed -n '2p'` / 1024));
+    } elsif (isAnyWindows()) {
+        chomp($totalMemory = int(`cat /proc/meminfo | grep "MemTotal" | awk '{print \$2}'` / 1024 / 1024));
+    }
+    if ($totalMemory eq ""){
+	$totalMemory = 8;
     }
 }
 
@@ -1011,6 +1025,12 @@ sub numberOfCPUs()
 {
     determineNumberOfCPUs();
     return $numberOfCPUs;
+}
+
+sub totalMemory()
+{
+    determineTotalMemory();
+    return $totalMemory;
 }
 
 sub maxCPULoad()
@@ -2292,14 +2312,16 @@ sub generateBuildSystemFromCMakeProject
     } elsif (isJava() && isAnyWindows()) {
         push @args, "-G";
         if (isWin64()) {
-            push @args, '"Visual Studio 15 2017 Win64"';
-            push @args, '-DCMAKE_GENERATOR_TOOLSET="host=x64"';
+            push @args, '"Visual Studio 16 2019" -A x64 -T v141';
+            #conflict with v141
+            #push @args, '-DCMAKE_GENERATOR_TOOLSET="host=x64"';
         } else {
-            push @args, '"Visual Studio 15 2017"';
+            push @args, "'Visual Studio 16 2019' -A Win32 -T v141";
         }
     } elsif (isAnyWindows() && isWin64()) {
-        push @args, '-G "Visual Studio 15 2017 Win64"';
-        push @args, '-DCMAKE_GENERATOR_TOOLSET="host=x64"';
+        push @args, '-G "Visual Studio 16 2019" -A x64 -T v141';
+        #conflict with v141
+        #push @args, '-DCMAKE_GENERATOR_TOOLSET="host=x64"';
     }
     # Do not show progress of generating bindings in interactive Ninja build not to leave noisy lines on tty
     push @args, '-DSHOW_BINDINGS_GENERATION_PROGRESS=1' unless ($willUseNinja && -t STDOUT);

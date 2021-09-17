@@ -41,18 +41,18 @@ WIN.libDest = "bin"
 
 def CPU_BITS = IS_64 ? "x64" : "x86"
 
-WIN.WINDOWS_VS_VER = "150"
+WIN.WINDOWS_VS_VER = "141"
 WIN.WINDOWS_SDK_DIR = "C:/Program Files (x86)/Microsoft SDKs/Windows/v10.0A"
-WIN.WINDOWS_DXSDK_DIR = "D:/Windows Kits/10"
-WIN.WINDOWS_VS_VSINSTALLDIR="D:/buildtools/VisualStudio2017"
-WIN.WINDOWS_KITS_INCLUDEDIR="D:/Windows Kits/10/Include/10.0.17134.0"
-WIN.WINDOWS_KITS_LIBDIR="D:/Windows Kits/10/Lib/10.0.17134.0"
+WIN.WINDOWS_DXSDK_DIR = "C:/Program Files (x86)/Windows Kits/10"
+WIN.WINDOWS_VS_VSINSTALLDIR="D:/buildtools/VisualStudio2019"
+WIN.WINDOWS_KITS_INCLUDEDIR="C:/Program Files (x86)/Windows Kits/10/Include/10.0.17134.0"
+WIN.WINDOWS_KITS_LIBDIR="C:/Program Files (x86)/Windows Kits/10/Lib/10.0.17134.0"
 
 //locate rc.exe and fxc.exe
 //WIN.winSdkBinDir="C:/Program Files (x86)/Windows Kits/10/bin/x64"
 WIN.winSdkBinDir=IS_64
-           ? "D:/Windows Kits/10/bin/10.0.17134.0/x64"
-           : "D:/Windows Kits/10/bin/10.0.17134.0/x86"
+           ? "C:/Program Files (x86)/Windows Kits/10/bin/10.0.17134.0/x64"
+           : "C:/Program Files (x86)/Windows Kits/10/bin/10.0.17134.0/x86"
 setupTools("windows_tools",
     { propFile ->
         if (project.hasProperty('setupWinTools')) {
@@ -83,7 +83,7 @@ setupTools("windows_tools",
     },
     { properties ->
         defineProperty("WINDOWS_VS_VSINSTALLDIR", properties, "$WIN.WINDOWS_VS_VSINSTALLDIR");
-        defineProperty("WINDOWS_VS_WINSDKDLLINSTALLDIR", properties, "D:/Windows Kits/10/Redist/ucrt/DLLs");
+        defineProperty("WINDOWS_VS_WINSDKDLLINSTALLDIR", properties, "C:/Program Files (x86)/Windows Kits/10/Redist/ucrt/DLLs");
         defineProperty("WINDOWS_SDK_DIR", properties, System.getenv().get("WINSDK_DIR"))
         defineProperty("WINDOWS_SDK_VERSION", properties, "")
         defineProperty("WINDOWS_VS_VCINSTALLDIR", properties, "$WINDOWS_VS_VSINSTALLDIR/VC")
@@ -92,7 +92,7 @@ setupTools("windows_tools",
         defineProperty("WINDOWS_VS_MSVCDIR", properties, WINDOWS_VS_VCINSTALLDIR)
         defineProperty("WINDOWS_DXSDK_DIR", properties, System.getenv().get("DXSDK_DIR"))
         defineProperty("WINDOWS_VS_INCLUDE", properties, "$WINDOWS_VS_VCINSTALLDIR/INCLUDE;" + "$WINDOWS_SDK_DIR/include;")
-        defineProperty("WINDOWS_VS_VER", properties, "150")
+        defineProperty("WINDOWS_VS_VER", properties, "141")
         defineProperty("WINDOWS_CRT_VER", properties, "150")
         defineProperty("WINDOWS_VS_LIB", properties, "$WINDOWS_VS_VCINSTALLDIR/LIB;" + "$WINDOWS_SDK_DIR/lib;")
         defineProperty("WINDOWS_VS_LIBPATH", properties, "$WINDOWS_VS_VCINSTALLDIR/LIB;")
@@ -128,7 +128,7 @@ def ccFlags = ["/nologo", "/W3", "/EHsc", "/c",
         "/DUNICODE", "/D_UNICODE", "/DWIN32", "/DIAL", "/D_LITTLE_ENDIAN", "/DWIN32_LEAN_AND_MEAN",
         "/I$JDK_HOME/include", "/I$JDK_HOME/include/win32",
        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt",
-       "/I$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/include",
+       "/I$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/include",
        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/um",
        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/shared",
         ccDebugFlags].flatten();
@@ -137,8 +137,8 @@ def linkFlags = ["/nologo", "/dll", "/manifest", "/opt:REF", "/incremental:no", 
 if (!IS_64) linkFlags.add("/safeseh");
 if (IS_DEBUG_NATIVE) linkFlags.add("/debug");
 linkFlags.add(IS_64
-                ? "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/lib/x64/"
-                : "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/lib/x86/")
+                ? "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/lib/x64/"
+                : "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/lib/x86/")
 linkFlags.add(IS_64
                 ? "/LIBPATH:$WIN.WINDOWS_KITS_LIBDIR/um/x64/"
                 : "/LIBPATH:$WIN.WINDOWS_KITS_LIBDIR/um/x86/")
@@ -152,8 +152,8 @@ if (WIN.WINDOWS_VS_VER != "100") {
 }
 
 def WINDOWS_VS_LIBPATH = IS_64
-                ? "$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/lib/x64"
-                : "$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/lib/x86"
+                ? "$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/lib/x64"
+                : "$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/lib/x86"
 ext.WINDOWS_NATIVE_COMPILE_ENVIRONMENT = [
         "VCINSTALLDIR"         : WINDOWS_VS_VCINSTALLDIR,
         "VSINSTALLDIR"         : WINDOWS_VS_VSINSTALLDIR,
@@ -161,27 +161,27 @@ ext.WINDOWS_NATIVE_COMPILE_ENVIRONMENT = [
         "MSVCDIR"              : WINDOWS_VS_MSVCDIR,
         "VS_VER"               : WINDOWS_VS_VER,
         "PATH"                 : WINDOWS_VS_PATH,
-        "INCLUDE1"              : "D:/buildtools/VisualStudio2017/VC/Tools/MSVC/14.14.26428/include",
-        "INCLUDE2"              : "D:/Windows\\ Kits/10/Include/10.0.17134.0/ucrt",
-        "INCLUDE3"              : "D:/Windows\\ Kits/10/Include/10.0.17134.0/um",
-        "INCLUDE4"              : "D:/Windows\\ Kits/10/Include/10.0.17134.0/shared",
+        "INCLUDE1"              : "D:/buildtools/VisualStudio2019/VC/Tools/MSVC/14.16.27023/include",
+        "INCLUDE2"              : "C:/Program\\ Files\\ \\(x86\\)/Windows\\ Kits/10/Include/10.0.17134.0/ucrt",
+        "INCLUDE3"              : "C:/Program\\ Files\\ \\(x86\\)/Windows\\ Kits/10/Include/10.0.17134.0/um",
+        "INCLUDE4"              : "C:/Program\\ Files\\ \\(x86\\)/Windows\\ Kits/10/Include/10.0.17134.0/shared",
         "LIB"                   : WINDOWS_VS_LIB,
         "LIBPATH1"              : IS_64
-                                    ? "D:/buildtools/VisualStudio2017/VC/Tools/MSVC/14.14.26428/lib/x64"
-                                    : "D:/buildtools/VisualStudio2017/VC/Tools/MSVC/14.14.26428/lib/x86",
+                                    ? "D:/buildtools/VisualStudio2019/VC/Tools/MSVC/14.16.27023/lib/x64"
+                                    : "D:/buildtools/VisualStudio2019/VC/Tools/MSVC/14.16.27023/lib/x86",
         "LIBPATH2"              : IS_64
-                                    ? "D:/Windows\\ Kits/10/Lib/10.0.17134.0/ucrt/x64"
-                                    : "D:/Windows\\ Kits/10/Lib/10.0.17134.0/ucrt/x86",
+                                    ? "C:/Program\\ Files\\ \\(x86\\)/Windows\\ Kits/10/Lib/10.0.17134.0/ucrt/x64"
+                                    : "C:/Program\\ Files\\ \\(x86\\)/Windows\\ Kits/10/Lib/10.0.17134.0/ucrt/x86",
         "LIBPATH3"              : IS_64
-                                    ? "D:/Windows\\ Kits/10/Lib/10.0.17134.0/um/x64"
-                                    : "D:/Windows\\ Kits/10/Lib/10.0.17134.0/um/x86",
+                                    ? "C:/Program\\ Files\\ \\(x86\\)/Windows\\ Kits/10/Lib/10.0.17134.0/um/x64"
+                                    : "C:/Program\\ Files\\ \\(x86\\)/Windows\\ Kits/10/Lib/10.0.17134.0/um/x86",
         "DXSDK_DIR"            : WINDOWS_DXSDK_DIR
 ];
-def msvcVer = System.getenv("MSVC_VER") ?: "14.14.26428"
+def msvcVer = System.getenv("MSVC_VER") ?: "14.16.27023"
 def msvcBinDir = ""
 if (hasProperty('toolchainDir')) {
     msvcBinDir = "$WINDOWS_VS_VSINSTALLDIR/VC/bin/$CPU_BITS"
-} else if (winVsVer == 150) {
+} else if (winVsVer == 141) {
     msvcBinDir = "$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/$msvcVer/bin/Host${CPU_BITS}/$CPU_BITS"
 } else if (winVsVer <= 120) {
     msvcBinDir = (IS_64
@@ -213,7 +213,7 @@ def msvcRedstDir
 if (hasProperty('toolchainDir')) {
     msvcRedstDir = "$WINDOWS_VS_VSINSTALLDIR/VC/Redist/$CPU_BITS"
 } else {
-    def msvcRedistVer = System.getenv("MSVC_REDIST_VER") ?: "14.14.26405"
+    def msvcRedistVer = System.getenv("MSVC_REDIST_VER") ?: "14.16.27012"
     msvcRedstDir = "$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Redist/MSVC/$msvcRedistVer/$CPU_BITS"
 }
 
@@ -223,8 +223,8 @@ def WINDOWS_DLL_VER = WIN.WINDOWS_VS_VER
 ext.MSVCR = null
 ext.MSVCP = null
 
-def windowsCRTVer = System.getenv("WINDOWS_CRT_VER") ?: WINDOWS_CRT_VER
-if (WIN.WINDOWS_VS_VER == "150") {
+def windowsCRTVer = System.getenv("WINDOWS_CRT_VER") ?: "141"
+if (WIN.WINDOWS_VS_VER == "141") {
     WINDOWS_DLL_VER = "140"
     ext.MSVCR = cygpath("${msvcRedstDir}/Microsoft.VC${windowsCRTVer}.CRT/vcruntime${WINDOWS_DLL_VER}.dll")
     ext.MSVCP = cygpath("${msvcRedstDir}/Microsoft.VC${windowsCRTVer}.CRT/msvcp${WINDOWS_DLL_VER}.dll")
@@ -333,7 +333,7 @@ def rcFlags = [
     "/d", "\"JFX_FVER=${rcVerComma}\"",
     "/d", "\"JFX_FTYPE=0x2L\"",
    "/I",file("$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt/"),
-   "/I",file("$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/include"),
+   "/I",file("$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/include"),
    "/I",file("$WIN.WINDOWS_KITS_INCLUDEDIR/um"),
    "/I",file("$WIN.WINDOWS_KITS_INCLUDEDIR/shared"),
     "/nologo"
@@ -353,7 +353,7 @@ WIN.glass.rcSource = file("modules/graphics/src/main/native-glass/win/GlassResou
 WIN.glass.rcFlags = [
     "/I", file("modules/graphics/src/main/resources"),
    "/I",file("$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt/"),
-   "/I",file("$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/include"),
+   "/I",file("$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/include"),
    "/I",file("$WIN.WINDOWS_KITS_INCLUDEDIR/um"),
    "/I",file("$WIN.WINDOWS_KITS_INCLUDEDIR/shared"),
     "/d", "JFX_FNAME=glass.dll",
@@ -421,7 +421,7 @@ WIN.launcher.compiler = compiler
 WIN.launcher.ccFlags = ["/nologo", "/W3", "/MT", "/EHsc", "/D_WINDOWS", "/DUNICODE", "/D_UNICODE", "/DWIN32","/GS",
         "/D_LITTLE_ENDIAN", "/DWIN32_LEAN_AND_MEAN", "/I$JDK_HOME/include", "/I$JDK_HOME/include/win32",
        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt",
-       "/I$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/include",
+       "/I$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/include",
        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/um",
        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/shared",
         ccDebugFlags].flatten();
@@ -435,8 +435,8 @@ WIN.launcher.linkFlags.add(IS_64
                                 ? "/LIBPATH:$WIN.WINDOWS_KITS_LIBDIR/ucrt/x64/"
                                 : "/LIBPATH:$WIN.WINDOWS_KITS_LIBDIR/ucrt/x86/");
 WIN.launcher.linkFlags.add(IS_64
-                                ? "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/lib/x64/"
-                                : "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/lib/x86/");
+                                ? "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/lib/x64/"
+                                : "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/lib/x86/");
 
 WIN.launcherlibrary = [:]
 WIN.launcherlibrary.compiler = compiler
@@ -444,7 +444,7 @@ WIN.launcherlibrary.ccFlags = ["/nologo", "/W3","/GS",
         // "/WX",
         "/EHsc", "/c", "/D_WINDOWS", "/DUNICODE", "/D_UNICODE", "/DWIN32",
        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt/",
-       "/I$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/include",
+       "/I$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/include",
        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/um",
        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/shared",
         "/D_LITTLE_ENDIAN", "/DWIN32_LEAN_AND_MEAN", "/I$JDK_HOME/include", "/I$JDK_HOME/include/win32",
@@ -460,14 +460,14 @@ WIN.launcherlibrary.linkFlags.add(IS_64
                                 ? "/LIBPATH:$WIN.WINDOWS_KITS_LIBDIR/ucrt/x64/"
                                 : "/LIBPATH:$WIN.WINDOWS_KITS_LIBDIR/ucrt/x86/");
 WIN.launcherlibrary.linkFlags.add(IS_64
-                                ? "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/lib/x64/"
-                                : "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/lib/x86/");
+                                ? "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/lib/x64/"
+                                : "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/lib/x86/");
 
 WIN.iconLauncher = [:]
 WIN.iconLauncher.compiler = compiler
 WIN.iconLauncher.ccFlags = ["/nologo", "/W3", "/EHsc", "/D_WINDOWS", "/DUNICODE", "/D_UNICODE","/GS",
        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt",
-       "/I$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/include",
+       "/I$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/include",
        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/um",
        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/shared",
         "/O2"];
@@ -475,7 +475,7 @@ WIN.iconLauncher.linker = linker
 WIN.iconLauncher.linkFlags = ["/link", "/nologo",
        IS_64 ? "/LIBPATH:$WIN.WINDOWS_KITS_LIBDIR/um/x64/" : "/LIBPATH:$WIN.WINDOWS_KITS_LIBDIR/um/x86/",
        IS_64 ? "/LIBPATH:$WIN.WINDOWS_KITS_LIBDIR/ucrt/x64/" : "/LIBPATH:$WIN.WINDOWS_KITS_LIBDIR/ucrt/x86/",
-       IS_64 ? "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/lib/x64/" :"/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/lib/x86/",
+       IS_64 ? "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/lib/x64/" :"/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/lib/x86/",
        "/SUBSYSTEM:CONSOLE"];
 
 WIN.fxpackager = [:]
@@ -486,7 +486,7 @@ WIN.fxpackager.ccFlags = ["/nologo", "/W3", "/EHsc", "/MT", "/GS",
                     "/DWIN32", "/D_LITTLE_ENDIAN", "/DWIN32_LEAN_AND_MEAN",
                     "/D_WIN32_WINDOWS=0X0500", "/D_WIN32_WINNT=0X0500",
                     "/I$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt",
-                    "/I$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/include/",
+                    "/I$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/include/",
                     "/I$WIN.WINDOWS_KITS_INCLUDEDIR/um/",
                     "/I$WIN.WINDOWS_KITS_INCLUDEDIR/shared/",
                     "/I$JDK_HOME/include/", "/I$JDK_HOME/include/win32/",

@@ -2044,7 +2044,7 @@ project(":fxpackager") {
                 exec({
                     commandLine("$WIN.fxpackager.linker",
                             IS_64 ? "/LIBPATH:$WIN.WINDOWS_KITS_LIBDIR/um/x64/" : "/LIBPATH:$WIN.WINDOWS_KITS_LIBDIR/um/x86/",
-                            IS_64 ? "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/lib/x64/" : "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.14.26428/lib/x86/",
+                            IS_64 ? "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/lib/x64/" : "/LIBPATH:$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/lib/x86/",
                             IS_64 ? "/LIBPATH:$WIN.WINDOWS_KITS_LIBDIR/ucrt/x64/" : "/LIBPATH:$WIN.WINDOWS_KITS_LIBDIR/ucrt/x86/",
                             "/nologo", "/opt:REF", "/incremental:no", "/manifest", "kernel32.lib", "advapi32.lib",
                             "/out:$buildDir/native/javapackager/javapackager.exe",
@@ -2376,7 +2376,7 @@ project(":media") {
 
                             String sdkDir = System.getenv("BASECLASSES_SDK_DIR");
                             if (sdkDir == null) {
-                                sdkDir = "D:/buildtools/MicrosoftSDKs/Windows/v7.1" // Default value
+                                sdkDir = "D:/jenkins/workspace/test-buildtools/open_source/Windows-classic-samples/Windows-classic-samples-d42a2ea76a6d50c6790bbcf88a60de73cce069a9/Samples" // Default value
                                 winEnv["BASECLASSES_SDK_DIR"] = sdkDir
                             }
                             environment(winEnv)
@@ -2626,26 +2626,6 @@ project(":media") {
                             commandLine ("make", "${makeJobsFlag}", "-C", "${nativeSrcDir}/gstreamer/projects/${projectDir}/glib-lite")
                             args("OUTPUT_DIR=${nativeOutputDir}", "BUILD_TYPE=${buildType}", "BASE_NAME=glib-lite")
                             args ("CC=${mediaProperties.compiler}", "LINK=${mediaProperties.linker}", "LIB=${mediaProperties.lib}")
-                        }
-                    }
-                }
-                buildGStreamer.dependsOn buildGlib
-            } else if (t.name == "linux") {
-                def buildGlib = task("build${t.capital}Glib") {
-                    enabled = IS_COMPILE_MEDIA
-                    doLast {
-                        exec {
-                            commandLine ("make", "${makeJobsFlag}", "-C", "${nativeSrcDir}/gstreamer/projects/${projectDir}/libffi")
-                            args("OUTPUT_DIR=${nativeOutputDir}", "BUILD_TYPE=${buildType}", "BASE_NAME=ffi")
-                            args("CC=${mediaProperties.compiler}", "LINK=${mediaProperties.linker}", "AR=${mediaProperties.ar}")
-                            args(IS_64 ? "ARCH=x64" : "ARCH=x32", OS_ARCH.toLowerCase().contains("aarch") ? "OS_ARCH=aarch64" : "OS_ARCH=x86")
-                        }
-
-                        exec {
-                            commandLine ("make", "${makeJobsFlag}", "-C", "${nativeSrcDir}/gstreamer/projects/${projectDir}/glib-lite")
-                            args("OUTPUT_DIR=${nativeOutputDir}", "BUILD_TYPE=${buildType}", "BASE_NAME=glib-lite")
-                            args("CC=${mediaProperties.compiler}", "LINK=${mediaProperties.linker}", "LIB=${mediaProperties.lib}")
-                            args(IS_64 ? "ARCH=x64" : "ARCH=x32", OS_ARCH.toLowerCase().contains("aarch") ? "OS_ARCH=aarch64" : "OS_ARCH=x86")
                         }
                     }
                 }

@@ -130,3 +130,16 @@ using WTF::ObjectIdentifier;
 using WTF::generateObjectIdentifier;
 using WTF::generateThreadSafeObjectIdentifier;
 using WTF::makeObjectIdentifier;
+
+namespace WebCore {
+
+enum ProcessIdentifierType { };
+using ProcessIdentifier = ObjectIdentifier<ProcessIdentifierType>;
+
+namespace Process {
+
+WEBCORE_EXPORT void setIdentifier(ProcessIdentifier);
+WEBCORE_EXPORT ProcessIdentifier identifier();
+
+} // namespace Process
+} // namespace WebCore

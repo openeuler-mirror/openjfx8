@@ -52,7 +52,7 @@ INCLUDES = -I$(SRCBASE_DIR) \
 	   -I$(LIBFFI_DIR)/include
 
 LDFLAGS = -L$(BUILD_DIR) -lffi \
-          -static-libgcc -static-libstdc++ -Wl,--gc-sections,-z,relro,-z,now,-z,noexecstack
+          -static-libgcc -lstdc++ -Wl,--gc-sections,-z,relro,-z,now,-z,noexecstack
 
 ifeq ($(ARCH), x32)
     CFLAGS += -m32
