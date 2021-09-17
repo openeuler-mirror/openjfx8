@@ -1820,6 +1820,7 @@ project(":systemTests") {
             testCompile project(":controls").sourceSets.test.output
         }
 
+        jvmArgs "-Dprism.forceGPU=true"
         forkEvery = 1
     }
 }
