@@ -728,7 +728,7 @@ if (IS_WINDOWS && OS_ARCH != "x86" && OS_ARCH != "amd64") {
     throw new Exception("Unknown and unsupported build architecture: $OS_ARCH")
 } else if (IS_MAC && OS_ARCH != "x86_64") {
     throw new Exception("Unknown and unsupported build architecture: $OS_ARCH")
-} else if (IS_LINUX && OS_ARCH != "i386" && OS_ARCH != "amd64") {
+} else if (IS_LINUX && OS_ARCH != "i386" && OS_ARCH != "amd64" && OS_ARCH != "aarch64") {
     throw new Exception("Unknown and unsupported build architecture: $OS_ARCH")
 }
 
@@ -2319,7 +2319,7 @@ project(":media") {
                     } else {
                         args ("CC=${mediaProperties.compiler}", "LINK=${mediaProperties.linker}", "LIB=${mediaProperties.lib}")
                         if (t.name == "linux") {
-                            args(IS_64 ? "ARCH=x64" : "ARCH=x32")
+                            args(IS_64 ? "ARCH=x64" : "ARCH=x32", OS_ARCH.toLowerCase().contains("aarch") ? "OS_ARCH=aarch64" : "OS_ARCH=x86")
                         }
 
                         if (t.name.startsWith("arm")) {
@@ -2349,7 +2349,7 @@ project(":media") {
                         } else {
                             args ("CC=${mediaProperties.compiler}", "LINK=${mediaProperties.linker}", "LIB=${mediaProperties.lib}")
                             if (t.name == "linux") {
-                                args(IS_64 ? "ARCH=x64" : "ARCH=x32")
+                                args(IS_64 ? "ARCH=x64" : "ARCH=x32", OS_ARCH.toLowerCase().contains("aarch") ? "OS_ARCH=aarch64" : "OS_ARCH=x86")
                             }
                         }
                     }
@@ -2387,7 +2387,7 @@ project(":media") {
                         } else {
                             args ("CC=${mediaProperties.compiler}", "LINK=${mediaProperties.linker}", "LIB=${mediaProperties.lib}")
                             if (t.name == "linux") {
-                                args(IS_64 ? "ARCH=x64" : "ARCH=x32")
+                                args(IS_64 ? "ARCH=x64" : "ARCH=x32", OS_ARCH.toLowerCase().contains("aarch") ? "OS_ARCH=aarch64" : "OS_ARCH=x86")
                             }
                         }
                     }
@@ -2679,7 +2679,7 @@ project(":media") {
                                         args("CC=${mediaProperties.compiler}", "LINKER=${mediaProperties.linker}",
                                              "OUTPUT_DIR=${nativeOutputDir}", "BUILD_TYPE=${buildType}",
                                              "BASE_NAME=avplugin", "VERSION=${version}", "LIBAV_DIR=${libavDir}",
-                                             "SUFFIX=", IS_64 ? "ARCH=x64" : "ARCH=x32")
+                                             "SUFFIX=", IS_64 ? "ARCH=x64" : "ARCH=x32", OS_ARCH.toLowerCase().contains("aarch") ? "OS_ARCH=aarch64" : "OS_ARCH=x86")
                                     }
                                 }
                             }
@@ -2693,7 +2693,7 @@ project(":media") {
                                         args("CC=${mediaProperties.compiler}", "LINKER=${mediaProperties.linker}",
                                              "OUTPUT_DIR=${nativeOutputDir}", "BUILD_TYPE=${buildType}",
                                              "BASE_NAME=avplugin", "VERSION=${version}", "LIBAV_DIR=${libavDir}",
-                                             "SUFFIX=-ffmpeg", IS_64 ? "ARCH=x64" : "ARCH=x32")
+                                             "SUFFIX=-ffmpeg", IS_64 ? "ARCH=x64" : "ARCH=x32", OS_ARCH.toLowerCase().contains("aarch") ? "OS_ARCH=aarch64" : "OS_ARCH=x86")
                                     }
                                 }
                             }
@@ -2707,7 +2707,7 @@ project(":media") {
                                         args("CC=${mediaProperties.compiler}", "LINKER=${mediaProperties.linker}",
                                              "OUTPUT_DIR=${nativeOutputDir}", "BUILD_TYPE=${buildType}",
                                              "BASE_NAME=avplugin", "VERSION=${version}", "LIBAV_DIR=${libavDir}",
-                                             "SUFFIX=-ffmpeg", IS_64 ? "ARCH=x64" : "ARCH=x32")
+                                             "SUFFIX=-ffmpeg", IS_64 ? "ARCH=x64" : "ARCH=x32", OS_ARCH.toLowerCase().contains("aarch") ? "OS_ARCH=aarch64" : "OS_ARCH=x86")
                                     }
                                 }
                             }
@@ -2716,7 +2716,7 @@ project(":media") {
                             exec {
                                 commandLine ("make", "${makeJobsFlag}", "-C", "${nativeSrcDir}/gstreamer/projects/linux/avplugin")
                                 args("CC=${mediaProperties.compiler}", "OUTPUT_DIR=${nativeOutputDir}", "BUILD_TYPE=${buildType}",
-                                     "BASE_NAME=avplugin", IS_64 ? "ARCH=x64" : "ARCH=x32")
+                                     "BASE_NAME=avplugin", IS_64 ? "ARCH=x64" : "ARCH=x32", OS_ARCH.toLowerCase().contains("aarch") ? "OS_ARCH=aarch64" : "OS_ARCH=x86")
                             }
                         }
                     }
@@ -2798,14 +2798,14 @@ project(":media") {
                             commandLine ("make", "${makeJobsFlag}", "-C", "${nativeSrcDir}/gstreamer/projects/${projectDir}/libffi")
                             args("OUTPUT_DIR=${nativeOutputDir}", "BUILD_TYPE=${buildType}", "BASE_NAME=ffi")
                             args("CC=${mediaProperties.compiler}", "LINK=${mediaProperties.linker}", "AR=${mediaProperties.ar}")
-                            args(IS_64 ? "ARCH=x64" : "ARCH=x32")
+                            args(IS_64 ? "ARCH=x64" : "ARCH=x32", OS_ARCH.toLowerCase().contains("aarch") ? "OS_ARCH=aarch64" : "OS_ARCH=x86")
                         }
 
                         exec {
                             commandLine ("make", "${makeJobsFlag}", "-C", "${nativeSrcDir}/gstreamer/projects/${projectDir}/glib-lite")
                             args("OUTPUT_DIR=${nativeOutputDir}", "BUILD_TYPE=${buildType}", "BASE_NAME=glib-lite")
                             args("CC=${mediaProperties.compiler}", "LINK=${mediaProperties.linker}", "LIB=${mediaProperties.lib}")
-                            args(IS_64 ? "ARCH=x64" : "ARCH=x32")
+                            args(IS_64 ? "ARCH=x64" : "ARCH=x32", OS_ARCH.toLowerCase().contains("aarch") ? "OS_ARCH=aarch64" : "OS_ARCH=x86")
                         }
                     }
                 }
@@ -2933,8 +2933,14 @@ project(":web") {
                     } else if (t.name == "linux") {
                         cmakeArgs = " $cmakeArgs -DCMAKE_SYSTEM_NAME=Linux"
                         if (IS_64) {
+                        if (OS_ARCH.toLowerCase().contains("aarch"))
+                            cmakeArgs = "$cmakeArgs -DCMAKE_SYSTEM_PROCESSOR=aarch64"
+                        else
                             cmakeArgs = "$cmakeArgs -DCMAKE_SYSTEM_PROCESSOR=x86_64"
                         } else {
+                        if (OS_ARCH.toLowerCase().contains("arm"))
+                            fail("ARM target is not supported as of now.")
+                        else
                             cmakeArgs = "$cmakeArgs -DCMAKE_SYSTEM_PROCESSOR=i586"
                         }
                         // TODO: Use cflags and ldflags from all platforms
@@ -3268,7 +3274,7 @@ compileTargets { t ->
     def jfxrtTask = task("jfxrt$t.capital", type: Jar) {
         group = "Basic"
         description = "Creates the jfxrt.jar for the $t.name target"
-        archiveName = "build/${sdkDirName}/rt/lib/ext/jfxrt.jar";
+        archiveName = "${buildDir}/${sdkDirName}/rt/lib/ext/jfxrt.jar";
         includeEmptyDirs = false
         from("modules/base/build/classes/java/main",
              "modules/base/build/resources/main",
@@ -3389,7 +3395,7 @@ compileTargets { t ->
         enabled = COMPILE_SWT
         group = "Basic"
         description = "Creates the jfxswt.jar for the $t.name target"
-        archiveName = "build/${sdkDirName}/rt/lib/jfxswt.jar";
+        archiveName = "${buildDir}/${sdkDirName}/rt/lib/jfxswt.jar";
         includeEmptyDirs = false
         from("modules/swt/build/classes/java/main");
         from("modules/builders/build/classes/java/main");
@@ -3411,7 +3417,7 @@ compileTargets { t ->
     def jmxTask = task ("jmx${t.capital}", type: Jar) {
         group = "Basic"
         description = "Creates the javafx-mx.jar"
-        archiveName = "build/${sdkDirName}/lib/javafx-mx.jar";
+        archiveName = "${buildDir}/${sdkDirName}/lib/javafx-mx.jar";
         includeEmptyDirs = false
         from "modules/jmx/build/classes/java/main"
         from "modules/jmx/build/resources/main"

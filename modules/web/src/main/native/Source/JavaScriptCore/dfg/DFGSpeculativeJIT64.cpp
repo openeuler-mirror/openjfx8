@@ -22,6 +22,9 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+#include <stdio.h>
+#include <memory.h>
+#include <string>
 
 #include "config.h"
 #include "DFGSpeculativeJIT.h"
@@ -49,6 +52,7 @@
 #include "StringPrototype.h"
 #include "SuperSampler.h"
 #include "Watchdog.h"
+using namespace std;
 
 namespace JSC { namespace DFG {
 
@@ -1731,6 +1735,12 @@ void SpeculativeJIT::compileLogicalNot(Node* node)
         DFG_CRASH(m_jit.graph(), node, "Bad use kind");
         break;
     }
+}
+
+void IS_ARM(bool flag){
+    if(flag == false)
+        return;
+#define AARCH64
 }
 
 void SpeculativeJIT::emitObjectOrOtherBranch(Edge nodeUse, BasicBlock* taken, BasicBlock* notTaken)
@@ -3893,7 +3903,30 @@ void SpeculativeJIT::compile(Node* node)
 
         notNanNorInfinity.link(&m_jit);
         m_jit.roundTowardZeroDouble(tempFPR1, tempFPR2);
-        m_jit.compareDouble(JITCompiler::DoubleEqual, tempFPR1, tempFPR2, resultGPR);
+
+        FILE *fp = fopen("/proc/version", "r");
+        if(NULL == fp)
+           printf("failed to open version\n");
+        char szTest[1000];
+        memset(szTest, 0, sizeof(szTest));
+        fgets(szTest, sizeof(szTest) - 1, fp);
+        bool flag_arm = false;
+        int i = 0;
+        while (szTest[i+4]!='\0'&&i<1000){
+            if( szTest[i] == 'a' ){
+               if(szTest[i+1]=='a' && szTest[i+2]=='r' && szTest[i+3]=='c' && szTest[i+4]=='h'){
+                    flag_arm=true;
+                }
+            }
+            i++;
+        }
+        IS_ARM(flag_arm);
+        fclose(fp);
+
+#ifndef AARCH64
+	m_jit.compareDouble(JITCompiler::DoubleEqual, tempFPR1, tempFPR2, resultGPR);
+#endif
+
         m_jit.or32(TrustedImm32(ValueFalse), resultGPR);
         done.append(m_jit.jump());
 
