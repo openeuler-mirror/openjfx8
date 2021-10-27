@@ -1,7 +1,7 @@
 # openjfx8
 
 #### 介绍
-Open source, next generation client application platform for desktop and embedded systems for use with the JDK8
+新一代开源客户端应用平台，适用于搭配 JDK8 使用的桌面和嵌入式系统。
 
 
 #### 参与贡献
