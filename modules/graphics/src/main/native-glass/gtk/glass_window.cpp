@@ -197,6 +197,11 @@ void WindowContextBase::process_destroy() {
 
     std::set<WindowContextTop*>::iterator it;
     for (it = children.begin(); it != children.end(); ++it) {
+        // FIX JDK-8226537: this method calls set_owner(NULL) which prevents
+        // WindowContextTop::process_destroy() to call remove_child() (because children
+        // is being iterated here) but also prevents gtk_window_set_transient_for from
+        // being called - this causes the crash on gnome.
+        gtk_window_set_transient_for((*it)->get_gtk_window(), NULL);
         (*it)->set_owner(NULL);
         destroy_and_delete_ctx(*it);
     }
@@ -993,12 +998,16 @@ void WindowContextTop::process_configure(GdkEventConfigure* event) {
                                              geometry.final_height.value > 1)) {
         // skip artifact
         return;
+   }
+
+    // JDK-8232811: to avoid conflicting events, update the geometry only after window pops.
+    if (map_received) {
+        geometry.final_width.value = w;
+        geometry.final_width.type = BOUNDSTYPE_CONTENT;
+        geometry.final_height.value = h;
+        geometry.final_height.type = BOUNDSTYPE_CONTENT;
     }
 
-    geometry.final_width.value = w;
-    geometry.final_width.type = BOUNDSTYPE_CONTENT;
-    geometry.final_height.value = h;
-    geometry.final_height.type = BOUNDSTYPE_CONTENT;
     geometry_set_window_x(&geometry, x);
     geometry_set_window_y(&geometry, y);
 
@@ -1278,7 +1287,12 @@ void WindowContextTop::exit_fullscreen() {
 }
 
 void WindowContextTop::request_focus() {
-    gtk_window_present(GTK_WINDOW(gtk_widget));
+    //JDK-8212060: Window show and then move glitch.
+    //The WindowContextBase::set_visible will take care of showing the window.
+    //The below code will only handle later request_focus.
+    if (is_visible()) {
+        gtk_window_present(GTK_WINDOW(gtk_widget));
+    }
 }
 
 void WindowContextTop::set_focusable(bool focusable) {
