@@ -101,8 +101,8 @@ private:
     std::condition_variable_any m_condition;
 
     std::thread m_thread;
-    std::chrono::steady_clock::time_point m_lastFullScavengeTime { std::chrono::steady_clock::now() };
-    std::chrono::steady_clock::time_point m_lastPartialScavengeTime { std::chrono::steady_clock::now() };
+    std::chrono::system_clock::time_point m_lastFullScavengeTime { std::chrono::system_clock::now() };
+    std::chrono::system_clock::time_point m_lastPartialScavengeTime { std::chrono::system_clock::now() };
 
 #if BOS(DARWIN)
     dispatch_source_t m_pressureHandlerDispatchSource;
