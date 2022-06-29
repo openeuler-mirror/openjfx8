@@ -3100,6 +3100,7 @@ task zipSources(type: Zip) {
     archiveName = "javafx-src.zip"
     destinationDir = file("$buildDir")
     includeEmptyDirs = false
+    reproducibleFileOrder = true
     from "${buildDir}/javafx-src"
 }
 
