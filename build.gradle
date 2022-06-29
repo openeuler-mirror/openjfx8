@@ -1883,6 +1883,7 @@ project(":fxpackager") {
     // location
     jar {
         includeEmptyDirs = false
+        reproducibleFileOrder = true
         archiveName = "ant-javafx.jar"
         eachFile { FileCopyDetails details ->
             if (details.path.startsWith("com/javafx/main")) {
@@ -2133,6 +2134,7 @@ project(":fxpackager") {
         from("$buildDir/classes/java/main");
         from("$buildDir/resources/main");
         include('jdk/packager/**')
+        reproducibleFileOrder = true
 
         dependsOn(buildJavaPackager);
     }
@@ -2161,6 +2163,7 @@ project(":fxpackager") {
         dependsOn compileTestJava
         from compileTestJava.destinationDir
         include "hello/**"
+        reproducibleFileOrder = true
 
         destinationDir project.file("build/tmp/tests/appResources")
         archiveName "mainApp.jar"
@@ -2197,6 +2200,7 @@ project(":fxpackager") {
         dependsOn packagerFakeJar
         from compileTestJava.destinationDir
         include "hello/**"
+        reproducibleFileOrder = true
 
         destinationDir project.file("build/tmp/tests/appResources")
         archiveName "packagedMainApp.jar"
@@ -2674,6 +2678,7 @@ project(":media") {
 
     jar {
         exclude("headergen/**")
+        reproducibleFileOrder = true
 
         dependsOn compileJava
         if (IS_COMPILE_MEDIA) {
@@ -2696,6 +2701,7 @@ project(":web") {
         }
         archiveName = "webArchiveJar.jar"
         destinationDir = file("$buildDir/testing/resources")
+        reproducibleFileOrder = true
     }
 
     test {
@@ -2882,6 +2888,7 @@ project(":web") {
         destinationDir = file("$buildDir/test")
         from "$buildDir/classes/java/main"
         include drtClasses
+        reproducibleFileOrder = true
     }
     if (IS_COMPILE_WEBKIT) {
         jar.dependsOn compileNative, drtJar
@@ -3100,6 +3107,7 @@ task zipSources(type: Zip) {
     archiveName = "javafx-src.zip"
     destinationDir = file("$buildDir")
     includeEmptyDirs = false
+    reproducibleFileOrder = true
     from "${buildDir}/javafx-src"
 }
 
@@ -3131,6 +3139,7 @@ compileTargets { t ->
         group = "Basic"
         description = "Creates the jfxrt.jar for the $t.name target"
         archiveName = "${buildDir}/${sdkDirName}/rt/lib/ext/jfxrt.jar";
+        reproducibleFileOrder = true
 
         if (isGradleVersionGT4()){
             destinationDirectory = file("${buildDir}/${sdkDirName}/rt/lib/ext")
@@ -3266,6 +3275,7 @@ compileTargets { t ->
         from("modules/builders/build/classes/java/main");
         include("**/javafx/embed/swt/**")
         exclude("**/*.java");  // Builder java files are in build/classes and should be excluded
+        reproducibleFileOrder = true
 
         dependsOn(subprojects.collect { project -> project.getTasksByName("assemble", true)});
     }
@@ -3291,6 +3301,7 @@ compileTargets { t ->
         from "modules/jmx/build/classes/java/main"
         from "modules/jmx/build/resources/main"
         dependsOn project(":jmx").assemble
+        reproducibleFileOrder = true
     }
 
     // The 'sdk' task will build the rest of the SDK, and depends on the 'jfxrtTask' task. After
