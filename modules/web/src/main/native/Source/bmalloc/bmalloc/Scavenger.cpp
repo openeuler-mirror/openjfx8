@@ -56,12 +56,12 @@ struct PrintTime {
     void print()
     {
         if (verbose) {
-            fprintf(stderr, "%s %lfms\n", string, static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count()) / 1000);
+            fprintf(stderr, "%s %lfms\n", string, static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - start).count()) / 1000);
             printed = true;
         }
     }
     const char* string;
-    std::chrono::steady_clock::time_point start { std::chrono::steady_clock::now() };
+    std::chrono::system_clock::time_point start { std::chrono::system_clock::now() };
     bool printed { false };
 };
 
@@ -170,13 +170,13 @@ inline void dumpStats()
 std::chrono::milliseconds Scavenger::timeSinceLastFullScavenge()
 {
     std::unique_lock<Mutex> lock(m_mutex);
-    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_lastFullScavengeTime);
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - m_lastFullScavengeTime);
 }
 
 std::chrono::milliseconds Scavenger::timeSinceLastPartialScavenge()
 {
     std::unique_lock<Mutex> lock(m_mutex);
-    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_lastPartialScavengeTime);
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - m_lastPartialScavengeTime);
 }
 
 void Scavenger::enableMiniMode()
@@ -244,7 +244,7 @@ void Scavenger::scavenge()
 
     {
         std::unique_lock<Mutex> lock(m_mutex);
-        m_lastFullScavengeTime = std::chrono::steady_clock::now();
+        m_lastFullScavengeTime = std::chrono::system_clock::now();
     }
 }
 
@@ -311,7 +311,7 @@ void Scavenger::partialScavenge()
 
     {
         std::unique_lock<Mutex> lock(m_mutex);
-        m_lastPartialScavengeTime = std::chrono::steady_clock::now();
+        m_lastPartialScavengeTime = std::chrono::system_clock::now();
     }
 }
 
@@ -382,7 +382,7 @@ void Scavenger::threadRunLoop()
 
         if (m_state == State::RunSoon) {
             std::unique_lock<Mutex> lock(m_mutex);
-            m_condition.wait_for(lock, std::chrono::milliseconds(m_isInMiniMode ? 200 : 2000), [&]() { return m_state != State::RunSoon; });
+            m_condition.wait_until(lock, std::chrono::system_clock::now() + std::chrono::milliseconds(m_isInMiniMode ? 200 : 2000), [&]() { return m_state != State::RunSoon; });
         }
 
         m_state = State::Sleep;
