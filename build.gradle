@@ -1128,7 +1128,7 @@ void addJCov(p, test) {
                 "exclude=\"**.*Test\"," +
                 "file=build/reports/jcov/report.xml," +
                 "merge=merge";
-        test.jvmArgs("-javaagent:${p.configurations.testCompile.files.find { it.name.startsWith('jcov') }}=$jcovJVMArgument");
+        test.jvmArgs("-javaagent:${p.configurations.testClasspath.files.find { it.name.startsWith('jcov') }}=$jcovJVMArgument");
         p.mkdir p.file("build/reports/jcov")
     }
     test.doLast {
@@ -1136,7 +1136,7 @@ void addJCov(p, test) {
         if (reportFile.exists()) {
             p.javaexec {
                 workingDir = p.file("build/reports/jcov")
-                classpath = p.files(p.configurations.testCompile.files.find { it.name.startsWith('jcov') })
+                classpath = p.files(p.configurations.testClasspath.files.find { it.name.startsWith('jcov') })
                 main = "com.sun.tdk.jcov.Helper"
                 args = [
                         "RepGen",
@@ -1168,8 +1168,8 @@ allprojects {
                         artifact()
                     }
                 }
-                url "http://download.eclipse.org/eclipse/updates/4.6/R-4.6.3-201703010400/plugins/"
-                layout "pattern", {
+                url "https://download.eclipse.org/eclipse/updates/4.6/R-4.6.3-201703010400/plugins/"
+                patternLayout {
                     artifact "[artifact].[ext]"
                 }
             }
@@ -1185,7 +1185,7 @@ allprojects {
                         artifact()
                     }
                 }
-                layout "pattern", {
+                patternLayout {
                     artifact "[artifact]-[revision](-[classifier]).[ext]"
                     artifact "[artifact].[ext]"
                 }
@@ -1203,7 +1203,7 @@ allprojects {
                     }
                 }
                 url libAVRepositoryURL
-                layout "pattern", {
+                patternLayout {
                     artifact "[artifact].[ext]"
                 }
             }
@@ -1214,7 +1214,7 @@ allprojects {
                     }
                 }
                 url FFmpegRepositoryURL
-                layout "pattern", {
+                patternLayout {
                     artifact "[artifact].[ext]"
                 }
             }
@@ -1239,9 +1239,9 @@ allprojects {
     // By default all of our projects require junit for testing so we can just
     // setup this dependency here.
     dependencies {
-        testCompile group: "junit", name: "junit", version: "4.8.2"
+        testImplementation group: "junit", name: "junit", version: "4.8.2"
         if (BUILD_CLOSED && DO_JCOV)  {
-            testCompile name: "jcov"
+            testImplementation name: "jcov"
         }
     }
 
@@ -1314,7 +1314,7 @@ allprojects {
 // all other modules. It is useful even for non-GUI applications.
 project(":base") {
     dependencies {
-        compile BUILD_SRC
+        implementation BUILD_SRC
     }
 
     // We need to take the VersionInfo.java file and replace the various
@@ -1376,9 +1376,9 @@ project(":graphics") {
     }
 
     dependencies {
-        compile project(":base"), BUILD_SRC
-        compile name: SWT_FILE_NAME
-        stubCompile group: "junit", name: "junit", version: "4.8.2",
+        implementation project(":base"), BUILD_SRC
+        implementation name: SWT_FILE_NAME
+        stubImplementation group: "junit", name: "junit", version: "4.8.2",
         project(":base").sourceSets.test.output, sourceSets.main.output
         antlr3 group: "org.antlr", name: "antlr", version: "3.1.3"
         antlr3 group: "org.antlr", name: "antlr-runtime",  version: "3.1.3"
@@ -1530,7 +1530,7 @@ project(":graphics") {
                 executable = JAVA
                 workingDir = "modules/graphics"
                 main = settings.generator
-                classpath = configurations.compile + configurations.antlr3
+                classpath = configurations.compileClasspath + configurations.antlr3
                 classpath += files("$buildDir/classes/java/main")
                 classpath += files("$buildDir/classes/jsl-compilers/decora")
                 args = ["-i", sourceDir, "-o", destinationDir, "-t", "-pkg", "com/sun/scenario/effect", "$settings.outputs", "$settings.fileName"]
@@ -1622,7 +1622,7 @@ project(":graphics") {
                 executable = JAVA
                 workingDir = "modules/graphics"
                 main = "CompileJSL"
-                classpath = configurations.compile + configurations.antlr3
+                classpath = configurations.compileClasspath + configurations.antlr3
                 classpath += files("$buildDir/classes/jsl-compilers/prism", "modules/graphics/src/main/jsl-prism") // for the .stg
                 args = ["-i", sourceDir, "-o", destinationDir, "-t", "-pkg", "com/sun/prism", "-d3d", "-es2", "-name", "$file"]
                 jvmArgs "-Djava.ext.dirs="
@@ -1669,7 +1669,7 @@ project(":graphics") {
             //
             if (libsDir.exists()) return;
             libsDir.mkdirs();
-            for (File f : [configurations.compile.files, configurations.antlr3.files].flatten()) {
+            for (File f : [configurations.compileClasspath.files, configurations.antlr3.files].flatten()) {
                 copy {
                     into libsDir
                     from f.getParentFile()
@@ -1695,10 +1695,10 @@ project(":graphics") {
 
 project(":controls") {
     dependencies {
-        compile BUILD_SRC, project(":base"), project(":graphics")
+        implementation BUILD_SRC, project(":base"), project(":graphics")
         // TODO not sure how to specify this? processResources project(":base"), project(":graphics")
-        testCompile project(":graphics").sourceSets.test.output
-        testCompile project(":base").sourceSets.test.output
+        testImplementation project(":graphics").sourceSets.test.output
+        testImplementation project(":base").sourceSets.test.output
     }
 
     test {
@@ -1738,7 +1738,7 @@ project(":controls") {
 
 project(":extensions") {
     dependencies {
-        compile BUILD_SRC, project(":base"), project(":graphics")
+        implementation BUILD_SRC, project(":base"), project(":graphics")
     }
 }
 
@@ -1749,7 +1749,7 @@ project(":swing") {
     }
     */
     dependencies {
-        compile BUILD_SRC, project(":base"), project(":graphics")
+        implementation BUILD_SRC, project(":base"), project(":graphics")
     }
     test {
         enabled = IS_FULL_TEST && IS_AWT_TEST
@@ -1761,16 +1761,16 @@ project(":swt") {
         if (!COMPILE_SWT) it.enabled = false
     }
     dependencies {
-        compile BUILD_SRC, project(":base"), project(":graphics")
-        compile name: SWT_FILE_NAME
+        implementation BUILD_SRC, project(":base"), project(":graphics")
+        implementation name: SWT_FILE_NAME
     }
 }
 
 project(":fxml") {
     dependencies {
-        compile BUILD_SRC, project(":base"), project(":graphics"),
+        implementation BUILD_SRC, project(":base"), project(":graphics"),
                 project(":controls"), project(":swt"), project(":swing")
-        testCompile project(":graphics").sourceSets.test.output
+        testImplementation project(":graphics").sourceSets.test.output
     }
     test {
         // StubToolkit is not *really* needed here, but because some code inadvertently invokes performance
@@ -1794,9 +1794,9 @@ project(":builders") {
     if (!COMPILE_SWT)   sourceSets.main.java.exclude ("**/swt/**")
 
     dependencies {
-        compile BUILD_SRC, project(":base"), project(":graphics"),
+        implementation BUILD_SRC, project(":base"), project(":graphics"),
                 project(":controls"), project(":swt"), project(":swing"), project(":media"), project(":web")
-        testCompile project(":graphics").sourceSets.test.output
+        testImplementation project(":graphics").sourceSets.test.output
     }
     test {
         // StubToolkit is not *really* needed here, but because some code inadvertently invokes performance
@@ -1808,10 +1808,10 @@ project(":builders") {
 
 project(":jmx") {
     dependencies {
-        compile project(":base")
-        compile project(":graphics")
-        compile project(":swing")
-        compile project(":media")
+        implementation project(":base")
+        implementation project(":graphics")
+        implementation project(":swing")
+        implementation project(":media")
     }
 
     // Tests are disabled until RT-33926 can be fixed
@@ -1850,9 +1850,9 @@ project(":systemTests") {
         }
 
         dependencies {
-            testCompile project(":graphics").sourceSets.test.output
-            testCompile project(":base").sourceSets.test.output
-            testCompile project(":controls").sourceSets.test.output
+            testImplementation project(":graphics").sourceSets.test.output
+            testImplementation project(":base").sourceSets.test.output
+            testImplementation project(":controls").sourceSets.test.output
         }
 
         jvmArgs "-Dprism.forceGPU=true"
@@ -1875,7 +1875,7 @@ project(":fxpackager") {
     }
 
     dependencies {
-        compile group: "org.apache.ant", name: "ant", version: "1.8.2"
+        implementation group: "org.apache.ant", name: "ant", version: "1.8.2"
     }
 
     // When producing the jar, we need to relocate a few class files
@@ -2146,7 +2146,7 @@ project(":fxpackager") {
             File libsDir = rootProject.file("build/libs");
             File antLib = new File(libsDir, "ant-1.8.2.jar")
             libsDir.mkdirs();
-            for (File f : configurations.compile.files) {
+            for (File f : configurations.compileClasspath.files) {
                 copy {
                     into libsDir
                     from f.getParentFile()
@@ -2247,7 +2247,7 @@ project(":media") {
     }
 
     dependencies {
-        compile BUILD_SRC, project(":base"), project(":graphics")
+        implementation BUILD_SRC, project(":base"), project(":graphics")
     }
 
     sourceSets {
@@ -2687,7 +2687,7 @@ project(":web") {
         webkit
     }
     dependencies {
-        compile project(":base"), project(":graphics"), project(":controls"), project(":media")
+        implementation project(":base"), project(":graphics"), project(":controls"), project(":media")
     }
 
     task webArchiveJar(type: Jar) {
