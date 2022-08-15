@@ -10,7 +10,7 @@ Updating SQLite in OpenJFX:
 
 3. Get the source code of required release version of SQLite.
     - Download the amalgamation code for the release from https://www.sqlite.org
-       - For example, the SQLite 3.37.2 amalgamation is named as "sqlite-amalgamation-3370200.zip".
+       - For example, the SQLite 3.39.2 amalgamation is named as "sqlite-amalgamation-3370200.zip".
     - FYI about amalgamation:
       - The amalgamation contains everything a library may need to include SQLite.
       - Over 100 separate source files are concatenated into a single large C file
