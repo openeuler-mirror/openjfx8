@@ -41,36 +41,6 @@ static int
 xmlValidateAttributeValueInternal(xmlDocPtr doc, xmlAttributeType type,
                                   const xmlChar *value);
 #endif
-
-/**
- * xmlValidNormalizeString:
- * @str: a string
- *
- * Normalize a string in-place.
- */
-static void
-xmlValidNormalizeString(xmlChar *str) {
-    xmlChar *dst;
-    const xmlChar *src;
-
-    if (str == NULL)
-        return;
-    src = str;
-    dst = str;
-
-    while (*src == 0x20) src++;
-    while (*src != 0) {
-	if (*src == 0x20) {
-	    while (*src == 0x20) src++;
-	    if (*src != 0)
-		*dst++ = 0x20;
-	} else {
-	    *dst++ = *src++;
-	}
-    }
-    *dst = 0;
-}
-
 /************************************************************************
  *                                  *
  *          Error handling routines             *
@@ -2636,6 +2606,35 @@ xmlDumpNotationTable(xmlBufferPtr buf, xmlNotationTablePtr table) {
     if ((str) && ((!dict) ||                \
         (xmlDictOwns(dict, (const xmlChar *)(str)) == 0)))  \
         xmlFree((char *)(str));
+
+/**
+ * xmlValidNormalizeString:
+ * @str: a string
+ *
+ * Normalize a string in-place.
+ */
+static void
+xmlValidNormalizeString(xmlChar *str) {
+    xmlChar *dst;
+    const xmlChar *src;
+
+    if (str == NULL)
+        return;
+    src = str;
+    dst = str;
+
+    while (*src == 0x20) src++;
+    while (*src != 0) {
+    if (*src == 0x20) {
+        while (*src == 0x20) src++;
+        if (*src != 0)
+        *dst++ = 0x20;
+    } else {
+        *dst++ = *src++;
+    }
+    }
+    *dst = 0;
+}
 
 static int
 xmlIsStreaming(xmlValidCtxtPtr ctxt) {
