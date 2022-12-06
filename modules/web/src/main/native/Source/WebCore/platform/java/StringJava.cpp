@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2017, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,7 +25,7 @@
 
 #include "config.h"
 
-#include <wtf/java/JavaEnv.h>
+#include "PlatformJavaClasses.h"
 #include "StringJava.h"
 
 namespace WebCore {
@@ -37,7 +37,7 @@ jobjectArray strVect2JArray(JNIEnv* env, const Vector<String>& strVect)
     if (!strVect.size()) {
         jobjectArray arr = (jobjectArray) env->NewObjectArray(0,
             JLClass(env->FindClass("java/lang/String")), 0);
-        CheckAndClearException(env); // OOME
+        WTF::CheckAndClearException(env); // OOME
         return arr;
     }
 
@@ -47,7 +47,7 @@ jobjectArray strVect2JArray(JNIEnv* env, const Vector<String>& strVect)
     JLClass sclass(env->GetObjectClass(str));
     jobjectArray strArray =
         (jobjectArray) env->NewObjectArray(strVect.size(), sclass, 0);
-    CheckAndClearException(env); // OOME
+    WTF::CheckAndClearException(env); // OOME
 
     env->SetObjectArrayElement(strArray, 0, (jstring)str);
 

@@ -42,7 +42,9 @@ private:
     CreateLinkCommand(Document&, const String& linkURL);
 
     void doApply() override;
-    EditAction editingAction() const override { return EditActionCreateLink; }
+    EditAction editingAction() const override { return EditAction::CreateLink; }
+
+    String inputEventData() const override { return m_url; }
 
     String m_url;
 };

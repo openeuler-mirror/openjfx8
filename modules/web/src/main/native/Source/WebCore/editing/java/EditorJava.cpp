@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2019, Oracle and/or its affiliates. All rights reserved.
  */
 #include "config.h"
 
@@ -24,19 +24,23 @@
 namespace WebCore {
 
 // FIXME-java: Implemetation task is tracked at JDK-8146460.
-void Editor::pasteWithPasteboard(Pasteboard* pasteboard, bool allowPlainText, MailBlockquoteHandling mailBlockquoteHandling)
+void Editor::pasteWithPasteboard(Pasteboard* pasteboard, OptionSet<PasteOption> options)
 {
-    RefPtr<Range> range = selectedRange();
+    auto range = selectedRange();
     if (!range)
         return;
 
     bool chosePlainText;
-    RefPtr<DocumentFragment> fragment = pasteboard->documentFragment(m_frame, *range, allowPlainText, chosePlainText);
-    if (fragment && shouldInsertFragment(*fragment, range.get(), EditorInsertAction::Pasted))
-        pasteAsFragment(fragment.releaseNonNull(), canSmartReplaceWithPasteboard(*pasteboard), chosePlainText, mailBlockquoteHandling);
+    auto fragment = pasteboard->documentFragment(*m_document.frame(), *range, options.contains(PasteOption::AllowPlainText), chosePlainText);
+
+    if (fragment && options.contains(PasteOption::AsQuotation))
+        quoteFragmentForPasting(*fragment);
+
+    if (fragment && shouldInsertFragment(*fragment, *range, EditorInsertAction::Pasted))
+        pasteAsFragment(fragment.releaseNonNull(), canSmartReplaceWithPasteboard(*pasteboard), chosePlainText, options.contains(PasteOption::IgnoreMailBlockquote) ? MailBlockquoteHandling::IgnoreBlockquote : MailBlockquoteHandling::RespectBlockquote);
 }
 
-RefPtr<DocumentFragment> Editor::webContentFromPasteboard(Pasteboard&, Range&, bool /*allowPlainText*/, bool& /*chosePlainText*/)
+RefPtr<DocumentFragment> Editor::webContentFromPasteboard(Pasteboard&, const SimpleRange&, bool /*allowPlainText*/, bool& /*chosePlainText*/)
 {
     notImplemented();
     return RefPtr<DocumentFragment>();
@@ -49,7 +53,7 @@ void Editor::writeImageToPasteboard(Pasteboard& pasteboard, Element& element, co
 
 void Editor::writeSelectionToPasteboard(Pasteboard& pasteboard)
 {
-    pasteboard.writeSelection(*selectedRange(), canSmartCopyOrDelete(), m_frame, DefaultSelectedTextType);
+    pasteboard.writeSelection(*selectedRange(), canSmartCopyOrDelete(), *m_document.frame(), DefaultSelectedTextType);
 }
 
 } // namespace WebCore

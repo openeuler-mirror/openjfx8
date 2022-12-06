@@ -35,9 +35,9 @@
 #if ENABLE(MEDIA_SOURCE)
 
 #include "MediaSource.h"
-#include "URL.h"
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/URL.h>
 
 namespace WebCore {
 
@@ -48,7 +48,7 @@ MediaSourceRegistry& MediaSourceRegistry::registry()
     return instance;
 }
 
-void MediaSourceRegistry::registerURL(SecurityOrigin*, const URL& url, URLRegistrable& registrable)
+void MediaSourceRegistry::registerURL(ScriptExecutionContext&, const URL& url, URLRegistrable& registrable)
 {
     ASSERT(&registrable.registry() == this);
     ASSERT(isMainThread());

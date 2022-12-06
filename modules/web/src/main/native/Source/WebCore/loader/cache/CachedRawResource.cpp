@@ -30,27 +30,30 @@
 #include "CachedResourceClientWalker.h"
 #include "CachedResourceLoader.h"
 #include "HTTPHeaderNames.h"
+#include "Logging.h"
 #include "SharedBuffer.h"
 #include "SubresourceLoader.h"
 #include <wtf/CompletionHandler.h>
 #include <wtf/SetForScope.h>
 #include <wtf/text/StringView.h>
 
+#define RELEASE_LOG_ALWAYS(fmt, ...) RELEASE_LOG(Network, "%p - CachedRawResource::" fmt, this, ##__VA_ARGS__)
+
 namespace WebCore {
 
-CachedRawResource::CachedRawResource(CachedResourceRequest&& request, Type type, PAL::SessionID sessionID)
-    : CachedResource(WTFMove(request), type, sessionID)
+CachedRawResource::CachedRawResource(CachedResourceRequest&& request, Type type, const PAL::SessionID& sessionID, const CookieJar* cookieJar)
+    : CachedResource(WTFMove(request), type, sessionID, cookieJar)
     , m_identifier(0)
     , m_allowEncodedDataReplacement(true)
 {
     ASSERT(isMainOrMediaOrIconOrRawResource());
 }
 
-std::optional<SharedBufferDataView> CachedRawResource::calculateIncrementalDataChunk(const SharedBuffer* data) const
+Optional<SharedBufferDataView> CachedRawResource::calculateIncrementalDataChunk(const SharedBuffer* data) const
 {
     size_t previousDataLength = encodedSize();
     if (!data || data->size() <= previousDataLength)
-        return std::nullopt;
+        return WTF::nullopt;
     return data->getSomeData(previousDataLength);
 }
 
@@ -82,8 +85,8 @@ void CachedRawResource::updateBuffer(SharedBuffer& data)
         CachedResource::updateBuffer(data);
 
     if (m_delayedFinishLoading) {
-        auto delayedFinishLoading = std::exchange(m_delayedFinishLoading, std::nullopt);
-        finishLoading(delayedFinishLoading->buffer.get());
+        auto delayedFinishLoading = std::exchange(m_delayedFinishLoading, WTF::nullopt);
+        finishLoading(delayedFinishLoading->buffer.get(), { });
     }
 }
 
@@ -94,12 +97,12 @@ void CachedRawResource::updateData(const char* data, unsigned length)
     CachedResource::updateData(data, length);
 }
 
-void CachedRawResource::finishLoading(SharedBuffer* data)
+void CachedRawResource::finishLoading(SharedBuffer* data, const NetworkLoadMetrics& metrics)
 {
     if (m_inIncrementalDataNotify) {
         // We may get here synchronously from updateBuffer() if the callback there ends up spinning a runloop.
         // In that case delay the call.
-        m_delayedFinishLoading = std::make_optional(DelayedFinishLoading { data });
+        m_delayedFinishLoading = makeOptional(DelayedFinishLoading { data });
         return;
     };
     CachedResourceHandle<CachedRawResource> protectedThis(this);
@@ -117,7 +120,7 @@ void CachedRawResource::finishLoading(SharedBuffer* data)
     m_allowEncodedDataReplacement = m_loader && !m_loader->isQuickLookResource();
 #endif
 
-    CachedResource::finishLoading(data);
+    CachedResource::finishLoading(data, metrics);
     if (dataBufferingPolicy == DataBufferingPolicy::BufferData && this->dataBufferingPolicy() == DataBufferingPolicy::DoNotBufferData) {
         if (m_loader)
             m_loader->setDataBufferingPolicy(DataBufferingPolicy::DoNotBufferData);
@@ -204,11 +207,12 @@ static void iterateClients(CachedResourceClientWalker<CachedRawResourceClient>&&
 
 void CachedRawResource::redirectReceived(ResourceRequest&& request, const ResourceResponse& response, CompletionHandler<void(ResourceRequest&&)>&& completionHandler)
 {
+    RELEASE_LOG_ALWAYS("redirectReceived:");
     if (response.isNull())
         CachedResource::redirectReceived(WTFMove(request), response, WTFMove(completionHandler));
     else {
         m_redirectChain.append(RedirectPair(request, response));
-        iterateClients(CachedResourceClientWalker<CachedRawResourceClient>(m_clients), CachedResourceHandle<CachedRawResource>(this), WTFMove(request), std::make_unique<ResourceResponse>(response), [this, protectedThis = CachedResourceHandle<CachedRawResource>(this), completionHandler = WTFMove(completionHandler), response] (ResourceRequest&& request) mutable {
+        iterateClients(CachedResourceClientWalker<CachedRawResourceClient>(m_clients), CachedResourceHandle<CachedRawResource>(this), WTFMove(request), makeUnique<ResourceResponse>(response), [this, protectedThis = CachedResourceHandle<CachedRawResource>(this), completionHandler = WTFMove(completionHandler), response] (ResourceRequest&& request) mutable {
             CachedResource::redirectReceived(WTFMove(request), response, WTFMove(completionHandler));
         });
     }
@@ -340,5 +344,17 @@ void CachedRawResource::clear()
     if (m_loader)
         m_loader->clearResourceData();
 }
+
+#if USE(QUICK_LOOK)
+void CachedRawResource::previewResponseReceived(const ResourceResponse& response)
+{
+    CachedResourceHandle<CachedRawResource> protectedThis(this);
+    CachedResource::previewResponseReceived(response);
+    CachedResourceClientWalker<CachedRawResourceClient> w(m_clients);
+    while (CachedRawResourceClient* c = w.next())
+        c->previewResponseReceived(*this, m_response);
+}
+
+#endif
 
 } // namespace WebCore

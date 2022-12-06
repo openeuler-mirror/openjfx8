@@ -26,6 +26,7 @@
 #pragma once
 
 #include <wtf/Optional.h>
+#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -36,52 +37,136 @@ enum class PasteboardItemPresentationStyle {
     Attachment
 };
 
-struct PasteboardItemInfo {
-    String pathForFileUpload;
-    String contentTypeForFileUpload;
-    String suggestedFileName;
-    bool isNonTextType { false };
-    PasteboardItemPresentationStyle preferredPresentationStyle { PasteboardItemPresentationStyle::Unspecified };
+struct PresentationSize {
+    Optional<double> width;
+    Optional<double> height;
 
     template<class Encoder> void encode(Encoder&) const;
-    template<class Decoder> static std::optional<PasteboardItemInfo> decode(Decoder&);
+    template<class Decoder> static Optional<PresentationSize> decode(Decoder&);
+};
+
+template<class Encoder>
+void PresentationSize::encode(Encoder& encoder) const
+{
+    encoder << width << height;
+}
+
+template<class Decoder>
+Optional<PresentationSize> PresentationSize::decode(Decoder& decoder)
+{
+    PresentationSize result;
+    if (!decoder.decode(result.width))
+        return WTF::nullopt;
+
+    if (!decoder.decode(result.height))
+        return WTF::nullopt;
+
+    return result;
+}
+
+struct PasteboardItemInfo {
+    Vector<String> pathsForFileUpload;
+    Vector<String> platformTypesForFileUpload;
+    Vector<String> platformTypesByFidelity;
+    String suggestedFileName;
+    PresentationSize preferredPresentationSize;
+    bool isNonTextType { false };
+    bool containsFileURLAndFileUploadContent { false };
+    Vector<String> webSafeTypesByFidelity;
+    PasteboardItemPresentationStyle preferredPresentationStyle { PasteboardItemPresentationStyle::Unspecified };
+
+    String pathForContentType(const String& type) const
+    {
+        ASSERT(pathsForFileUpload.size() == platformTypesForFileUpload.size());
+        auto index = platformTypesForFileUpload.find(type);
+        if (index == notFound)
+            return { };
+
+        return pathsForFileUpload[index];
+    }
+
+    // The preferredPresentationStyle flag is platform API used by drag or copy sources to explicitly indicate
+    // that the data being written to the item provider should be treated as an attachment; unfortunately, not
+    // all clients attempt to set this flag, so we additionally take having a suggested filename as a strong
+    // indicator that the item should be treated as an attachment or file.
+    bool canBeTreatedAsAttachmentOrFile() const
+    {
+        switch (preferredPresentationStyle) {
+        case PasteboardItemPresentationStyle::Inline:
+            return false;
+        case PasteboardItemPresentationStyle::Attachment:
+            return true;
+        case PasteboardItemPresentationStyle::Unspecified:
+            return !suggestedFileName.isEmpty();
+        }
+        ASSERT_NOT_REACHED();
+        return false;
+    }
+
+    String contentTypeForHighestFidelityItem() const
+    {
+        if (platformTypesForFileUpload.isEmpty())
+            return { };
+
+        return platformTypesForFileUpload.first();
+    }
+
+    String pathForHighestFidelityItem() const
+    {
+        if (pathsForFileUpload.isEmpty())
+            return { };
+
+        return pathsForFileUpload.first();
+    }
+
+    template<class Encoder> void encode(Encoder&) const;
+    template<class Decoder> static Optional<PasteboardItemInfo> decode(Decoder&);
 };
 
 template<class Encoder>
 void PasteboardItemInfo::encode(Encoder& encoder) const
 {
-    encoder << pathForFileUpload << contentTypeForFileUpload << suggestedFileName << isNonTextType;
-    encoder.encodeEnum(preferredPresentationStyle);
+    encoder << pathsForFileUpload << platformTypesForFileUpload << platformTypesByFidelity << suggestedFileName << preferredPresentationSize << isNonTextType << containsFileURLAndFileUploadContent << webSafeTypesByFidelity;
+    encoder << preferredPresentationStyle;
 }
 
 template<class Decoder>
-std::optional<PasteboardItemInfo> PasteboardItemInfo::decode(Decoder& decoder)
+Optional<PasteboardItemInfo> PasteboardItemInfo::decode(Decoder& decoder)
 {
     PasteboardItemInfo result;
-    if (!decoder.decode(result.pathForFileUpload))
-        return std::nullopt;
+    if (!decoder.decode(result.pathsForFileUpload))
+        return WTF::nullopt;
 
-    if (!decoder.decode(result.contentTypeForFileUpload))
-        return std::nullopt;
+    if (!decoder.decode(result.platformTypesForFileUpload))
+        return WTF::nullopt;
+
+    if (!decoder.decode(result.platformTypesByFidelity))
+        return WTF::nullopt;
 
     if (!decoder.decode(result.suggestedFileName))
-        return std::nullopt;
+        return WTF::nullopt;
+
+    if (!decoder.decode(result.preferredPresentationSize))
+        return WTF::nullopt;
 
     if (!decoder.decode(result.isNonTextType))
-        return std::nullopt;
+        return WTF::nullopt;
 
-    if (!decoder.decodeEnum(result.preferredPresentationStyle))
-        return std::nullopt;
+    if (!decoder.decode(result.containsFileURLAndFileUploadContent))
+        return WTF::nullopt;
 
-    return WTFMove(result);
+    if (!decoder.decode(result.webSafeTypesByFidelity))
+        return WTF::nullopt;
+
+    if (!decoder.decode(result.preferredPresentationStyle))
+        return WTF::nullopt;
+
+    return result;
 }
 
 }
 
 namespace WTF {
-
-template<typename> struct EnumTraits;
-template<typename E, E...> struct EnumValues;
 
 template<> struct EnumTraits<WebCore::PasteboardItemPresentationStyle> {
     using values = EnumValues<

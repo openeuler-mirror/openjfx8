@@ -154,7 +154,7 @@ Length RenderTableCell::logicalWidthFromColumns(RenderTableCol* firstColForThisC
     RenderTableCol* tableCol = firstColForThisCell;
 
     unsigned colSpanCount = colSpan();
-    LayoutUnit colWidthSum = 0;
+    LayoutUnit colWidthSum;
     for (unsigned i = 1; i <= colSpanCount; i++) {
         Length colWidth = tableCol->style().logicalWidth();
 
@@ -198,7 +198,7 @@ void RenderTableCell::computePreferredLogicalWidths()
         // to make the minwidth of the cell into the fixed width. They do this
         // even in strict mode, so do not make this a quirk. Affected the top
         // of hiptop.com.
-        m_minPreferredLogicalWidth = std::max<LayoutUnit>(w.value(), m_minPreferredLogicalWidth);
+        m_minPreferredLogicalWidth = std::max(LayoutUnit(w.value()), m_minPreferredLogicalWidth);
     }
 }
 
@@ -208,7 +208,7 @@ void RenderTableCell::computeIntrinsicPadding(LayoutUnit rowHeight)
     LayoutUnit oldIntrinsicPaddingAfter = intrinsicPaddingAfter();
     LayoutUnit logicalHeightWithoutIntrinsicPadding = logicalHeight() - oldIntrinsicPaddingBefore - oldIntrinsicPaddingAfter;
 
-    LayoutUnit intrinsicPaddingBefore = 0;
+    LayoutUnit intrinsicPaddingBefore;
     switch (style().verticalAlign()) {
     case VerticalAlign::Sub:
     case VerticalAlign::Super:
@@ -357,7 +357,7 @@ LayoutRect RenderTableCell::clippedOverflowRectForRepaint(const RenderLayerModel
         return RenderBlockFlow::clippedOverflowRectForRepaint(repaintContainer);
 
     bool rtl = !styleForCellFlow().isLeftToRightDirection();
-    LayoutUnit outlineSize = style().outlineSize();
+    LayoutUnit outlineSize { style().outlineSize() };
     LayoutUnit left = std::max(borderHalfLeft(true), outlineSize);
     LayoutUnit right = std::max(borderHalfRight(true), outlineSize);
     LayoutUnit top = std::max(borderHalfTop(true), outlineSize);
@@ -395,14 +395,14 @@ LayoutRect RenderTableCell::clippedOverflowRectForRepaint(const RenderLayerModel
     return computeRectForRepaint(r, repaintContainer);
 }
 
-LayoutRect RenderTableCell::computeRectForRepaint(const LayoutRect& rect, const RenderLayerModelObject* repaintContainer, RepaintContext context) const
+Optional<LayoutRect> RenderTableCell::computeVisibleRectInContainer(const LayoutRect& rect, const RenderLayerModelObject* container, VisibleRectContext context) const
 {
-    if (repaintContainer == this)
+    if (container == this)
         return rect;
     LayoutRect adjustedRect = rect;
-    if ((!view().frameView().layoutContext().isPaintOffsetCacheEnabled() || repaintContainer) && parent())
+    if ((!view().frameView().layoutContext().isPaintOffsetCacheEnabled() || container || context.options.contains(VisibleRectContextOption::UseEdgeInclusiveIntersection)) && parent())
         adjustedRect.moveBy(-parentBox()->location()); // Rows are in the same coordinate space, so don't add their offset in.
-    return RenderBlockFlow::computeRectForRepaint(adjustedRect, repaintContainer, context);
+    return RenderBlockFlow::computeVisibleRectInContainer(adjustedRect, container, context);
 }
 
 LayoutUnit RenderTableCell::cellBaselinePosition() const
@@ -410,7 +410,7 @@ LayoutUnit RenderTableCell::cellBaselinePosition() const
     // <http://www.w3.org/TR/2007/CR-CSS21-20070719/tables.html#height-layout>: The baseline of a cell is the baseline of
     // the first in-flow line box in the cell, or the first in-flow table-row in the cell, whichever comes first. If there
     // is no such line box or table-row, the baseline is the bottom of content edge of the cell box.
-    return firstLineBaseline().value_or(borderAndPaddingBefore() + contentLogicalHeight());
+    return firstLineBaseline().valueOr(borderAndPaddingBefore() + contentLogicalHeight());
 }
 
 static inline void markCellDirtyWhenCollapsedBorderChanges(RenderTableCell* cell)
@@ -1287,10 +1287,8 @@ void RenderTableCell::paintBackgroundsBehindCell(PaintInfo& paintInfo, const Lay
     const auto& style = backgroundObject->style();
     auto& bgLayer = style.backgroundLayers();
 
-    CompositeOperator compositeOp = CompositeSourceOver;
-    Color color = style.visitedDependentColor(CSSPropertyBackgroundColor);
-    if (document().settings().punchOutWhiteBackgroundsInDarkMode() && Color::isWhiteColor(color) && theme().usingDarkAppearance(*this))
-        compositeOp = CompositeDestinationOut;
+    auto color = style.visitedDependentColor(CSSPropertyBackgroundColor);
+    auto compositeOp = document().compositeOperatorForBackgroundColor(color, *this);
 
     color = style.colorByApplyingColorFilter(color);
 
@@ -1320,12 +1318,12 @@ void RenderTableCell::paintBoxDecorations(PaintInfo& paintInfo, const LayoutPoin
     LayoutRect paintRect = LayoutRect(paintOffset, frameRect().size());
     adjustBorderBoxRectForPainting(paintRect);
 
-    paintBoxShadow(paintInfo, paintRect, style(), Normal);
+    paintBoxShadow(paintInfo, paintRect, style(), ShadowStyle::Normal);
 
     // Paint our cell background.
     paintBackgroundsBehindCell(paintInfo, paintOffset, this);
 
-    paintBoxShadow(paintInfo, paintRect, style(), Inset);
+    paintBoxShadow(paintInfo, paintRect, style(), ShadowStyle::Inset);
 
     if (!style().hasBorder() || table->collapseBorders())
         return;

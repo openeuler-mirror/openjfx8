@@ -1,6 +1,6 @@
 /*
  *  Copyright (C) 1999-2000 Harri Porten (porten@kde.org)
- *  Copyright (C) 2003-2017 Apple Inc. All rights reserved.
+ *  Copyright (C) 2003-2019 Apple Inc. All rights reserved.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Lesser General Public
@@ -54,7 +54,7 @@ namespace JSC {
 
 // Define the maximum storage vector length to be 2^32 / sizeof(JSValue) / 2 to ensure that
 // there is no risk of overflow.
-#define MAX_STORAGE_VECTOR_LENGTH (static_cast<unsigned>(IndexingHeader::maximumLength))
+#define MAX_STORAGE_VECTOR_LENGTH IndexingHeader::maximumLength
 
 // These values have to be macros to be used in max() and min() without introducing
 // a PIC branch in Mach-O binaries, see <rdar://problem/5971391>.
@@ -65,7 +65,7 @@ namespace JSC {
 #define MIN_SPARSE_ARRAY_INDEX 100000U
 // If you try to allocate a contiguous array larger than this, then we will allocate an ArrayStorage
 // array instead. We allow for an array that occupies 1GB of VM.
-#define MIN_ARRAY_STORAGE_CONSTRUCTION_LENGTH 1024 * 1024 * 1024 / 8
+#define MIN_ARRAY_STORAGE_CONSTRUCTION_LENGTH (1024 * 1024 * 1024 / 8)
 #define MAX_STORAGE_VECTOR_INDEX (MAX_STORAGE_VECTOR_LENGTH - 1)
 // 0xFFFFFFFF is a bit weird -- is not an array index even though it's an integer.
 #define MAX_ARRAY_INDEX 0xFFFFFFFEU
@@ -91,7 +91,7 @@ static_assert(MAX_STORAGE_VECTOR_INDEX <= MAX_ARRAY_INDEX, "MAX_STORAGE_VECTOR_I
 // For all array indices under MIN_SPARSE_ARRAY_INDEX, we always use a vector.
 // When indices greater than MIN_SPARSE_ARRAY_INDEX are involved, we use a vector
 // as long as it is 1/8 full. If more sparse than that, we use a map.
-static const unsigned minDensityMultiplier = 8;
+static constexpr unsigned minDensityMultiplier = 8;
 
 inline bool isDenseEnoughForVector(unsigned length, unsigned numValues)
 {

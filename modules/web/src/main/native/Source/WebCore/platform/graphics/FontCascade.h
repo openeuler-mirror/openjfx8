@@ -2,7 +2,7 @@
  * Copyright (C) 2000 Lars Knoll (knoll@kde.org)
  *           (C) 2000 Antti Koivisto (koivisto@kde.org)
  *           (C) 2000 Dirk Mueller (mueller@kde.org)
- * Copyright (C) 2003-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2003-2020 Apple Inc. All rights reserved.
  * Copyright (C) 2008 Holger Hans Peter Freyther
  *
  * This library is free software; you can redistribute it and/or
@@ -26,8 +26,8 @@
 
 #include "DashArray.h"
 #include "Font.h"
+#include "FontCascadeDescription.h"
 #include "FontCascadeFonts.h"
-#include "FontDescription.h"
 #include "Path.h"
 #include <wtf/HashSet.h>
 #include <wtf/Optional.h>
@@ -81,18 +81,6 @@ struct GlyphOverflow {
     bool computeBounds { false };
 };
 
-class GlyphToPathTranslator {
-public:
-    enum class GlyphUnderlineType {SkipDescenders, SkipGlyph, DrawOverGlyph};
-    virtual bool containsMorePaths() = 0;
-    virtual Path path() = 0;
-    virtual std::pair<float, float> extents() = 0;
-    virtual GlyphUnderlineType underlineType() = 0;
-    virtual void advance() = 0;
-    virtual ~GlyphToPathTranslator() = default;
-};
-GlyphToPathTranslator::GlyphUnderlineType computeUnderlineType(const TextRun&, const GlyphBuffer&, unsigned index);
-
 class TextLayoutDeleter {
 public:
     void operator()(TextLayout*) const;
@@ -116,24 +104,25 @@ public:
     int pixelSize() const { return fontDescription().computedPixelSize(); }
     float size() const { return fontDescription().computedSize(); }
 
+    bool isCurrent(const FontSelector&) const;
     WEBCORE_EXPORT void update(RefPtr<FontSelector>&& = nullptr) const;
 
     enum CustomFontNotReadyAction { DoNotPaintIfFontNotReady, UseFallbackIfFontNotReady };
-    WEBCORE_EXPORT float drawText(GraphicsContext&, const TextRun&, const FloatPoint&, unsigned from = 0, std::optional<unsigned> to = std::nullopt, CustomFontNotReadyAction = DoNotPaintIfFontNotReady) const;
+    WEBCORE_EXPORT FloatSize drawText(GraphicsContext&, const TextRun&, const FloatPoint&, unsigned from = 0, Optional<unsigned> to = WTF::nullopt, CustomFontNotReadyAction = DoNotPaintIfFontNotReady) const;
     static void drawGlyphs(GraphicsContext&, const Font&, const GlyphBuffer&, unsigned from, unsigned numGlyphs, const FloatPoint&, FontSmoothingMode);
-    void drawEmphasisMarks(GraphicsContext&, const TextRun&, const AtomicString& mark, const FloatPoint&, unsigned from = 0, std::optional<unsigned> to = std::nullopt) const;
+    void drawEmphasisMarks(GraphicsContext&, const TextRun&, const AtomString& mark, const FloatPoint&, unsigned from = 0, Optional<unsigned> to = WTF::nullopt) const;
 
     DashArray dashesForIntersectionsWithRect(const TextRun&, const FloatPoint& textOrigin, const FloatRect& lineExtents) const;
 
     float widthOfTextRange(const TextRun&, unsigned from, unsigned to, HashSet<const Font*>* fallbackFonts = 0, float* outWidthBeforeRange = nullptr, float* outWidthAfterRange = nullptr) const;
     WEBCORE_EXPORT float width(const TextRun&, HashSet<const Font*>* fallbackFonts = 0, GlyphOverflow* = 0) const;
-    float widthForSimpleText(StringView text) const;
+    float widthForSimpleText(StringView text, TextDirection = TextDirection::LTR) const;
 
     std::unique_ptr<TextLayout, TextLayoutDeleter> createLayout(RenderText&, float xPos, bool collapseWhiteSpace) const;
     static float width(TextLayout&, unsigned from, unsigned len, HashSet<const Font*>* fallbackFonts = 0);
 
     int offsetForPosition(const TextRun&, float position, bool includePartialGlyphs) const;
-    void adjustSelectionRectForText(const TextRun&, LayoutRect& selectionRect, unsigned from = 0, std::optional<unsigned> to = std::nullopt) const;
+    void adjustSelectionRectForText(const TextRun&, LayoutRect& selectionRect, unsigned from = 0, Optional<unsigned> to = WTF::nullopt) const;
 
     bool isSmallCaps() const { return m_fontDescription.variantCaps() == FontVariantCaps::Small; }
 
@@ -148,12 +137,12 @@ public:
     bool enableKerning() const { return m_enableKerning; }
     bool requiresShaping() const { return m_requiresShaping; }
 
-    const AtomicString& firstFamily() const { return m_fontDescription.firstFamily(); }
+    const AtomString& firstFamily() const { return m_fontDescription.firstFamily(); }
     unsigned familyCount() const { return m_fontDescription.familyCount(); }
-    const AtomicString& familyAt(unsigned i) const { return m_fontDescription.familyAt(i); }
+    const AtomString& familyAt(unsigned i) const { return m_fontDescription.familyAt(i); }
 
-    // A std::nullopt return value indicates "font-style: normal".
-    std::optional<FontSelectionValue> italic() const { return m_fontDescription.italic(); }
+    // A WTF::nullopt return value indicates "font-style: normal".
+    Optional<FontSelectionValue> italic() const { return m_fontDescription.italic(); }
     FontSelectionValue weight() const { return m_fontDescription.weight(); }
     FontWidthVariant widthVariant() const { return m_fontDescription.widthVariant(); }
 
@@ -161,14 +150,14 @@ public:
 
     const FontMetrics& fontMetrics() const { return primaryFont().fontMetrics(); }
     float spaceWidth() const { return primaryFont().spaceWidth() + m_letterSpacing; }
-    float tabWidth(const Font&, unsigned tabSize, float position) const;
-    float tabWidth(unsigned tabSize, float position) const { return tabWidth(primaryFont(), tabSize, position); }
+    float tabWidth(const Font&, const TabSize&, float) const;
+    float tabWidth(const TabSize& tabSize, float position) const { return tabWidth(primaryFont(), tabSize, position); }
     bool hasValidAverageCharWidth() const;
     bool fastAverageCharWidthIfAvailable(float &width) const; // returns true on success
 
-    int emphasisMarkAscent(const AtomicString&) const;
-    int emphasisMarkDescent(const AtomicString&) const;
-    int emphasisMarkHeight(const AtomicString&) const;
+    int emphasisMarkAscent(const AtomString&) const;
+    int emphasisMarkDescent(const AtomString&) const;
+    int emphasisMarkHeight(const AtomString&) const;
 
     const Font& primaryFont() const;
     const FontRanges& fallbackRangesAt(unsigned) const;
@@ -185,44 +174,48 @@ public:
 
     // Whether or not there is an expansion opportunity just before the first character
     // Note that this does not take a isAfterExpansion flag; this assumes that isAfterExpansion is false
-    // Here, "Leading" and "Trailing" are relevant after the line has been rearranged for bidi.
-    // ("Leading" means "left" and "Trailing" means "right.")
-    static bool leadingExpansionOpportunity(const StringView&, TextDirection);
-    static bool trailingExpansionOpportunity(const StringView&, TextDirection);
+    static bool leftExpansionOpportunity(const StringView&, TextDirection);
+    static bool rightExpansionOpportunity(const StringView&, TextDirection);
 
     WEBCORE_EXPORT static void setShouldUseSmoothing(bool);
     WEBCORE_EXPORT static bool shouldUseSmoothing();
 
+    static bool isSubpixelAntialiasingAvailable();
+
     enum CodePath { Auto, Simple, Complex, SimpleWithGlyphOverflow };
-    CodePath codePath(const TextRun&, std::optional<unsigned> from = std::nullopt, std::optional<unsigned> to = std::nullopt) const;
+    CodePath codePath(const TextRun&, Optional<unsigned> from = WTF::nullopt, Optional<unsigned> to = WTF::nullopt) const;
     static CodePath characterRangeCodePath(const LChar*, unsigned) { return Simple; }
     static CodePath characterRangeCodePath(const UChar*, unsigned len);
 
     bool primaryFontIsSystemFont() const;
 
-    std::unique_ptr<DisplayList::DisplayList> displayListForTextRun(GraphicsContext&, const TextRun&, unsigned from = 0, std::optional<unsigned> to = { }, CustomFontNotReadyAction = CustomFontNotReadyAction::DoNotPaintIfFontNotReady) const;
+    std::unique_ptr<DisplayList::DisplayList> displayListForTextRun(GraphicsContext&, const TextRun&, unsigned from = 0, Optional<unsigned> to = { }, CustomFontNotReadyAction = CustomFontNotReadyAction::DoNotPaintIfFontNotReady) const;
 
+#if PLATFORM(WIN) && USE(CG)
+    static void setFontSmoothingLevel(int);
+    static uint32_t setFontSmoothingStyle(CGContextRef, bool fontAllowsSmoothing);
+    static void setFontSmoothingContrast(CGFloat);
+    static void systemFontSmoothingChanged();
+    static void setCGContextFontRenderingStyle(CGContextRef, bool isSystemFont, bool isPrinterFont, bool usePlatformNativeGlyphs);
+    static void getPlatformGlyphAdvances(CGFontRef, const CGAffineTransform&, bool isSystemFont, bool isPrinterFont, CGGlyph, CGSize& advance);
+#endif
 private:
     enum ForTextEmphasisOrNot { NotForTextEmphasis, ForTextEmphasis };
 
-    float glyphBufferForTextRun(CodePath, const TextRun&, unsigned from, unsigned to, GlyphBuffer&) const;
-    // Returns the initial in-stream advance.
-    float getGlyphsAndAdvancesForSimpleText(const TextRun&, unsigned from, unsigned to, GlyphBuffer&, ForTextEmphasisOrNot = NotForTextEmphasis) const;
-    void drawEmphasisMarksForSimpleText(GraphicsContext&, const TextRun&, const AtomicString& mark, const FloatPoint&, unsigned from, unsigned to) const;
+    GlyphBuffer layoutText(CodePath, const TextRun&, unsigned from, unsigned to, ForTextEmphasisOrNot = NotForTextEmphasis) const;
+    GlyphBuffer layoutSimpleText(const TextRun&, unsigned from, unsigned to, ForTextEmphasisOrNot = NotForTextEmphasis) const;
     void drawGlyphBuffer(GraphicsContext&, const GlyphBuffer&, FloatPoint&, CustomFontNotReadyAction) const;
-    void drawEmphasisMarks(GraphicsContext&, const GlyphBuffer&, const AtomicString&, const FloatPoint&) const;
+    void drawEmphasisMarks(GraphicsContext&, const GlyphBuffer&, const AtomString&, const FloatPoint&) const;
     float floatWidthForSimpleText(const TextRun&, HashSet<const Font*>* fallbackFonts = 0, GlyphOverflow* = 0) const;
     int offsetForPositionForSimpleText(const TextRun&, float position, bool includePartialGlyphs) const;
     void adjustSelectionRectForSimpleText(const TextRun&, LayoutRect& selectionRect, unsigned from, unsigned to) const;
 
-    std::optional<GlyphData> getEmphasisMarkGlyphData(const AtomicString&) const;
+    Optional<GlyphData> getEmphasisMarkGlyphData(const AtomString&) const;
 
     static bool canReturnFallbackFontsForComplexText();
     static bool canExpandAroundIdeographsInComplexText();
 
-    // Returns the initial in-stream advance.
-    float getGlyphsAndAdvancesForComplexText(const TextRun&, unsigned from, unsigned to, GlyphBuffer&, ForTextEmphasisOrNot = NotForTextEmphasis) const;
-    void drawEmphasisMarksForComplexText(GraphicsContext&, const TextRun&, const AtomicString& mark, const FloatPoint&, unsigned from, unsigned to) const;
+    GlyphBuffer layoutComplexText(const TextRun&, unsigned from, unsigned to, ForTextEmphasisOrNot = NotForTextEmphasis) const;
     float floatWidthForComplexText(const TextRun&, HashSet<const Font*>* fallbackFonts = 0, GlyphOverflow* = 0) const;
     int offsetForPositionForComplexText(const TextRun&, float position, bool includePartialGlyphs) const;
     void adjustSelectionRectForComplexText(const TextRun&, LayoutRect& selectionRect, unsigned from, unsigned to) const;
@@ -231,6 +224,7 @@ private:
     static std::pair<unsigned, bool> expansionOpportunityCountInternal(const UChar*, unsigned length, TextDirection, ExpansionBehavior);
 
     friend struct WidthIterator;
+    friend class ComplexTextController;
 
 public:
 #if ENABLE(TEXT_AUTOSIZING)
@@ -269,9 +263,9 @@ public:
 
     bool useBackslashAsYenSymbol() const { return m_useBackslashAsYenSymbol; }
     FontCascadeFonts* fonts() const { return m_fonts.get(); }
+    bool isLoadingCustomFonts() const;
 
 private:
-    bool isLoadingCustomFonts() const;
 
     bool advancedTextRenderingMode() const
     {
@@ -310,6 +304,15 @@ private:
 
     static int syntheticObliqueAngle() { return 14; }
 
+#if PLATFORM(WIN) && USE(CG)
+    static double s_fontSmoothingContrast;
+    static uint32_t s_fontSmoothingType;
+    static int s_fontSmoothingLevel;
+    static uint32_t s_systemFontSmoothingType;
+    static bool s_systemFontSmoothingSet;
+    static bool s_systemFontSmoothingEnabled;
+#endif
+
     FontCascadeDescription m_fontDescription;
     mutable RefPtr<FontCascadeFonts> m_fonts;
     float m_letterSpacing { 0 };
@@ -347,13 +350,13 @@ inline FontSelector* FontCascade::fontSelector() const
     return m_fonts ? m_fonts->fontSelector() : nullptr;
 }
 
-inline float FontCascade::tabWidth(const Font& font, unsigned tabSize, float position) const
+inline float FontCascade::tabWidth(const Font& font, const TabSize& tabSize, float position) const
 {
-    if (!tabSize)
+    float baseTabWidth = tabSize.widthInPixels(font.spaceWidth());
+    if (!baseTabWidth)
         return letterSpacing();
-    float tabWidth = tabSize * font.spaceWidth() + letterSpacing();
-    float tabDeltaWidth = tabWidth - fmodf(position, tabWidth);
-    return (tabDeltaWidth < font.spaceWidth() / 2) ? tabWidth : tabDeltaWidth;
+    float tabDeltaWidth = baseTabWidth - fmodf(position, baseTabWidth);
+    return (tabDeltaWidth < font.spaceWidth() / 2) ? baseTabWidth : tabDeltaWidth;
 }
 
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,7 +29,6 @@
 #include "Heap.h"
 #include "HeapCellInlines.h"
 #include "IndexingHeader.h"
-#include "JSCallee.h"
 #include "JSCast.h"
 #include "Structure.h"
 #include <type_traits>
@@ -39,9 +38,9 @@
 
 namespace JSC {
 
-ALWAYS_INLINE VM* Heap::vm() const
+ALWAYS_INLINE VM& Heap::vm() const
 {
-    return bitwise_cast<VM*>(bitwise_cast<uintptr_t>(this) - OBJECT_OFFSETOF(VM, heap));
+    return *bitwise_cast<VM*>(bitwise_cast<uintptr_t>(this) - OBJECT_OFFSETOF(VM, heap));
 }
 
 ALWAYS_INLINE Heap* Heap::heap(const HeapCell* cell)
@@ -68,22 +67,20 @@ inline bool Heap::worldIsStopped() const
     return m_worldIsStopped;
 }
 
-// FIXME: This should be an instance method, so that it can get the markingVersion() quickly.
-// https://bugs.webkit.org/show_bug.cgi?id=179988
 ALWAYS_INLINE bool Heap::isMarked(const void* rawCell)
 {
     HeapCell* cell = bitwise_cast<HeapCell*>(rawCell);
-    if (cell->isLargeAllocation())
-        return cell->largeAllocation().isMarked();
+    if (cell->isPreciseAllocation())
+        return cell->preciseAllocation().isMarked();
     MarkedBlock& block = cell->markedBlock();
-    return block.isMarked(block.vm()->heap.objectSpace().markingVersion(), cell);
+    return block.isMarked(m_objectSpace.markingVersion(), cell);
 }
 
 ALWAYS_INLINE bool Heap::testAndSetMarked(HeapVersion markingVersion, const void* rawCell)
 {
     HeapCell* cell = bitwise_cast<HeapCell*>(rawCell);
-    if (cell->isLargeAllocation())
-        return cell->largeAllocation().testAndSetMarked();
+    if (cell->isPreciseAllocation())
+        return cell->preciseAllocation().testAndSetMarked();
     MarkedBlock& block = cell->markedBlock();
     Dependency dependency = block.aboutToMark(markingVersion);
     return block.testAndSetMarked(cell, dependency);
@@ -167,7 +164,7 @@ inline void Heap::releaseSoon(RetainPtr<T>&& object)
 }
 #endif
 
-#if USE(GLIB)
+#ifdef JSC_GLIB_API_ENABLED
 inline void Heap::releaseSoon(std::unique_ptr<JSCGLibWrapperObject>&& object)
 {
     m_delayedReleaseObjects.append(WTFMove(object));
@@ -176,22 +173,22 @@ inline void Heap::releaseSoon(std::unique_ptr<JSCGLibWrapperObject>&& object)
 
 inline void Heap::incrementDeferralDepth()
 {
-    ASSERT(!mayBeGCThread() || m_worldIsStopped);
+    ASSERT(!Thread::mayBeGCThread() || m_worldIsStopped);
     m_deferralDepth++;
 }
 
 inline void Heap::decrementDeferralDepth()
 {
-    ASSERT(!mayBeGCThread() || m_worldIsStopped);
+    ASSERT(!Thread::mayBeGCThread() || m_worldIsStopped);
     m_deferralDepth--;
 }
 
 inline void Heap::decrementDeferralDepthAndGCIfNeeded()
 {
-    ASSERT(!mayBeGCThread() || m_worldIsStopped);
+    ASSERT(!Thread::mayBeGCThread() || m_worldIsStopped);
     m_deferralDepth--;
 
-    if (UNLIKELY(m_didDeferGCWork)) {
+    if (UNLIKELY(m_didDeferGCWork) || Options::forceDidDeferGCWork()) {
         decrementDeferralDepthAndGCIfNeededSlow();
 
         // Here are the possible relationships between m_deferralDepth and m_didDeferGCWork.
@@ -220,7 +217,7 @@ inline void Heap::decrementDeferralDepthAndGCIfNeeded()
 inline HashSet<MarkedArgumentBuffer*>& Heap::markListSet()
 {
     if (!m_markListSet)
-        m_markListSet = std::make_unique<HashSet<MarkedArgumentBuffer*>>();
+        m_markListSet = makeUnique<HashSet<MarkedArgumentBuffer*>>();
     return *m_markListSet;
 }
 
@@ -238,6 +235,9 @@ inline void Heap::deprecatedReportExtraMemory(size_t size)
 
 inline void Heap::acquireAccess()
 {
+    if constexpr (validateDFGDoesGC)
+        verifyCanGC();
+
     if (m_worldState.compareExchangeWeak(0, hasAccessBit))
         return;
     acquireAccessSlow();
@@ -262,6 +262,9 @@ inline bool Heap::mayNeedToStop()
 
 inline void Heap::stopIfNecessary()
 {
+    if constexpr (validateDFGDoesGC)
+        verifyCanGC();
+
     if (mayNeedToStop())
         stopIfNecessarySlow();
 }

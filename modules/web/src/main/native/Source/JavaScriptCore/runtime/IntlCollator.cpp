@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2015 Andy VanWagoner (andy@vanwagoner.family)
  * Copyright (C) 2015 Sukolsak Sakshuwong (sukolsak@gmail.com)
- * Copyright (C) 2016-2017 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2016-2020 Apple Inc. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,28 +28,19 @@
 #include "config.h"
 #include "IntlCollator.h"
 
-#if ENABLE(INTL)
-
-#include "CatchScope.h"
-#include "Error.h"
-#include "IntlCollatorConstructor.h"
-#include "IntlObject.h"
+#include "IntlObjectInlines.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
-#include "SlotVisitorInlines.h"
-#include "StructureInlines.h"
 #include <unicode/ucol.h>
-#include <wtf/unicode/Collator.h>
 
 namespace JSC {
 
 const ClassInfo IntlCollator::s_info = { "Object", &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(IntlCollator) };
 
-static const char* const relevantCollatorExtensionKeys[3] = { "co", "kn", "kf" };
-static const size_t indexOfExtensionKeyCo = 0;
-static const size_t indexOfExtensionKeyKn = 1;
-static const size_t indexOfExtensionKeyKf = 2;
+namespace IntlCollatorInternal {
+constexpr bool verbose = false;
+}
 
 void IntlCollator::UCollatorDeleter::operator()(UCollator* collator) const
 {
@@ -70,7 +61,7 @@ Structure* IntlCollator::createStructure(VM& vm, JSGlobalObject* globalObject, J
 }
 
 IntlCollator::IntlCollator(VM& vm, Structure* structure)
-    : JSDestructibleObject(vm, structure)
+    : Base(vm, structure)
 {
 }
 
@@ -78,11 +69,6 @@ void IntlCollator::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(vm, info()));
-}
-
-void IntlCollator::destroy(JSCell* cell)
-{
-    static_cast<IntlCollator*>(cell)->IntlCollator::~IntlCollator();
 }
 
 void IntlCollator::visitChildren(JSCell* cell, SlotVisitor& visitor)
@@ -95,12 +81,12 @@ void IntlCollator::visitChildren(JSCell* cell, SlotVisitor& visitor)
     visitor.append(thisObject->m_boundCompare);
 }
 
-static Vector<String> sortLocaleData(const String& locale, size_t keyIndex)
+Vector<String> IntlCollator::sortLocaleData(const String& locale, RelevantExtensionKey key)
 {
     // 9.1 Internal slots of Service Constructors & 10.2.3 Internal slots (ECMA-402 2.0)
     Vector<String> keyLocaleData;
-    switch (keyIndex) {
-    case indexOfExtensionKeyCo: {
+    switch (key) {
+    case RelevantExtensionKey::Co: {
         // 10.2.3 "The first element of [[sortLocaleData]][locale].co and [[searchLocaleData]][locale].co must be null for all locale values."
         keyLocaleData.append({ });
 
@@ -129,16 +115,16 @@ static Vector<String> sortLocaleData(const String& locale, size_t keyIndex)
         }
         break;
     }
-    case indexOfExtensionKeyKn:
-        keyLocaleData.reserveInitialCapacity(2);
-        keyLocaleData.uncheckedAppend("false"_s);
-        keyLocaleData.uncheckedAppend("true"_s);
-        break;
-    case indexOfExtensionKeyKf:
+    case RelevantExtensionKey::Kf:
         keyLocaleData.reserveInitialCapacity(3);
         keyLocaleData.uncheckedAppend("false"_s);
         keyLocaleData.uncheckedAppend("lower"_s);
         keyLocaleData.uncheckedAppend("upper"_s);
+        break;
+    case RelevantExtensionKey::Kn:
+        keyLocaleData.reserveInitialCapacity(2);
+        keyLocaleData.uncheckedAppend("false"_s);
+        keyLocaleData.uncheckedAppend("true"_s);
         break;
     default:
         ASSERT_NOT_REACHED();
@@ -146,26 +132,26 @@ static Vector<String> sortLocaleData(const String& locale, size_t keyIndex)
     return keyLocaleData;
 }
 
-static Vector<String> searchLocaleData(const String&, size_t keyIndex)
+Vector<String> IntlCollator::searchLocaleData(const String&, RelevantExtensionKey key)
 {
     // 9.1 Internal slots of Service Constructors & 10.2.3 Internal slots (ECMA-402 2.0)
     Vector<String> keyLocaleData;
-    switch (keyIndex) {
-    case indexOfExtensionKeyCo:
+    switch (key) {
+    case RelevantExtensionKey::Co:
         // 10.2.3 "The first element of [[sortLocaleData]][locale].co and [[searchLocaleData]][locale].co must be null for all locale values."
         keyLocaleData.reserveInitialCapacity(1);
         keyLocaleData.append({ });
         break;
-    case indexOfExtensionKeyKn:
-        keyLocaleData.reserveInitialCapacity(2);
-        keyLocaleData.uncheckedAppend("false"_s);
-        keyLocaleData.uncheckedAppend("true"_s);
-        break;
-    case indexOfExtensionKeyKf:
+    case RelevantExtensionKey::Kf:
         keyLocaleData.reserveInitialCapacity(3);
         keyLocaleData.uncheckedAppend("false"_s);
         keyLocaleData.uncheckedAppend("lower"_s);
         keyLocaleData.uncheckedAppend("upper"_s);
+        break;
+    case RelevantExtensionKey::Kn:
+        keyLocaleData.reserveInitialCapacity(2);
+        keyLocaleData.uncheckedAppend("false"_s);
+        keyLocaleData.uncheckedAppend("true"_s);
         break;
     default:
         ASSERT_NOT_REACHED();
@@ -173,116 +159,90 @@ static Vector<String> searchLocaleData(const String&, size_t keyIndex)
     return keyLocaleData;
 }
 
-void IntlCollator::initializeCollator(ExecState& state, JSValue locales, JSValue optionsValue)
+// https://tc39.github.io/ecma402/#sec-initializecollator
+void IntlCollator::initializeCollator(JSGlobalObject* globalObject, JSValue locales, JSValue optionsValue)
 {
-    VM& vm = state.vm();
+    VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // 10.1.1 InitializeCollator (collator, locales, options) (ECMA-402)
-    // https://tc39.github.io/ecma402/#sec-initializecollator
-
-    auto requestedLocales = canonicalizeLocaleList(state, locales);
+    auto requestedLocales = canonicalizeLocaleList(globalObject, locales);
     RETURN_IF_EXCEPTION(scope, void());
 
-    JSObject* options;
-    if (optionsValue.isUndefined())
-        options = constructEmptyObject(&state, state.lexicalGlobalObject()->nullPrototypeObjectStructure());
-    else {
-        options = optionsValue.toObject(&state);
+    JSValue options = optionsValue;
+    if (!optionsValue.isUndefined()) {
+        options = optionsValue.toObject(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
     }
 
-    String usageString = intlStringOption(state, options, vm.propertyNames->usage, { "sort", "search" }, "usage must be either \"sort\" or \"search\"", "sort");
+    m_usage = intlOption<Usage>(globalObject, options, vm.propertyNames->usage, { { "sort"_s, Usage::Sort }, { "search"_s, Usage::Search } }, "usage must be either \"sort\" or \"search\""_s, Usage::Sort);
     RETURN_IF_EXCEPTION(scope, void());
-    if (usageString == "sort")
-        m_usage = Usage::Sort;
-    else if (usageString == "search")
-        m_usage = Usage::Search;
-    else
-        ASSERT_NOT_REACHED();
 
     auto localeData = (m_usage == Usage::Sort) ? sortLocaleData : searchLocaleData;
 
-    HashMap<String, String> opt;
+    ResolveLocaleOptions localeOptions;
 
-    String matcher = intlStringOption(state, options, vm.propertyNames->localeMatcher, { "lookup", "best fit" }, "localeMatcher must be either \"lookup\" or \"best fit\"", "best fit");
+    LocaleMatcher localeMatcher = intlOption<LocaleMatcher>(globalObject, options, vm.propertyNames->localeMatcher, { { "lookup"_s, LocaleMatcher::Lookup }, { "best fit"_s, LocaleMatcher::BestFit } }, "localeMatcher must be either \"lookup\" or \"best fit\""_s, LocaleMatcher::BestFit);
     RETURN_IF_EXCEPTION(scope, void());
-    opt.add("localeMatcher"_s, matcher);
 
-    {
-        String numericString;
-        bool usesFallback;
-        bool numeric = intlBooleanOption(state, options, vm.propertyNames->numeric, usesFallback);
-        RETURN_IF_EXCEPTION(scope, void());
-        if (!usesFallback)
-            numericString = numeric ? "true"_s : "false"_s;
-        if (!numericString.isNull())
-            opt.add("kn"_s, numericString);
-    }
-    {
-        String caseFirst = intlStringOption(state, options, vm.propertyNames->caseFirst, { "upper", "lower", "false" }, "caseFirst must be either \"upper\", \"lower\", or \"false\"", nullptr);
-        RETURN_IF_EXCEPTION(scope, void());
-        if (!caseFirst.isNull())
-            opt.add("kf"_s, caseFirst);
-    }
+    TriState numeric = intlBooleanOption(globalObject, options, vm.propertyNames->numeric);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (numeric != TriState::Indeterminate)
+        localeOptions[static_cast<unsigned>(RelevantExtensionKey::Kn)] = String(numeric == TriState::True ? "true"_s : "false"_s);
 
-    auto& availableLocales = state.jsCallee()->globalObject(vm)->intlCollatorAvailableLocales();
-    auto result = resolveLocale(state, availableLocales, requestedLocales, opt, relevantCollatorExtensionKeys, WTF_ARRAY_LENGTH(relevantCollatorExtensionKeys), localeData);
+    String caseFirstOption = intlStringOption(globalObject, options, vm.propertyNames->caseFirst, { "upper", "lower", "false" }, "caseFirst must be either \"upper\", \"lower\", or \"false\"", nullptr);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!caseFirstOption.isNull())
+        localeOptions[static_cast<unsigned>(RelevantExtensionKey::Kf)] = caseFirstOption;
 
-    m_locale = result.get("locale"_s);
+    auto& availableLocales = intlCollatorAvailableLocales();
+    auto resolved = resolveLocale(globalObject, availableLocales, requestedLocales, localeMatcher, localeOptions, { RelevantExtensionKey::Co, RelevantExtensionKey::Kf, RelevantExtensionKey::Kn }, localeData);
+
+    m_locale = resolved.locale;
     if (m_locale.isEmpty()) {
-        throwTypeError(&state, scope, "failed to initialize Collator due to invalid locale"_s);
+        throwTypeError(globalObject, scope, "failed to initialize Collator due to invalid locale"_s);
         return;
     }
 
-    const String& collation = result.get("co"_s);
+    const String& collation = resolved.extensions[static_cast<unsigned>(RelevantExtensionKey::Co)];
     m_collation = collation.isNull() ? "default"_s : collation;
-    m_numeric = result.get("kn"_s) == "true";
+    m_numeric = resolved.extensions[static_cast<unsigned>(RelevantExtensionKey::Kn)] == "true"_s;
 
-    const String& caseFirst = result.get("kf"_s);
-    if (caseFirst == "lower")
+    const String& caseFirstString = resolved.extensions[static_cast<unsigned>(RelevantExtensionKey::Kf)];
+    if (caseFirstString == "lower")
         m_caseFirst = CaseFirst::Lower;
-    else if (caseFirst == "upper")
+    else if (caseFirstString == "upper")
         m_caseFirst = CaseFirst::Upper;
     else
         m_caseFirst = CaseFirst::False;
 
-    String sensitivityString = intlStringOption(state, options, vm.propertyNames->sensitivity, { "base", "accent", "case", "variant" }, "sensitivity must be either \"base\", \"accent\", \"case\", or \"variant\"", nullptr);
+    m_sensitivity = intlOption<Sensitivity>(globalObject, options, vm.propertyNames->sensitivity, { { "base"_s, Sensitivity::Base }, { "accent"_s, Sensitivity::Accent }, { "case"_s, Sensitivity::Case }, { "variant"_s, Sensitivity::Variant } }, "sensitivity must be either \"base\", \"accent\", \"case\", or \"variant\""_s, Sensitivity::Variant);
     RETURN_IF_EXCEPTION(scope, void());
-    if (sensitivityString == "base")
-        m_sensitivity = Sensitivity::Base;
-    else if (sensitivityString == "accent")
-        m_sensitivity = Sensitivity::Accent;
-    else if (sensitivityString == "case")
-        m_sensitivity = Sensitivity::Case;
-    else
-        m_sensitivity = Sensitivity::Variant;
 
-    bool usesFallback;
-    bool ignorePunctuation = intlBooleanOption(state, options, vm.propertyNames->ignorePunctuation, usesFallback);
-    if (usesFallback)
-        ignorePunctuation = false;
+    TriState ignorePunctuation = intlBooleanOption(globalObject, options, vm.propertyNames->ignorePunctuation);
     RETURN_IF_EXCEPTION(scope, void());
-    m_ignorePunctuation = ignorePunctuation;
+    m_ignorePunctuation = (ignorePunctuation == TriState::True);
 
-    m_initializedCollator = true;
-}
-
-void IntlCollator::createCollator(ExecState& state)
-{
-    VM& vm = state.vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
-    ASSERT(!m_collator);
-
-    if (!m_initializedCollator) {
-        initializeCollator(state, jsUndefined(), jsUndefined());
-        scope.assertNoException();
+    // UCollator does not offer an option to configure "usage" via ucol_setAttribute. So we need to pass this option via locale.
+    CString dataLocaleWithExtensions;
+    switch (m_usage) {
+    case Usage::Sort:
+        dataLocaleWithExtensions = m_locale.utf8();
+        break;
+    case Usage::Search:
+        // searchLocaleData filters out "co" unicode extension. However, we need to pass "co" to ICU when Usage::Search is specified.
+        // So we need to pass "co" unicode extension through locale. Since the other relevant extensions are handled via ucol_setAttribute,
+        // we can just use dataLocale
+        dataLocaleWithExtensions = makeString(resolved.dataLocale, "-u-co-search").utf8();
+        break;
     }
+    dataLogLnIf(IntlCollatorInternal::verbose, "dataLocaleWithExtensions:(", dataLocaleWithExtensions, ")");
 
     UErrorCode status = U_ZERO_ERROR;
-    auto collator = std::unique_ptr<UCollator, UCollatorDeleter>(ucol_open(m_locale.utf8().data(), &status));
-    if (U_FAILURE(status))
+    m_collator = std::unique_ptr<UCollator, UCollatorDeleter>(ucol_open(dataLocaleWithExtensions.data(), &status));
+    if (U_FAILURE(status)) {
+        throwTypeError(globalObject, scope, "failed to initialize Collator"_s);
         return;
+    }
 
     UColAttributeValue strength = UCOL_PRIMARY;
     UColAttributeValue caseLevel = UCOL_OFF;
@@ -311,42 +271,50 @@ void IntlCollator::createCollator(ExecState& state)
         break;
     }
 
-    ucol_setAttribute(collator.get(), UCOL_STRENGTH, strength, &status);
-    ucol_setAttribute(collator.get(), UCOL_CASE_LEVEL, caseLevel, &status);
-    ucol_setAttribute(collator.get(), UCOL_CASE_FIRST, caseFirst, &status);
-    ucol_setAttribute(collator.get(), UCOL_NUMERIC_COLLATION, m_numeric ? UCOL_ON : UCOL_OFF, &status);
+    ucol_setAttribute(m_collator.get(), UCOL_STRENGTH, strength, &status);
+    ucol_setAttribute(m_collator.get(), UCOL_CASE_LEVEL, caseLevel, &status);
+    ucol_setAttribute(m_collator.get(), UCOL_CASE_FIRST, caseFirst, &status);
+    ucol_setAttribute(m_collator.get(), UCOL_NUMERIC_COLLATION, m_numeric ? UCOL_ON : UCOL_OFF, &status);
 
     // FIXME: Setting UCOL_ALTERNATE_HANDLING to UCOL_SHIFTED causes punctuation and whitespace to be
     // ignored. There is currently no way to ignore only punctuation.
-    ucol_setAttribute(collator.get(), UCOL_ALTERNATE_HANDLING, m_ignorePunctuation ? UCOL_SHIFTED : UCOL_DEFAULT, &status);
+    ucol_setAttribute(m_collator.get(), UCOL_ALTERNATE_HANDLING, m_ignorePunctuation ? UCOL_SHIFTED : UCOL_DEFAULT, &status);
 
     // "The method is required to return 0 when comparing Strings that are considered canonically
     // equivalent by the Unicode standard."
-    ucol_setAttribute(collator.get(), UCOL_NORMALIZATION_MODE, UCOL_ON, &status);
-    if (U_FAILURE(status))
-        return;
-
-    m_collator = WTFMove(collator);
+    ucol_setAttribute(m_collator.get(), UCOL_NORMALIZATION_MODE, UCOL_ON, &status);
+    ASSERT(U_SUCCESS(status));
 }
 
-JSValue IntlCollator::compareStrings(ExecState& state, StringView x, StringView y)
+// https://tc39.es/ecma402/#sec-collator-comparestrings
+JSValue IntlCollator::compareStrings(JSGlobalObject* globalObject, StringView x, StringView y) const
 {
-    VM& vm = state.vm();
+    ASSERT(m_collator);
+
+    VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // 10.3.4 CompareStrings abstract operation (ECMA-402 2.0)
-    if (!m_collator) {
-        createCollator(state);
-        if (!m_collator)
-            return throwException(&state, scope, createError(&state, "Failed to compare strings."_s));
-    }
-
     UErrorCode status = U_ZERO_ERROR;
-    UCharIterator iteratorX = createIterator(x);
-    UCharIterator iteratorY = createIterator(y);
-    auto result = ucol_strcollIter(m_collator.get(), &iteratorX, &iteratorY, &status);
+    UCollationResult result = UCOL_EQUAL;
+    if (x.is8Bit() && y.is8Bit() && x.isAllASCII() && y.isAllASCII())
+        result = ucol_strcollUTF8(m_collator.get(), bitwise_cast<const char*>(x.characters8()), x.length(), bitwise_cast<const char*>(y.characters8()), y.length(), &status);
+    else {
+        auto getCharacters = [&] (const StringView& view, Vector<UChar>& buffer) -> const UChar* {
+            if (!view.is8Bit())
+                return view.characters16();
+            buffer.resize(view.length());
+            StringImpl::copyCharacters(buffer.data(), view.characters8(), view.length());
+            return buffer.data();
+        };
+
+        Vector<UChar> xBuffer;
+        Vector<UChar> yBuffer;
+        const UChar* xCharacters = getCharacters(x, xBuffer);
+        const UChar* yCharacters = getCharacters(y, yBuffer);
+        result = ucol_strcoll(m_collator.get(), xCharacters, x.length(), yCharacters, y.length());
+    }
     if (U_FAILURE(status))
-        return throwException(&state, scope, createError(&state, "Failed to compare strings."_s));
+        return throwException(globalObject, scope, createError(globalObject, "Failed to compare strings."_s));
     return jsNumber(result);
 }
 
@@ -392,33 +360,18 @@ ASCIILiteral IntlCollator::caseFirstString(CaseFirst caseFirst)
     return ASCIILiteral::null();
 }
 
-JSObject* IntlCollator::resolvedOptions(ExecState& state)
+// https://tc39.es/ecma402/#sec-intl.collator.prototype.resolvedoptions
+JSObject* IntlCollator::resolvedOptions(JSGlobalObject* globalObject) const
 {
-    VM& vm = state.vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // 10.3.5 Intl.Collator.prototype.resolvedOptions() (ECMA-402 2.0)
-    // The function returns a new object whose properties and attributes are set as if
-    // constructed by an object literal assigning to each of the following properties the
-    // value of the corresponding internal slot of this Collator object (see 10.4): locale,
-    // usage, sensitivity, ignorePunctuation, collation, as well as those properties shown
-    // in Table 1 whose keys are included in the %Collator%[[relevantExtensionKeys]]
-    // internal slot of the standard built-in object that is the initial value of
-    // Intl.Collator.
-
-    if (!m_initializedCollator) {
-        initializeCollator(state, jsUndefined(), jsUndefined());
-        scope.assertNoException();
-    }
-
-    JSObject* options = constructEmptyObject(&state);
-    options->putDirect(vm, vm.propertyNames->locale, jsString(&state, m_locale));
-    options->putDirect(vm, vm.propertyNames->usage, jsNontrivialString(&state, usageString(m_usage)));
-    options->putDirect(vm, vm.propertyNames->sensitivity, jsNontrivialString(&state, sensitivityString(m_sensitivity)));
+    VM& vm = globalObject->vm();
+    JSObject* options = constructEmptyObject(globalObject);
+    options->putDirect(vm, vm.propertyNames->locale, jsString(vm, m_locale));
+    options->putDirect(vm, vm.propertyNames->usage, jsNontrivialString(vm, usageString(m_usage)));
+    options->putDirect(vm, vm.propertyNames->sensitivity, jsNontrivialString(vm, sensitivityString(m_sensitivity)));
     options->putDirect(vm, vm.propertyNames->ignorePunctuation, jsBoolean(m_ignorePunctuation));
-    options->putDirect(vm, vm.propertyNames->collation, jsString(&state, m_collation));
+    options->putDirect(vm, vm.propertyNames->collation, jsString(vm, m_collation));
     options->putDirect(vm, vm.propertyNames->numeric, jsBoolean(m_numeric));
-    options->putDirect(vm, vm.propertyNames->caseFirst, jsNontrivialString(&state, caseFirstString(m_caseFirst)));
+    options->putDirect(vm, vm.propertyNames->caseFirst, jsNontrivialString(vm, caseFirstString(m_caseFirst)));
     return options;
 }
 
@@ -428,5 +381,3 @@ void IntlCollator::setBoundCompare(VM& vm, JSBoundFunction* format)
 }
 
 } // namespace JSC
-
-#endif // ENABLE(INTL)

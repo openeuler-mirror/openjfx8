@@ -38,6 +38,7 @@
 namespace WebCore {
 
 class MockCDMSession : public LegacyCDMSession {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     MockCDMSession(LegacyCDMSessionClient*);
     virtual ~MockCDMSession() = default;
@@ -73,31 +74,31 @@ bool LegacyMockCDM::supportsMIMEType(const String& mimeType)
 
 std::unique_ptr<LegacyCDMSession> LegacyMockCDM::createSession(LegacyCDMSessionClient* client)
 {
-    return std::make_unique<MockCDMSession>(client);
+    return makeUnique<MockCDMSession>(client);
 }
 
 static Uint8Array* initDataPrefix()
 {
     const unsigned char prefixData[] = { 'm', 'o', 'c', 'k' };
-    static Uint8Array* prefix = Uint8Array::create(prefixData, WTF_ARRAY_LENGTH(prefixData)).leakRef();
+    static Uint8Array& prefix { Uint8Array::create(prefixData, WTF_ARRAY_LENGTH(prefixData)).leakRef() };
 
-    return prefix;
+    return &prefix;
 }
 
 static Uint8Array* keyPrefix()
 {
     static const unsigned char prefixData[] = {'k', 'e', 'y'};
-    static Uint8Array* prefix = Uint8Array::create(prefixData, WTF_ARRAY_LENGTH(prefixData)).leakRef();
+    static Uint8Array& prefix { Uint8Array::create(prefixData, WTF_ARRAY_LENGTH(prefixData)).leakRef() };
 
-    return prefix;
+    return &prefix;
 }
 
 static Uint8Array* keyRequest()
 {
     static const unsigned char requestData[] = {'r', 'e', 'q', 'u', 'e', 's', 't'};
-    static Uint8Array* request = Uint8Array::create(requestData, WTF_ARRAY_LENGTH(requestData)).leakRef();
+    static Uint8Array& request { Uint8Array::create(requestData, WTF_ARRAY_LENGTH(requestData)).leakRef() };
 
-    return request;
+    return &request;
 }
 
 static String generateSessionId()

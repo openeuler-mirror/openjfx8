@@ -27,7 +27,7 @@
 
 #include "CryptoAlgorithm.h"
 
-#if ENABLE(SUBTLE_CRYPTO)
+#if ENABLE(WEB_CRYPTO)
 
 namespace WebCore {
 
@@ -39,6 +39,10 @@ public:
     static constexpr CryptoAlgorithmIdentifier s_identifier = CryptoAlgorithmIdentifier::HMAC;
     static Ref<CryptoAlgorithm> create();
 
+    // Operations can be performed directly.
+    static ExceptionOr<Vector<uint8_t>> platformSign(const CryptoKeyHMAC&, const Vector<uint8_t>&);
+    static ExceptionOr<bool> platformVerify(const CryptoKeyHMAC&, const Vector<uint8_t>&, const Vector<uint8_t>&);
+
 private:
     CryptoAlgorithmHMAC() = default;
     CryptoAlgorithmIdentifier identifier() const final;
@@ -49,11 +53,8 @@ private:
     void importKey(CryptoKeyFormat, KeyData&&, const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap, KeyCallback&&, ExceptionCallback&&) final;
     void exportKey(CryptoKeyFormat, Ref<CryptoKey>&&, KeyDataCallback&&, ExceptionCallback&&) final;
     ExceptionOr<size_t> getKeyLength(const CryptoAlgorithmParameters&) final;
-
-    static ExceptionOr<Vector<uint8_t>> platformSign(const CryptoKeyHMAC&, const Vector<uint8_t>&);
-    static ExceptionOr<bool> platformVerify(const CryptoKeyHMAC&, const Vector<uint8_t>&, const Vector<uint8_t>&);
 };
 
 } // namespace WebCore
 
-#endif // ENABLE(SUBTLE_CRYPTO)
+#endif // ENABLE(WEB_CRYPTO)

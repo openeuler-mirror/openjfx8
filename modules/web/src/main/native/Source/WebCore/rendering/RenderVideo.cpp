@@ -101,6 +101,10 @@ bool RenderVideo::updateIntrinsicSize()
     if (size.isEmpty() && document().isMediaDocument())
         return false;
 
+    // Treat the media player's natural size as visually non-empty.
+    if (videoElement().readyState() >= HTMLMediaElementEnums::HAVE_METADATA)
+        incrementVisuallyNonEmptyPixelCountIfNeeded(roundedIntSize(size));
+
     if (size == intrinsicSize())
         return false;
 
@@ -158,6 +162,10 @@ void RenderVideo::imageChanged(WrappedImagePtr newImage, const IntRect* rect)
 
 IntRect RenderVideo::videoBox() const
 {
+    auto mediaPlayer = videoElement().player();
+    if (mediaPlayer && mediaPlayer->shouldIgnoreIntrinsicSize())
+        return snappedIntRect(contentBoxRect());
+
     LayoutSize intrinsicSize = this->intrinsicSize();
 
     if (videoElement().shouldDisplayPosterImage())
@@ -196,6 +204,12 @@ void RenderVideo::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& paintOf
     LayoutRect contentRect = contentBoxRect();
     contentRect.moveBy(paintOffset);
     GraphicsContext& context = paintInfo.context();
+
+    if (context.detectingContentfulPaint()) {
+        context.setContentfulPaintDetected();
+        return;
+    }
+
     bool clip = !contentRect.contains(rect);
     GraphicsContextStateSaver stateSaver(context, clip);
     if (clip)

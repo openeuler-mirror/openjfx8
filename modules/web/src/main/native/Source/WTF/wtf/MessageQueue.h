@@ -27,16 +27,15 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef MessageQueue_h
-#define MessageQueue_h
+#pragma once
 
 #include <limits>
 #include <wtf/Assertions.h>
 #include <wtf/Condition.h>
 #include <wtf/Deque.h>
 #include <wtf/Lock.h>
+#include <wtf/MonotonicTime.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/WallTime.h>
 
 namespace WTF {
 
@@ -50,7 +49,8 @@ namespace WTF {
     // when messages are fetched from the queue.
     // Essentially, MessageQueue acts as a queue of std::unique_ptr<DataType>.
     template<typename DataType>
-    class MessageQueue {
+    class MessageQueue final {
+        WTF_MAKE_FAST_ALLOCATED;
         WTF_MAKE_NONCOPYABLE(MessageQueue);
     public:
         MessageQueue() : m_killed(false) { }
@@ -66,7 +66,7 @@ namespace WTF {
         Deque<std::unique_ptr<DataType>> takeAllMessages();
         std::unique_ptr<DataType> tryGetMessageIgnoringKilled();
         template<typename Predicate>
-        std::unique_ptr<DataType> waitForMessageFilteredWithTimeout(MessageQueueWaitResult&, Predicate&&, WallTime absoluteTime);
+        std::unique_ptr<DataType> waitForMessageFilteredWithTimeout(MessageQueueWaitResult&, Predicate&&, Seconds relativeTimeout);
 
         template<typename Predicate>
         void removeIf(Predicate&&);
@@ -129,18 +129,19 @@ namespace WTF {
     inline auto MessageQueue<DataType>::waitForMessage() -> std::unique_ptr<DataType>
     {
         MessageQueueWaitResult exitReason;
-        std::unique_ptr<DataType> result = waitForMessageFilteredWithTimeout(exitReason, [](const DataType&) { return true; }, WallTime::infinity());
+        std::unique_ptr<DataType> result = waitForMessageFilteredWithTimeout(exitReason, [](const DataType&) { return true; }, Seconds::infinity());
         ASSERT(exitReason == MessageQueueTerminated || exitReason == MessageQueueMessageReceived);
         return result;
     }
 
     template<typename DataType>
     template<typename Predicate>
-    inline auto MessageQueue<DataType>::waitForMessageFilteredWithTimeout(MessageQueueWaitResult& result, Predicate&& predicate, WallTime absoluteTime) -> std::unique_ptr<DataType>
+    inline auto MessageQueue<DataType>::waitForMessageFilteredWithTimeout(MessageQueueWaitResult& result, Predicate&& predicate, Seconds relativeTimeout) -> std::unique_ptr<DataType>
     {
         LockHolder lock(m_mutex);
         bool timedOut = false;
 
+        MonotonicTime absoluteTimeout = MonotonicTime::now() + relativeTimeout;
         auto found = m_queue.end();
         while (!m_killed && !timedOut) {
             found = m_queue.findIf([&predicate](const std::unique_ptr<DataType>& ptr) -> bool {
@@ -150,10 +151,10 @@ namespace WTF {
             if (found != m_queue.end())
                 break;
 
-            timedOut = !m_condition.waitUntil(m_mutex, absoluteTime);
+            timedOut = !m_condition.waitUntil(m_mutex, absoluteTimeout);
         }
 
-        ASSERT(!timedOut || absoluteTime != WallTime::infinity());
+        ASSERT(!timedOut || absoluteTimeout != MonotonicTime::infinity());
 
         if (m_killed) {
             result = MessageQueueTerminated;
@@ -252,5 +253,3 @@ using WTF::MessageQueueWaitResult;
 using WTF::MessageQueueTerminated;
 using WTF::MessageQueueTimeout;
 using WTF::MessageQueueMessageReceived;
-
-#endif // MessageQueue_h

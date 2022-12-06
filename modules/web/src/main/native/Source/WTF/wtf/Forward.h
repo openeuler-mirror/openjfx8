@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2006-2018 Apple Inc. All rights reserved.
+ *  Copyright (C) 2006-2020 Apple Inc. All rights reserved.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Library General Public
@@ -21,11 +21,12 @@
 #pragma once
 
 #include <stddef.h>
+#include <wtf/Platform.h>
 
 namespace WTF {
 
-class AtomicString;
-class AtomicStringImpl;
+class AtomString;
+class AtomStringImpl;
 class BinarySemaphore;
 class CString;
 class CrashOnOverflow;
@@ -43,34 +44,56 @@ class StringView;
 class TextPosition;
 class TextStream;
 class UniquedStringImpl;
+class URL;
 class WallTime;
 
+struct AnyThreadsAccessTraits;
+struct EmptyCounter;
 struct FastMalloc;
+struct MainThreadAccessTraits;
+
+#if ENABLE(MALLOC_HEAP_BREAKDOWN)
+struct VectorMalloc;
+#else
+using VectorMalloc = FastMalloc;
+#endif
+
+template<typename> struct DumbPtrTraits;
 
 template<typename> class CompletionHandler;
-template<typename T> struct DumbPtrTraits;
-template<typename T> struct DumbValueTraits;
 template<typename> class Function;
-template<typename> class LazyNeverDestroyed;
-template<typename> class NeverDestroyed;
+template<typename, typename = AnyThreadsAccessTraits> class LazyNeverDestroyed;
+template<typename, typename = AnyThreadsAccessTraits> class NeverDestroyed;
 template<typename> class OptionSet;
+template<typename> class Optional;
+template<typename> class Packed;
+template<typename T, size_t = alignof(T)> class PackedAlignedPtr;
 template<typename T, typename = DumbPtrTraits<T>> class Ref;
 template<typename T, typename = DumbPtrTraits<T>> class RefPtr;
 template<typename> class StringBuffer;
+template<typename> class StringParsingBuffer;
 template<typename, typename = void> class StringTypeAdapter;
+template<typename> class UniqueRef;
+template<typename...> class Variant;
+template<typename, size_t = 0, typename = CrashOnOverflow, size_t = 16, typename Malloc = VectorMalloc> class Vector;
+template<typename, typename = EmptyCounter> class WeakPtr;
 
-template<typename> struct DefaultHash { using Hash = void; };
+template<typename> struct DefaultHash;
+template<> struct DefaultHash<AtomString>;
+template<typename T> struct DefaultHash<OptionSet<T>>;
+template<> struct DefaultHash<String>;
+template<> struct DefaultHash<StringImpl*>;
+template<> struct DefaultHash<URL>;
+template<typename T, size_t inlineCapacity> struct DefaultHash<Vector<T, inlineCapacity>>;
+
+template<typename> struct DumbValueTraits;
+template<typename> struct EnumTraits;
+template<typename E, E...> struct EnumValues;
 template<typename> struct HashTraits;
 
-template<typename...> class Variant;
-template<typename, size_t = 0, typename = CrashOnOverflow, size_t = 16> class Vector;
-template<typename Value, typename = typename DefaultHash<Value>::Hash, typename = HashTraits<Value>> class HashCountedSet;
-template<typename KeyArg, typename MappedArg, typename = typename DefaultHash<KeyArg>::Hash, typename = HashTraits<KeyArg>, typename = HashTraits<MappedArg>> class HashMap;
-template<typename ValueArg, typename = typename DefaultHash<ValueArg>::Hash, typename = HashTraits<ValueArg>> class HashSet;
-
-template<size_t, typename> struct variant_alternative;
-template<ptrdiff_t, typename...> struct __indexed_type;
-template<ptrdiff_t _Index, typename... _Types> constexpr typename __indexed_type<_Index, _Types...>::__type const& get(Variant<_Types...> const&);
+template<typename Value, typename = DefaultHash<Value>, typename = HashTraits<Value>> class HashCountedSet;
+template<typename KeyArg, typename MappedArg, typename = DefaultHash<KeyArg>, typename = HashTraits<KeyArg>, typename = HashTraits<MappedArg>> class HashMap;
+template<typename ValueArg, typename = DefaultHash<ValueArg>, typename = HashTraits<ValueArg>> class HashSet;
 
 }
 
@@ -81,8 +104,8 @@ template<class, class> class expected;
 template<class> class unexpected;
 }}} // namespace std::experimental::fundamentals_v3
 
-using WTF::AtomicString;
-using WTF::AtomicStringImpl;
+using WTF::AtomString;
+using WTF::AtomStringImpl;
 using WTF::BinarySemaphore;
 using WTF::CString;
 using WTF::CompletionHandler;
@@ -97,6 +120,7 @@ using WTF::Hasher;
 using WTF::LazyNeverDestroyed;
 using WTF::NeverDestroyed;
 using WTF::OptionSet;
+using WTF::Optional;
 using WTF::OrdinalNumber;
 using WTF::PrintStream;
 using WTF::Ref;
@@ -106,9 +130,12 @@ using WTF::String;
 using WTF::StringBuffer;
 using WTF::StringBuilder;
 using WTF::StringImpl;
+using WTF::StringParsingBuffer;
 using WTF::StringView;
 using WTF::TextPosition;
 using WTF::TextStream;
+using WTF::URL;
+using WTF::UniqueRef;
 using WTF::Variant;
 using WTF::Vector;
 
@@ -141,24 +168,39 @@ template<class E> using Unexpected = std::experimental::unexpected<E>;
 // };
 #define WTF_LAZY_JOIN_UNLAZE(A, B) A##B
 #define WTF_LAZY_JOIN(A, B) WTF_LAZY_JOIN_UNLAZE(A, B)
-#define WTF_LAZY_ARGUMENT_NUMBER(_1, _2, _3, _4, _5, _6, _7, N, ...) N
-#define WTF_LAZY_REVERSE_SEQUENCE() 7, 6, 5, 4, 3, 2, 1, 0
-#define WTF_LAZY_NUM_ARGS_(...) WTF_LAZY_ARGUMENT_NUMBER(__VA_ARGS__)
-#define WTF_LAZY_NUM_ARGS(...) WTF_LAZY_NUM_ARGS_(__VA_ARGS__, WTF_LAZY_REVERSE_SEQUENCE())
+#define WTF_LAZY_ARGUMENT_NUMBER(_1, _2, _3, _4, _5, _6, _7, _8, N, ...) N
+#define WTF_LAZY_AUGMENT(...) unused, __VA_ARGS__
+#define WTF_LAZY_EXPAND(x) x
+#define WTF_LAZY_NUM_ARGS_(...) WTF_LAZY_EXPAND(WTF_LAZY_ARGUMENT_NUMBER(__VA_ARGS__, 7, 6, 5, 4, 3, 2, 1, 0))
+#define WTF_LAZY_NUM_ARGS(...) WTF_LAZY_NUM_ARGS_(WTF_LAZY_AUGMENT(__VA_ARGS__))
 #define WTF_LAZY_FOR_EACH_TERM(F, ...) \
     WTF_LAZY_JOIN(WTF_LAZY_FOR_EACH_TERM_, WTF_LAZY_NUM_ARGS(__VA_ARGS__))(F, (__VA_ARGS__))
 #define WTF_LAZY_FIRST(_1, ...) _1
 #define WTF_LAZY_REST(_1, ...) (__VA_ARGS__)
+#define WTF_LAZY_REST_(_1, ...) __VA_ARGS__
+#define WTF_LAZY_CALL(F, ARG) F(ARG)
 #define WTF_LAZY_FOR_EACH_TERM_0(...)
-#define WTF_LAZY_FOR_EACH_TERM_1(F, ARGS) F(WTF_LAZY_FIRST ARGS) WTF_LAZY_FOR_EACH_TERM_0(F, WTF_LAZY_REST ARGS)
-#define WTF_LAZY_FOR_EACH_TERM_2(F, ARGS) F(WTF_LAZY_FIRST ARGS) WTF_LAZY_FOR_EACH_TERM_1(F, WTF_LAZY_REST ARGS)
-#define WTF_LAZY_FOR_EACH_TERM_3(F, ARGS) F(WTF_LAZY_FIRST ARGS) WTF_LAZY_FOR_EACH_TERM_2(F, WTF_LAZY_REST ARGS)
-#define WTF_LAZY_FOR_EACH_TERM_4(F, ARGS) F(WTF_LAZY_FIRST ARGS) WTF_LAZY_FOR_EACH_TERM_3(F, WTF_LAZY_REST ARGS)
-#define WTF_LAZY_FOR_EACH_TERM_5(F, ARGS) F(WTF_LAZY_FIRST ARGS) WTF_LAZY_FOR_EACH_TERM_4(F, WTF_LAZY_REST ARGS)
-#define WTF_LAZY_FOR_EACH_TERM_6(F, ARGS) F(WTF_LAZY_FIRST ARGS) WTF_LAZY_FOR_EACH_TERM_5(F, WTF_LAZY_REST ARGS)
-#define WTF_LAZY_FOR_EACH_TERM_7(F, ARGS) F(WTF_LAZY_FIRST ARGS) WTF_LAZY_FOR_EACH_TERM_6(F, WTF_LAZY_REST ARGS)
+#define WTF_LAZY_FOR_EACH_TERM_1(F, ARGS) WTF_LAZY_CALL(F, WTF_LAZY_FIRST ARGS) WTF_LAZY_FOR_EACH_TERM_0(F, WTF_LAZY_REST ARGS)
+#define WTF_LAZY_FOR_EACH_TERM_2(F, ARGS) WTF_LAZY_CALL(F, WTF_LAZY_FIRST ARGS) WTF_LAZY_FOR_EACH_TERM_1(F, WTF_LAZY_REST ARGS)
+#define WTF_LAZY_FOR_EACH_TERM_3(F, ARGS) WTF_LAZY_CALL(F, WTF_LAZY_FIRST ARGS) WTF_LAZY_FOR_EACH_TERM_2(F, WTF_LAZY_REST ARGS)
+#define WTF_LAZY_FOR_EACH_TERM_4(F, ARGS) WTF_LAZY_CALL(F, WTF_LAZY_FIRST ARGS) WTF_LAZY_FOR_EACH_TERM_3(F, WTF_LAZY_REST ARGS)
+#define WTF_LAZY_FOR_EACH_TERM_5(F, ARGS) WTF_LAZY_CALL(F, WTF_LAZY_FIRST ARGS) WTF_LAZY_FOR_EACH_TERM_4(F, WTF_LAZY_REST ARGS)
+#define WTF_LAZY_FOR_EACH_TERM_6(F, ARGS) WTF_LAZY_CALL(F, WTF_LAZY_FIRST ARGS) WTF_LAZY_FOR_EACH_TERM_5(F, WTF_LAZY_REST ARGS)
+#define WTF_LAZY_FOR_EACH_TERM_7(F, ARGS) WTF_LAZY_CALL(F, WTF_LAZY_FIRST ARGS) WTF_LAZY_FOR_EACH_TERM_6(F, WTF_LAZY_REST ARGS)
 #define WTF_LAZY_DECLARE_ALIAS_AND_TYPE(ALIAS_AND_TYPE) typename ALIAS_AND_TYPE,
 #define WTF_LAZY_INSTANTIATE(...)                                        \
     template<                                                            \
     WTF_LAZY_FOR_EACH_TERM(WTF_LAZY_DECLARE_ALIAS_AND_TYPE, __VA_ARGS__) \
     typename = void>
+
+#define WTF_LAZY_HAS_REST_0(...)
+#define WTF_LAZY_HAS_REST_1(...)
+#define WTF_LAZY_HAS_REST_2 WTF_LAZY_EXPAND
+#define WTF_LAZY_HAS_REST_3 WTF_LAZY_EXPAND
+#define WTF_LAZY_HAS_REST_4 WTF_LAZY_EXPAND
+#define WTF_LAZY_HAS_REST_5 WTF_LAZY_EXPAND
+#define WTF_LAZY_HAS_REST_6 WTF_LAZY_EXPAND
+#define WTF_LAZY_HAS_REST_7 WTF_LAZY_EXPAND
+#define WTF_LAZY_HAS_REST_8 WTF_LAZY_EXPAND
+#define WTF_LAZY_HAS_REST(...) \
+    WTF_LAZY_JOIN(WTF_LAZY_HAS_REST_, WTF_LAZY_NUM_ARGS(__VA_ARGS__))

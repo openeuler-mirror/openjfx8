@@ -65,10 +65,10 @@ struct HandlerInfoBase {
 
     bool isCatchHandler() const { return type() == HandlerType::Catch; }
 
-    template<typename Handler>
-    static Handler* handlerForIndex(Vector<Handler>& exeptionHandlers, unsigned index, RequiredHandler requiredHandler)
+    template<typename Handler, typename Container>
+    static Handler* handlerForIndex(Container& exeptionHandlers, unsigned index, RequiredHandler requiredHandler)
     {
-        for (Handler& handler : exeptionHandlers) {
+        for (auto& handler : exeptionHandlers) {
             if ((requiredHandler == RequiredHandler::CatchHandler) && !handler.isCatchHandler())
                 continue;
 
@@ -89,6 +89,10 @@ struct HandlerInfoBase {
 };
 
 struct UnlinkedHandlerInfo : public HandlerInfoBase {
+    UnlinkedHandlerInfo()
+    {
+    }
+
     UnlinkedHandlerInfo(uint32_t start, uint32_t end, uint32_t target, HandlerType handlerType)
     {
         this->start = start;

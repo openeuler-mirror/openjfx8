@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2019 Apple Inc. All rights reserved.
  * Copyright (C) 2008, 2009 Torch Mobile Inc. All rights reserved. (http://www.torchmobile.com/)
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,6 +28,7 @@
 #include "MIMETypeRegistry.h"
 
 #include "MediaPlayer.h"
+#include "ThreadGlobalData.h"
 #include <wtf/HashMap.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
@@ -53,360 +54,205 @@
 #include "ImageDecoderAVFObjC.h"
 #endif
 
+#if USE(QUICK_LOOK)
+#include "PreviewConverter.h"
+#endif
+
+#if USE(GSTREAMER) && ENABLE(VIDEO)
+#include "ImageDecoderGStreamer.h"
+#endif
+
 namespace WebCore {
 
-static HashSet<String, ASCIICaseInsensitiveHash>* supportedImageResourceMIMETypes;
-static HashSet<String, ASCIICaseInsensitiveHash>* supportedImageMIMETypes;
-static HashSet<String, ASCIICaseInsensitiveHash>* supportedImageMIMETypesForEncoding;
-static HashSet<String, ASCIICaseInsensitiveHash>* supportedJavaScriptMIMETypes;
-static HashSet<String, ASCIICaseInsensitiveHash>* supportedNonImageMIMETypes;
-static HashSet<String, ASCIICaseInsensitiveHash>* supportedMediaMIMETypes;
-static HashSet<String, ASCIICaseInsensitiveHash>* pdfMIMETypes;
-static HashSet<String, ASCIICaseInsensitiveHash>* unsupportedTextMIMETypes;
-
-static void initializeSupportedImageMIMETypes()
+const HashSet<String, ASCIICaseInsensitiveHash>& MIMETypeRegistry::supportedImageMIMETypes()
 {
-    supportedImageResourceMIMETypes = new HashSet<String, ASCIICaseInsensitiveHash>;
-    supportedImageMIMETypes = new HashSet<String, ASCIICaseInsensitiveHash>;
-
+    static NeverDestroyed<HashSet<String, ASCIICaseInsensitiveHash>> supportedImageMIMETypes = std::initializer_list<String> {
 #if USE(CG)
-    // This represents the subset of allowed image UTIs for which CoreServices has a corresponding MIME type. Keep this in sync with allowedImageUTIs().
-    static const ASCIILiteral allowedImageMIMETypes[] = { "image/tiff"_s, "image/gif"_s, "image/jpeg"_s, "image/vnd.microsoft.icon"_s, "image/jp2"_s, "image/png"_s, "image/bmp"_s };
-    for (auto& mimeType : allowedImageMIMETypes) {
-        supportedImageMIMETypes->add(mimeType);
-        supportedImageResourceMIMETypes->add(mimeType);
-    }
+        // This represents the subset of allowed image UTIs for which CoreServices has a corresponding MIME type.
+        "image/tiff"_s,
+        "image/gif"_s,
+        "image/jpeg"_s,
+        "image/vnd.microsoft.icon"_s,
+        "image/jp2"_s,
+        "image/apng"_s,
+        "image/png"_s,
+        "image/bmp"_s,
 
-#ifndef NDEBUG
-    for (auto& uti : allowedImageUTIs()) {
-        auto mimeType = MIMETypeForImageSourceType(uti);
-        if (!mimeType.isEmpty()) {
-            ASSERT(supportedImageMIMETypes->contains(mimeType));
-            ASSERT(supportedImageResourceMIMETypes->contains(mimeType));
-        }
-    }
-
-#if PLATFORM(COCOA)
-    for (auto& mime : *supportedImageMIMETypes)
-        ASSERT_UNUSED(mime, allowedImageUTIs().contains(UTIFromMIMEType(mime)));
+        "image/x-icon"_s, // Favicons don't have a MIME type in the registry either.
+        "image/pjpeg"_s, //  We only get one MIME type per UTI, hence our need to add these manually
+#if HAVE(WEBP)
+        "image/webp"_s,
 #endif
-#endif
+#if PLATFORM(IOS_FAMILY)
+        // Add malformed image mimetype for compatibility with Mail and to handle malformed mimetypes from the net
+        // These were removed for <rdar://problem/6564538> Re-enable UTI code in WebCore now that MobileCoreServices exists
+        // But Mail relies on at least image/tif reported as being supported (should be image/tiff).
+        // This can be removed when Mail addresses:
+        // <rdar://problem/7879510> Mail should use standard image mimetypes
+        // and we fix sniffing so that it corrects items such as image/jpg -> image/jpeg.
 
-    // Favicons don't have a MIME type in the registry either.
-    supportedImageMIMETypes->add("image/x-icon");
-    supportedImageResourceMIMETypes->add("image/x-icon");
-
-    //  We only get one MIME type per UTI, hence our need to add these manually
-    supportedImageMIMETypes->add("image/pjpeg");
-    supportedImageResourceMIMETypes->add("image/pjpeg");
-
-#if PLATFORM(IOS)
-    // Add malformed image mimetype for compatibility with Mail and to handle malformed mimetypes from the net
-    // These were removed for <rdar://problem/6564538> Re-enable UTI code in WebCore now that MobileCoreServices exists
-    // But Mail relies on at least image/tif reported as being supported (should be image/tiff).
-    // This can be removed when Mail addresses:
-    // <rdar://problem/7879510> Mail should use standard image mimetypes
-    // and we fix sniffing so that it corrects items such as image/jpg -> image/jpeg.
-    static const char* const malformedMIMETypes[] = {
         // JPEG (image/jpeg)
-        "image/jpg", "image/jp_", "image/jpe_", "application/jpg", "application/x-jpg", "image/pipeg",
-        "image/vnd.switfview-jpeg", "image/x-xbitmap",
+        "image/jpg"_s,
+        "image/jp_"_s,
+        "image/jpe_"_s,
+        "application/jpg"_s,
+        "application/x-jpg"_s,
+        "image/pipeg"_s,
+        "image/vnd.switfview-jpeg"_s,
+        "image/x-xbitmap"_s,
+
         // GIF (image/gif)
-        "image/gi_",
+        "image/gi_"_s,
+
         // PNG (image/png)
-        "application/png", "application/x-png",
+        "application/png"_s,
+        "application/x-png"_s,
+
         // TIFF (image/tiff)
-        "image/x-tif", "image/tif", "image/x-tiff", "application/tif", "application/x-tif", "application/tiff",
-        "application/x-tiff",
+        "image/x-tif"_s,
+        "image/tif"_s,
+        "image/x-tiff"_s,
+        "application/tif"_s,
+        "application/x-tif"_s,
+        "application/tiff"_s,
+        "application/x-tiff"_s,
+
         // BMP (image/bmp, image/x-bitmap)
-        "image/x-bmp", "image/x-win-bitmap", "image/x-windows-bmp", "image/ms-bmp", "image/x-ms-bmp",
-        "application/bmp", "application/x-bmp", "application/x-win-bitmap",
-    };
-    for (auto& type : malformedMIMETypes) {
-        supportedImageMIMETypes->add(type);
-        supportedImageResourceMIMETypes->add(type);
-    }
+        "image/x-bmp"_s,
+        "image/x-win-bitmap"_s,
+        "image/x-windows-bmp"_s,
+        "image/ms-bmp"_s,
+        "image/x-ms-bmp"_s,
+        "application/bmp"_s,
+        "application/x-bmp"_s,
+        "application/x-win-bitmap"_s,
 #endif
-
 #else
-    // assume that all implementations at least support the following standard
-    // image types:
-    static const char* const types[] = {
-        "image/jpeg",
-        "image/png",
-        "image/gif",
-        "image/bmp",
-        "image/vnd.microsoft.icon",    // ico
-        "image/x-icon",    // ico
-        "image/x-xbitmap"  // xbm
-    };
-    for (auto& type : types) {
-        supportedImageMIMETypes->add(type);
-        supportedImageResourceMIMETypes->add(type);
-    }
-
-#if USE(WEBP)
-    supportedImageMIMETypes->add("image/webp");
-    supportedImageResourceMIMETypes->add("image/webp");
+        // assume that all implementations at least support the following standard
+        // image types:
+        "image/jpeg"_s,
+        "image/png"_s,
+        "image/gif"_s,
+        "image/bmp"_s,
+        "image/vnd.microsoft.icon"_s, // ico
+        "image/x-icon"_s, // ico
+        "image/x-xbitmap"_s, // xbm
+#if ENABLE(APNG)
+        "image/apng"_s,
 #endif
-
-#endif // USE(CG)
-}
-
-static void initializeSupportedImageMIMETypesForEncoding()
-{
-    supportedImageMIMETypesForEncoding = new HashSet<String, ASCIICaseInsensitiveHash>;
+#if USE(OPENJPEG)
+        "image/jp2"_s,
+        "image/jpeg2000"_s,
+#endif
+#if USE(WEBP)
+        "image/webp"_s,
+#endif
+#endif
+    };
 
 #if USE(CG)
-#if PLATFORM(COCOA)
-    RetainPtr<CFArrayRef> supportedTypes = adoptCF(CGImageDestinationCopyTypeIdentifiers());
-    CFIndex count = CFArrayGetCount(supportedTypes.get());
-    for (CFIndex i = 0; i < count; i++) {
-        CFStringRef supportedType = reinterpret_cast<CFStringRef>(CFArrayGetValueAtIndex(supportedTypes.get(), i));
-        String mimeType = MIMETypeForImageSourceType(supportedType);
-        if (!mimeType.isEmpty())
-            supportedImageMIMETypesForEncoding->add(mimeType);
-    }
-#else
-    // FIXME: Add Windows support for all the supported UTI's when a way to convert from MIMEType to UTI reliably is found.
-    // For now, only support PNG, JPEG and GIF.  See <rdar://problem/6095286>.
-    supportedImageMIMETypesForEncoding->add("image/png");
-    supportedImageMIMETypesForEncoding->add("image/jpeg");
-    supportedImageMIMETypesForEncoding->add("image/gif");
+#ifndef NDEBUG
+    // Esnure supportedImageMIMETypes() is in sync with defaultSupportedImageTypes().
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [] {
+        for (auto& imageType : defaultSupportedImageTypes()) {
+            auto mimeType = MIMETypeForImageType(imageType);
+            ASSERT_IMPLIES(!mimeType.isEmpty(), supportedImageMIMETypes.get().contains(mimeType));
+        }
+    });
 #endif
-#elif PLATFORM(GTK)
-    supportedImageMIMETypesForEncoding->add("image/png");
-    supportedImageMIMETypesForEncoding->add("image/jpeg");
-    supportedImageMIMETypesForEncoding->add("image/tiff");
-    supportedImageMIMETypesForEncoding->add("image/bmp");
-    supportedImageMIMETypesForEncoding->add("image/ico");
-#elif PLATFORM(JAVA)
-    supportedImageMIMETypesForEncoding->add("image/png");
-    supportedImageMIMETypesForEncoding->add("image/jpeg");
-    supportedImageMIMETypesForEncoding->add("image/bmp");
-#elif USE(CAIRO)
-    supportedImageMIMETypesForEncoding->add("image/png");
 #endif
+    return supportedImageMIMETypes;
 }
 
-static void initializeSupportedJavaScriptMIMETypes()
+HashSet<String, ASCIICaseInsensitiveHash>& MIMETypeRegistry::additionalSupportedImageMIMETypes()
 {
-    // https://html.spec.whatwg.org/multipage/scripting.html#javascript-mime-type
-    static const char* const types[] = {
-        "text/javascript",
-        "text/ecmascript",
-        "application/javascript",
-        "application/ecmascript",
-        "application/x-javascript",
-        "application/x-ecmascript",
-        "text/javascript1.0",
-        "text/javascript1.1",
-        "text/javascript1.2",
-        "text/javascript1.3",
-        "text/javascript1.4",
-        "text/javascript1.5",
-        "text/jscript",
-        "text/livescript",
-        "text/x-javascript",
-        "text/x-ecmascript"
+    static NeverDestroyed<HashSet<String, ASCIICaseInsensitiveHash>> additionalSupportedImageMIMETypes;
+    return additionalSupportedImageMIMETypes;
+}
+
+static const HashSet<String, ASCIICaseInsensitiveHash>& supportedJavaScriptMIMETypes()
+{
+    static NeverDestroyed<HashSet<String, ASCIICaseInsensitiveHash>> supportedJavaScriptMIMETypes = std::initializer_list<String> {
+        // https://html.spec.whatwg.org/multipage/scripting.html#javascript-mime-type
+        "text/javascript"_s,
+        "text/ecmascript"_s,
+        "application/javascript"_s,
+        "application/ecmascript"_s,
+        "application/x-javascript"_s,
+        "application/x-ecmascript"_s,
+        "text/javascript1.0"_s,
+        "text/javascript1.1"_s,
+        "text/javascript1.2"_s,
+        "text/javascript1.3"_s,
+        "text/javascript1.4"_s,
+        "text/javascript1.5"_s,
+        "text/jscript"_s,
+        "text/livescript"_s,
+        "text/x-javascript"_s,
+        "text/x-ecmascript"_s,
     };
-
-    supportedJavaScriptMIMETypes = new HashSet<String, ASCIICaseInsensitiveHash>;
-    for (auto* type : types)
-        supportedJavaScriptMIMETypes->add(type);
+    return supportedJavaScriptMIMETypes;
 }
 
-static void initializePDFMIMETypes()
+HashSet<String, ASCIICaseInsensitiveHash>& MIMETypeRegistry::supportedNonImageMIMETypes()
 {
-    const char* const types[] = {
-        "application/pdf",
-        "text/pdf"
-    };
-
-    pdfMIMETypes = new HashSet<String, ASCIICaseInsensitiveHash>;
-    for (auto& type : types)
-        pdfMIMETypes->add(type);
-}
-
-static void initializeSupportedNonImageMimeTypes()
-{
-    static const char* const types[] = {
-        "text/html",
-        "text/xml",
-        "text/xsl",
-        "text/plain",
-        "text/",
-        "application/xml",
-        "application/xhtml+xml",
-#if !PLATFORM(IOS)
-        "application/vnd.wap.xhtml+xml",
-        "application/rss+xml",
-        "application/atom+xml",
+    static auto supportedNonImageMIMETypes = makeNeverDestroyed([] {
+        HashSet<String, ASCIICaseInsensitiveHash> supportedNonImageMIMETypes = std::initializer_list<String> {
+            "text/html"_s,
+            "text/xml"_s,
+            "text/xsl"_s,
+            "text/plain"_s,
+            "text/"_s,
+            "application/xml"_s,
+            "application/xhtml+xml"_s,
+#if !PLATFORM(IOS_FAMILY)
+            "application/vnd.wap.xhtml+xml"_s,
+            "application/rss+xml"_s,
+            "application/atom+xml"_s,
 #endif
-        "application/json",
-        "image/svg+xml",
+            "application/json"_s,
+            "image/svg+xml"_s,
 #if ENABLE(FTPDIR)
-        "application/x-ftp-directory",
+            "application/x-ftp-directory"_s,
 #endif
-        "multipart/x-mixed-replace"
+            "multipart/x-mixed-replace"_s,
         // Note: Adding a new type here will probably render it as HTML.
         // This can result in cross-site scripting vulnerabilities.
-    };
-
-    if (!supportedJavaScriptMIMETypes)
-        initializeSupportedJavaScriptMIMETypes();
-
-    supportedNonImageMIMETypes = new HashSet<String, ASCIICaseInsensitiveHash> { *supportedJavaScriptMIMETypes };
-    for (auto& type : types)
-        supportedNonImageMIMETypes->add(type);
-
+        };
+        supportedNonImageMIMETypes.add(supportedJavaScriptMIMETypes().begin(), supportedJavaScriptMIMETypes().end());
 #if ENABLE(WEB_ARCHIVE) || ENABLE(MHTML)
-    ArchiveFactory::registerKnownArchiveMIMETypes();
+        ArchiveFactory::registerKnownArchiveMIMETypes(supportedNonImageMIMETypes);
 #endif
-}
-
-static const Vector<String>* typesForCommonExtension(const String& extension)
-{
-    static const auto map = makeNeverDestroyed([] {
-        struct TypeExtensionPair {
-            ASCIILiteral type;
-            ASCIILiteral extension;
-        };
-
-        // A table of common media MIME types and file extentions used when a platform's
-        // specific MIME type lookup doesn't have a match for a media file extension.
-        static const TypeExtensionPair commonMediaTypes[] = {
-            // Ogg
-            { "application/ogg"_s, "ogx"_s },
-            { "audio/ogg"_s, "ogg"_s },
-            { "audio/ogg"_s, "oga"_s },
-            { "video/ogg"_s, "ogv"_s },
-
-            // Annodex
-            { "application/annodex"_s, "anx"_s },
-            { "audio/annodex"_s, "axa"_s },
-            { "video/annodex"_s, "axv"_s },
-            { "audio/speex"_s, "spx"_s },
-
-            // WebM
-            { "video/webm"_s, "webm"_s },
-            { "audio/webm"_s, "webm"_s },
-
-            // MPEG
-            { "audio/mpeg"_s, "m1a"_s },
-            { "audio/mpeg"_s, "m2a"_s },
-            { "audio/mpeg"_s, "m1s"_s },
-            { "audio/mpeg"_s, "mpa"_s },
-            { "video/mpeg"_s, "mpg"_s },
-            { "video/mpeg"_s, "m15"_s },
-            { "video/mpeg"_s, "m1s"_s },
-            { "video/mpeg"_s, "m1v"_s },
-            { "video/mpeg"_s, "m75"_s },
-            { "video/mpeg"_s, "mpa"_s },
-            { "video/mpeg"_s, "mpeg"_s },
-            { "video/mpeg"_s, "mpm"_s },
-            { "video/mpeg"_s, "mpv"_s },
-
-            // MPEG playlist
-            { "application/vnd.apple.mpegurl"_s, "m3u8"_s },
-            { "application/mpegurl"_s, "m3u8"_s },
-            { "application/x-mpegurl"_s, "m3u8"_s },
-            { "audio/mpegurl"_s, "m3url"_s },
-            { "audio/x-mpegurl"_s, "m3url"_s },
-            { "audio/mpegurl"_s, "m3u"_s },
-            { "audio/x-mpegurl"_s, "m3u"_s },
-
-            // MPEG-4
-            { "video/x-m4v"_s, "m4v"_s },
-            { "audio/x-m4a"_s, "m4a"_s },
-            { "audio/x-m4b"_s, "m4b"_s },
-            { "audio/x-m4p"_s, "m4p"_s },
-            { "audio/mp4"_s, "m4a"_s },
-
-            // MP3
-            { "audio/mp3"_s, "mp3"_s },
-            { "audio/x-mp3"_s, "mp3"_s },
-            { "audio/x-mpeg"_s, "mp3"_s },
-
-            // MPEG-2
-            { "video/x-mpeg2"_s, "mp2"_s },
-            { "video/mpeg2"_s, "vob"_s },
-            { "video/mpeg2"_s, "mod"_s },
-            { "video/m2ts"_s, "m2ts"_s },
-            { "video/x-m2ts"_s, "m2t"_s },
-            { "video/x-m2ts"_s, "ts"_s },
-
-            // 3GP/3GP2
-            { "audio/3gpp"_s, "3gpp"_s },
-            { "audio/3gpp2"_s, "3g2"_s },
-            { "application/x-mpeg"_s, "amc"_s },
-
-            // AAC
-            { "audio/aac"_s, "aac"_s },
-            { "audio/aac"_s, "adts"_s },
-            { "audio/x-aac"_s, "m4r"_s },
-
-            // CoreAudio File
-            { "audio/x-caf"_s, "caf"_s },
-            { "audio/x-gsm"_s, "gsm"_s },
-
-            // ADPCM
-            { "audio/x-wav"_s, "wav"_s },
-            { "audio/vnd.wave"_s, "wav"_s },
-        };
-
-        HashMap<String, Vector<String>, ASCIICaseInsensitiveHash> map;
-        for (auto& pair : commonMediaTypes) {
-            ASCIILiteral type = pair.type;
-            ASCIILiteral extension = pair.extension;
-            map.ensure(extension, [type, extension] {
-                // First type in the vector must always be the one from getMIMETypeForExtension,
-                // so we can use the map without also calling getMIMETypeForExtension each time.
-                Vector<String> synonyms;
-                String systemType = MIMETypeRegistry::getMIMETypeForExtension(extension);
-                if (!systemType.isEmpty() && type != systemType)
-                    synonyms.append(systemType);
-                return synonyms;
-            }).iterator->value.append(type);
-        }
-        return map;
+        return supportedNonImageMIMETypes;
     }());
-    auto mapEntry = map.get().find(extension);
-    if (mapEntry == map.get().end())
-        return nullptr;
-    return &mapEntry->value;
+    return supportedNonImageMIMETypes;
 }
 
-String MIMETypeRegistry::getMediaMIMETypeForExtension(const String& extension)
+const HashSet<String, ASCIICaseInsensitiveHash>& MIMETypeRegistry::supportedMediaMIMETypes()
 {
-    auto* vector = typesForCommonExtension(extension);
-    if (vector)
-        return (*vector)[0];
-    return getMIMETypeForExtension(extension);
-}
-
-Vector<String> MIMETypeRegistry::getMediaMIMETypesForExtension(const String& extension)
-{
-    auto* vector = typesForCommonExtension(extension);
-    if (vector)
-        return *vector;
-    String type = getMIMETypeForExtension(extension);
-    if (!type.isNull())
-        return { { type } };
-    return { };
-}
-
-static void initializeSupportedMediaMIMETypes()
-{
-    supportedMediaMIMETypes = new HashSet<String, ASCIICaseInsensitiveHash>;
+    static const auto supportedMediaMIMETypes = makeNeverDestroyed([] {
+        HashSet<String, ASCIICaseInsensitiveHash> supportedMediaMIMETypes;
 #if ENABLE(VIDEO)
-    MediaPlayer::getSupportedTypes(*supportedMediaMIMETypes);
+        MediaPlayer::getSupportedTypes(supportedMediaMIMETypes);
 #endif
+        return supportedMediaMIMETypes;
+    }());
+    return supportedMediaMIMETypes;
 }
 
-static void initializeUnsupportedTextMIMETypes()
+const HashSet<String, ASCIICaseInsensitiveHash>& MIMETypeRegistry::pdfMIMETypes()
 {
-    static const char* const types[] = {
+    static NeverDestroyed<HashSet<String, ASCIICaseInsensitiveHash>> pdfMIMETypes = std::initializer_list<String> {
+        "application/pdf"_s,
+        "text/pdf"_s,
+    };
+    return pdfMIMETypes;
+}
+
+const HashSet<String, ASCIICaseInsensitiveHash>& MIMETypeRegistry::unsupportedTextMIMETypes()
+{
+    static NeverDestroyed<HashSet<String, ASCIICaseInsensitiveHash>> unsupportedTextMIMETypes = std::initializer_list<String> {
         "text/calendar"_s,
         "text/x-calendar"_s,
         "text/x-vcalendar"_s,
@@ -419,24 +265,146 @@ static void initializeUnsupportedTextMIMETypes()
         "text/x-qif"_s,
         "text/x-csv"_s,
         "text/x-vcf"_s,
-#if !PLATFORM(IOS)
+#if !PLATFORM(IOS_FAMILY)
         "text/rtf"_s,
 #else
         "text/vnd.sun.j2me.app-descriptor"_s,
 #endif
     };
-
-    unsupportedTextMIMETypes = new HashSet<String, ASCIICaseInsensitiveHash>;
-    for (auto& type : types)
-        unsupportedTextMIMETypes->add(type);
+    return unsupportedTextMIMETypes;
 }
 
-String MIMETypeRegistry::getMIMETypeForPath(const String& path)
+const std::initializer_list<TypeExtensionPair>& commonMediaTypes()
+{
+    // A table of common media MIME types and file extensions used when a platform's
+    // specific MIME type lookup doesn't have a match for a media file extension.
+    static std::initializer_list<TypeExtensionPair> commonMediaTypes = {
+        // Ogg
+        { "application/ogg"_s, "ogx"_s },
+        { "audio/ogg"_s, "ogg"_s },
+        { "audio/ogg"_s, "oga"_s },
+        { "video/ogg"_s, "ogv"_s },
+
+        // Annodex
+        { "application/annodex"_s, "anx"_s },
+        { "audio/annodex"_s, "axa"_s },
+        { "video/annodex"_s, "axv"_s },
+        { "audio/speex"_s, "spx"_s },
+
+        // WebM
+        { "video/webm"_s, "webm"_s },
+        { "audio/webm"_s, "webm"_s },
+
+        // MPEG
+        { "audio/mpeg"_s, "m1a"_s },
+        { "audio/mpeg"_s, "m2a"_s },
+        { "audio/mpeg"_s, "m1s"_s },
+        { "audio/mpeg"_s, "mpa"_s },
+        { "video/mpeg"_s, "mpg"_s },
+        { "video/mpeg"_s, "m15"_s },
+        { "video/mpeg"_s, "m1s"_s },
+        { "video/mpeg"_s, "m1v"_s },
+        { "video/mpeg"_s, "m75"_s },
+        { "video/mpeg"_s, "mpa"_s },
+        { "video/mpeg"_s, "mpeg"_s },
+        { "video/mpeg"_s, "mpm"_s },
+        { "video/mpeg"_s, "mpv"_s },
+
+        // MPEG playlist
+        { "application/vnd.apple.mpegurl"_s, "m3u8"_s },
+        { "application/mpegurl"_s, "m3u8"_s },
+        { "application/x-mpegurl"_s, "m3u8"_s },
+        { "audio/mpegurl"_s, "m3url"_s },
+        { "audio/x-mpegurl"_s, "m3url"_s },
+        { "audio/mpegurl"_s, "m3u"_s },
+        { "audio/x-mpegurl"_s, "m3u"_s },
+
+        // MPEG-4
+        { "video/x-m4v"_s, "m4v"_s },
+        { "audio/x-m4a"_s, "m4a"_s },
+        { "audio/x-m4b"_s, "m4b"_s },
+        { "audio/x-m4p"_s, "m4p"_s },
+        { "audio/mp4"_s, "m4a"_s },
+
+        // MP3
+        { "audio/mp3"_s, "mp3"_s },
+        { "audio/x-mp3"_s, "mp3"_s },
+        { "audio/x-mpeg"_s, "mp3"_s },
+
+        // MPEG-2
+        { "video/x-mpeg2"_s, "mp2"_s },
+        { "video/mpeg2"_s, "vob"_s },
+        { "video/mpeg2"_s, "mod"_s },
+        { "video/m2ts"_s, "m2ts"_s },
+        { "video/x-m2ts"_s, "m2t"_s },
+        { "video/x-m2ts"_s, "ts"_s },
+
+        // 3GP/3GP2
+        { "audio/3gpp"_s, "3gpp"_s },
+        { "audio/3gpp2"_s, "3g2"_s },
+        { "application/x-mpeg"_s, "amc"_s },
+
+        // AAC
+        { "audio/aac"_s, "aac"_s },
+        { "audio/aac"_s, "adts"_s },
+        { "audio/x-aac"_s, "m4r"_s },
+
+        // CoreAudio File
+        { "audio/x-caf"_s, "caf"_s },
+        { "audio/x-gsm"_s, "gsm"_s },
+
+        // ADPCM
+        { "audio/x-wav"_s, "wav"_s },
+        { "audio/vnd.wave"_s, "wav"_s },
+    };
+    return commonMediaTypes;
+}
+
+static const HashMap<String, Vector<String>, ASCIICaseInsensitiveHash>& commonMimeTypesMap()
+{
+    ASSERT(isMainThread());
+    static NeverDestroyed<HashMap<String, Vector<String>, ASCIICaseInsensitiveHash>> mimeTypesMap = [] {
+        HashMap<String, Vector<String>, ASCIICaseInsensitiveHash> map;
+        for (auto& pair : commonMediaTypes()) {
+            ASCIILiteral type = pair.type;
+            ASCIILiteral extension = pair.extension;
+            map.ensure(extension, [type, extension] {
+                // First type in the vector must always be the one from mimeTypeForExtension,
+                // so we can use the map without also calling mimeTypeForExtension each time.
+                Vector<String> synonyms;
+                String systemType = MIMETypeRegistry::mimeTypeForExtension(extension);
+                if (!systemType.isEmpty() && type != systemType)
+                    synonyms.append(systemType);
+                return synonyms;
+            }).iterator->value.append(type);
+        }
+        return map;
+    }();
+    return mimeTypesMap;
+}
+
+static const Vector<String>* typesForCommonExtension(const String& extension)
+{
+    auto mapEntry = commonMimeTypesMap().find(extension);
+    if (mapEntry == commonMimeTypesMap().end())
+        return nullptr;
+    return &mapEntry->value;
+}
+
+String MIMETypeRegistry::mediaMIMETypeForExtension(const String& extension)
+{
+    auto* vector = typesForCommonExtension(extension);
+    if (vector)
+        return (*vector)[0];
+    return mimeTypeForExtension(extension);
+}
+
+String MIMETypeRegistry::mimeTypeForPath(const String& path)
 {
     size_t pos = path.reverseFind('.');
     if (pos != notFound) {
         String extension = path.substring(pos + 1);
-        String result = getMIMETypeForExtension(extension);
+        String result = mimeTypeForExtension(extension);
         if (result.length())
             return result;
     }
@@ -447,9 +415,8 @@ bool MIMETypeRegistry::isSupportedImageMIMEType(const String& mimeType)
 {
     if (mimeType.isEmpty())
         return false;
-    if (!supportedImageMIMETypes)
-        initializeSupportedImageMIMETypes();
-    return supportedImageMIMETypes->contains(getNormalizedMIMEType(mimeType));
+    String normalizedMIMEType = MIMETypeRegistry::normalizedMIMEType(mimeType);
+    return supportedImageMIMETypes().contains(normalizedMIMEType) || additionalSupportedImageMIMETypes().contains(normalizedMIMEType);
 }
 
 bool MIMETypeRegistry::isSupportedImageVideoOrSVGMIMEType(const String& mimeType)
@@ -458,31 +425,64 @@ bool MIMETypeRegistry::isSupportedImageVideoOrSVGMIMEType(const String& mimeType
         return true;
 
 #if HAVE(AVASSETREADER)
-    if (ImageDecoderAVFObjC::supportsContentType(ContentType(mimeType)))
+    if (ImageDecoderAVFObjC::supportsContainerType(mimeType))
+        return true;
+#endif
+
+#if USE(GSTREAMER) && ENABLE(VIDEO)
+    if (ImageDecoderGStreamer::supportsContainerType(mimeType))
         return true;
 #endif
 
     return false;
 }
 
-bool MIMETypeRegistry::isSupportedImageResourceMIMEType(const String& mimeType)
+std::unique_ptr<MIMETypeRegistryThreadGlobalData> MIMETypeRegistry::createMIMETypeRegistryThreadGlobalData()
 {
-    if (mimeType.isEmpty())
-        return false;
-    if (!supportedImageResourceMIMETypes)
-        initializeSupportedImageMIMETypes();
-    return supportedImageResourceMIMETypes->contains(getNormalizedMIMEType(mimeType));
+#if PLATFORM(COCOA)
+    RetainPtr<CFArrayRef> supportedTypes = adoptCF(CGImageDestinationCopyTypeIdentifiers());
+    HashSet<String, ASCIICaseInsensitiveHash> supportedImageMIMETypesForEncoding;
+    CFIndex count = CFArrayGetCount(supportedTypes.get());
+    for (CFIndex i = 0; i < count; i++) {
+        CFStringRef supportedType = reinterpret_cast<CFStringRef>(CFArrayGetValueAtIndex(supportedTypes.get(), i));
+        if (!isSupportedImageType(supportedType))
+            continue;
+            String mimeType = MIMETypeForImageType(supportedType);
+        if (mimeType.isEmpty())
+            continue;
+            supportedImageMIMETypesForEncoding.add(mimeType);
+        }
+#else
+    HashSet<String, ASCIICaseInsensitiveHash> supportedImageMIMETypesForEncoding = std::initializer_list<String> {
+#if USE(CG) || USE(DIRECT2D)
+        // FIXME: Add Windows support for all the supported UTI's when a way to convert from MIMEType to UTI reliably is found.
+        // For now, only support PNG, JPEG and GIF. See <rdar://problem/6095286>.
+        "image/png"_s,
+        "image/jpeg"_s,
+        "image/gif"_s,
+#elif PLATFORM(JAVA)
+        "image/png"_s,
+        "image/jpeg"_s,
+        "image/bmp"_s,
+#elif PLATFORM(GTK)
+        "image/png"_s,
+        "image/jpeg"_s,
+        "image/tiff"_s,
+        "image/bmp"_s,
+        "image/ico"_s,
+#elif USE(CAIRO)
+        "image/png"_s,
+#endif
+    };
+#endif
+    return makeUnique<MIMETypeRegistryThreadGlobalData>(WTFMove(supportedImageMIMETypesForEncoding));
 }
 
 bool MIMETypeRegistry::isSupportedImageMIMETypeForEncoding(const String& mimeType)
 {
-    ASSERT(isMainThread());
-
     if (mimeType.isEmpty())
         return false;
-    if (!supportedImageMIMETypesForEncoding)
-        initializeSupportedImageMIMETypesForEncoding();
-    return supportedImageMIMETypesForEncoding->contains(mimeType);
+    return threadGlobalData().mimeTypeRegistryThreadGlobalData().supportedImageMIMETypesForEncoding().contains(mimeType);
 }
 
 bool MIMETypeRegistry::isSupportedJavaScriptMIMEType(const String& mimeType)
@@ -498,9 +498,7 @@ bool MIMETypeRegistry::isSupportedJavaScriptMIMEType(const String& mimeType)
         return isSupported;
     }
 
-    if (!supportedJavaScriptMIMETypes)
-        initializeSupportedNonImageMimeTypes();
-    return supportedJavaScriptMIMETypes->contains(mimeType);
+    return supportedJavaScriptMIMETypes().contains(mimeType);
 }
 
 bool MIMETypeRegistry::isSupportedStyleSheetMIMEType(const String& mimeType)
@@ -519,6 +517,26 @@ bool MIMETypeRegistry::isSupportedFontMIMEType(const String& mimeType)
         || equalLettersIgnoringASCIICase(subtype, "otf")
         || equalLettersIgnoringASCIICase(subtype, "ttf")
         || equalLettersIgnoringASCIICase(subtype, "sfnt");
+}
+
+bool MIMETypeRegistry::isTextMediaPlaylistMIMEType(const String& mimeType)
+{
+    if (startsWithLettersIgnoringASCIICase(mimeType, "application/")) {
+        static const unsigned applicationLength = 12;
+        auto subtype = StringView { mimeType }.substring(applicationLength);
+        return equalLettersIgnoringASCIICase(subtype, "vnd.apple.mpegurl")
+            || equalLettersIgnoringASCIICase(subtype, "mpegurl")
+            || equalLettersIgnoringASCIICase(subtype, "x-mpegurl");
+    }
+
+    if (startsWithLettersIgnoringASCIICase(mimeType, "audio/")) {
+        static const unsigned audioLength = 6;
+        auto subtype = StringView { mimeType }.substring(audioLength);
+        return equalLettersIgnoringASCIICase(subtype, "mpegurl")
+            || equalLettersIgnoringASCIICase(subtype, "x-mpegurl");
+    }
+
+    return false;
 }
 
 bool MIMETypeRegistry::isSupportedJSONMIMEType(const String& mimeType)
@@ -543,18 +561,14 @@ bool MIMETypeRegistry::isSupportedNonImageMIMEType(const String& mimeType)
 {
     if (mimeType.isEmpty())
         return false;
-    if (!supportedNonImageMIMETypes)
-        initializeSupportedNonImageMimeTypes();
-    return supportedNonImageMIMETypes->contains(mimeType);
+    return supportedNonImageMIMETypes().contains(mimeType);
 }
 
 bool MIMETypeRegistry::isSupportedMediaMIMEType(const String& mimeType)
 {
     if (mimeType.isEmpty())
         return false;
-    if (!supportedMediaMIMETypes)
-        initializeSupportedMediaMIMETypes();
-    return supportedMediaMIMETypes->contains(mimeType);
+    return supportedMediaMIMETypes().contains(mimeType);
 }
 
 bool MIMETypeRegistry::isSupportedTextTrackMIMEType(const String& mimeType)
@@ -566,9 +580,7 @@ bool MIMETypeRegistry::isUnsupportedTextMIMEType(const String& mimeType)
 {
     if (mimeType.isEmpty())
         return false;
-    if (!unsupportedTextMIMETypes)
-        initializeUnsupportedTextMIMETypes();
-    return unsupportedTextMIMETypes->contains(mimeType);
+    return unsupportedTextMIMETypes().contains(mimeType);
 }
 
 bool MIMETypeRegistry::isTextMIMEType(const String& mimeType)
@@ -611,6 +623,12 @@ bool MIMETypeRegistry::isXMLMIMEType(const String& mimeType)
     return true;
 }
 
+bool MIMETypeRegistry::isXMLEntityMIMEType(StringView mimeType)
+{
+    return equalLettersIgnoringASCIICase(mimeType, "text/xml-external-parsed-entity")
+        || equalLettersIgnoringASCIICase(mimeType, "application/xml-external-parsed-entity");
+}
+
 bool MIMETypeRegistry::isJavaAppletMIMEType(const String& mimeType)
 {
     // Since this set is very limited and is likely to remain so we won't bother with the overhead
@@ -626,9 +644,7 @@ bool MIMETypeRegistry::isPDFMIMEType(const String& mimeType)
 {
     if (mimeType.isEmpty())
         return false;
-    if (!pdfMIMETypes)
-        initializePDFMIMETypes();
-    return pdfMIMETypes->contains(mimeType);
+    return pdfMIMETypes().contains(mimeType);
 }
 
 bool MIMETypeRegistry::isPostScriptMIMEType(const String& mimeType)
@@ -649,53 +665,15 @@ bool MIMETypeRegistry::canShowMIMEType(const String& mimeType)
     if (isSupportedJavaScriptMIMEType(mimeType) || isSupportedJSONMIMEType(mimeType))
         return true;
 
+#if USE(QUICK_LOOK)
+    if (PreviewConverter::supportsMIMEType(mimeType))
+        return true;
+#endif
+
     if (startsWithLettersIgnoringASCIICase(mimeType, "text/"))
         return !isUnsupportedTextMIMEType(mimeType);
 
     return false;
-}
-
-const HashSet<String, ASCIICaseInsensitiveHash>& MIMETypeRegistry::getSupportedImageMIMETypes()
-{
-    if (!supportedImageMIMETypes)
-        initializeSupportedImageMIMETypes();
-    return *supportedImageMIMETypes;
-}
-
-const HashSet<String, ASCIICaseInsensitiveHash>& MIMETypeRegistry::getSupportedImageResourceMIMETypes()
-{
-    if (!supportedImageResourceMIMETypes)
-        initializeSupportedImageMIMETypes();
-    return *supportedImageResourceMIMETypes;
-}
-
-HashSet<String, ASCIICaseInsensitiveHash>& MIMETypeRegistry::getSupportedNonImageMIMETypes()
-{
-    if (!supportedNonImageMIMETypes)
-        initializeSupportedNonImageMimeTypes();
-    return *supportedNonImageMIMETypes;
-}
-
-const HashSet<String, ASCIICaseInsensitiveHash>& MIMETypeRegistry::getSupportedMediaMIMETypes()
-{
-    if (!supportedMediaMIMETypes)
-        initializeSupportedMediaMIMETypes();
-    return *supportedMediaMIMETypes;
-}
-
-
-const HashSet<String, ASCIICaseInsensitiveHash>& MIMETypeRegistry::getPDFMIMETypes()
-{
-    if (!pdfMIMETypes)
-        initializePDFMIMETypes();
-    return *pdfMIMETypes;
-}
-
-const HashSet<String, ASCIICaseInsensitiveHash>& MIMETypeRegistry::getUnsupportedTextMIMETypes()
-{
-    if (!unsupportedTextMIMETypes)
-        initializeUnsupportedTextMIMETypes();
-    return *unsupportedTextMIMETypes;
 }
 
 const String& defaultMIMEType()
@@ -704,18 +682,39 @@ const String& defaultMIMEType()
     return defaultMIMEType;
 }
 
+const HashSet<String, ASCIICaseInsensitiveHash>& MIMETypeRegistry::systemPreviewMIMETypes()
+{
+    static NeverDestroyed<HashSet<String, ASCIICaseInsensitiveHash>> systemPreviewMIMETypes = std::initializer_list<String> {
+        // The official type: https://www.iana.org/assignments/media-types/model/vnd.usdz+zip
+        "model/vnd.usdz+zip",
+        // Unofficial, but supported because we documented them.
+        "model/usd",
+        "model/vnd.pixar.usd",
+        // Reality files.
+        "model/vnd.reality"
+    };
+    return systemPreviewMIMETypes;
+}
+
+bool MIMETypeRegistry::isSystemPreviewMIMEType(const String& mimeType)
+{
+    if (mimeType.isEmpty())
+        return false;
+    return systemPreviewMIMETypes().contains(mimeType);
+}
+
 #if !USE(CURL)
 
 // FIXME: Not sure why it makes sense to have a cross-platform function when only CURL has the concept
 // of a "normalized" MIME type.
-String MIMETypeRegistry::getNormalizedMIMEType(const String& mimeType)
+String MIMETypeRegistry::normalizedMIMEType(const String& mimeType)
 {
     return mimeType;
 }
 
 #else
 
-String MIMETypeRegistry::getNormalizedMIMEType(const String& mimeType)
+String MIMETypeRegistry::normalizedMIMEType(const String& mimeType)
 {
     static const auto mimeTypeAssociationMap = makeNeverDestroyed([] {
         static const std::pair<ASCIILiteral, ASCIILiteral> mimeTypeAssociations[] = {
@@ -783,17 +782,67 @@ String MIMETypeRegistry::getNormalizedMIMEType(const String& mimeType)
 
 String MIMETypeRegistry::appendFileExtensionIfNecessary(const String& filename, const String& mimeType)
 {
-    if (filename.isEmpty())
-        return emptyString();
-
-    if (filename.reverseFind('.') != notFound)
+    if (filename.isEmpty() || filename.contains('.') || equalIgnoringASCIICase(mimeType, defaultMIMEType()))
         return filename;
 
-    String preferredExtension = getPreferredExtensionForMIMEType(mimeType);
+    auto preferredExtension = preferredExtensionForMIMEType(mimeType);
     if (preferredExtension.isEmpty())
         return filename;
 
-    return filename + "." + preferredExtension;
+    return makeString(filename, '.', preferredExtension);
+}
+
+static inline String trimmedExtension(const String& extension)
+{
+    return extension.startsWith('.') ? extension.right(extension.length() - 1) : extension;
+}
+
+String MIMETypeRegistry::preferredImageMIMETypeForEncoding(const Vector<String>& mimeTypes, const Vector<String>& extensions)
+{
+    auto allowedMIMETypes = MIMETypeRegistry::allowedMIMETypes(mimeTypes, extensions);
+
+    auto position = allowedMIMETypes.findMatching([](const auto& mimeType) {
+        return MIMETypeRegistry::isSupportedImageMIMETypeForEncoding(mimeType);
+    });
+
+    return position != notFound ? allowedMIMETypes[position] : nullString();
+}
+
+bool MIMETypeRegistry::containsImageMIMETypeForEncoding(const Vector<String>& mimeTypes, const Vector<String>& extensions)
+{
+    return !MIMETypeRegistry::preferredImageMIMETypeForEncoding(mimeTypes, extensions).isNull();
+}
+
+Vector<String> MIMETypeRegistry::allowedMIMETypes(const Vector<String>& mimeTypes, const Vector<String>& extensions)
+{
+    Vector<String> allowedMIMETypes;
+
+    for (auto& mimeType : mimeTypes)
+        allowedMIMETypes.appendIfNotContains(mimeType.convertToASCIILowercase());
+
+    for (auto& extension : extensions) {
+        auto mimeType = MIMETypeRegistry::mimeTypeForExtension(trimmedExtension(extension));
+        if (mimeType.isEmpty())
+            continue;
+        allowedMIMETypes.appendIfNotContains(mimeType.convertToASCIILowercase());
+    }
+
+    return allowedMIMETypes;
+}
+
+Vector<String> MIMETypeRegistry::allowedFileExtensions(const Vector<String>& mimeTypes, const Vector<String>& extensions)
+{
+    Vector<String> allowedFileExtensions;
+
+    for (auto& mimeType : mimeTypes) {
+        for (auto& extension : MIMETypeRegistry::extensionsForMIMEType(mimeType))
+            allowedFileExtensions.appendIfNotContains(extension);
+    }
+
+    for (auto& extension : extensions)
+        allowedFileExtensions.appendIfNotContains(trimmedExtension(extension));
+
+    return allowedFileExtensions;
 }
 
 } // namespace WebCore

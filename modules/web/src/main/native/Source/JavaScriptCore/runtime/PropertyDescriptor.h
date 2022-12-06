@@ -27,6 +27,7 @@
 
 #include "DefinePropertyAttributes.h"
 #include "JSCJSValue.h"
+#include "PropertySlot.h"
 
 namespace JSC {
 
@@ -56,7 +57,7 @@ public:
     JS_EXPORT_PRIVATE bool isAccessorDescriptor() const;
     unsigned attributes() const { return m_attributes; }
     JSValue value() const { return m_value; }
-    GetterSetter* slowGetterSetter(ExecState*); // Be aware that this will lazily allocate a GetterSetter object. It's much better to use getter() and setter() individually if possible.
+    GetterSetter* slowGetterSetter(JSGlobalObject*) const; // Be aware that this will lazily allocate a GetterSetter object. It's much better to use getter() and setter() individually if possible.
     JS_EXPORT_PRIVATE JSValue getter() const;
     JS_EXPORT_PRIVATE JSValue setter() const;
     JSObject* getterObject() const;
@@ -77,12 +78,13 @@ public:
     bool configurablePresent() const { return m_seenAttributes & ConfigurablePresent; }
     bool setterPresent() const { return !!m_setter; }
     bool getterPresent() const { return !!m_getter; }
-    bool equalTo(ExecState*, const PropertyDescriptor& other) const;
+    bool equalTo(JSGlobalObject*, const PropertyDescriptor& other) const;
     bool attributesEqual(const PropertyDescriptor& other) const;
     unsigned attributesOverridingCurrent(const PropertyDescriptor& current) const;
 
 private:
-    JS_EXPORT_PRIVATE static unsigned defaultAttributes;
+    static constexpr unsigned defaultAttributes = PropertyAttribute::DontDelete | PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
+
     bool operator==(const PropertyDescriptor&) { return false; }
     enum { WritablePresent = 1, EnumerablePresent = 2, ConfigurablePresent = 4};
     // May be a getter/setter
@@ -98,16 +100,16 @@ inline PropertyDescriptor toPropertyDescriptor(JSValue value, JSValue getter, JS
     // We assume that validation is already done.
     PropertyDescriptor desc;
 
-    if (std::optional<bool> enumerable = attributes.enumerable())
+    if (Optional<bool> enumerable = attributes.enumerable())
         desc.setEnumerable(enumerable.value());
 
-    if (std::optional<bool> configurable = attributes.configurable())
+    if (Optional<bool> configurable = attributes.configurable())
         desc.setConfigurable(configurable.value());
 
     if (attributes.hasValue())
         desc.setValue(value);
 
-    if (std::optional<bool> writable = attributes.writable())
+    if (Optional<bool> writable = attributes.writable())
         desc.setWritable(writable.value());
 
     if (attributes.hasGet())

@@ -29,9 +29,14 @@ import logging
 import string
 from string import Template
 
-from .generator import Generator
-from .objc_generator import ObjCGenerator
-from .objc_generator_templates import ObjCGeneratorTemplates as ObjCTemplates
+try:
+    from .generator import Generator
+    from .objc_generator import ObjCGenerator
+    from .objc_generator_templates import ObjCGeneratorTemplates as ObjCTemplates
+except ValueError:
+    from generator import Generator
+    from objc_generator import ObjCGenerator
+    from objc_generator_templates import ObjCGeneratorTemplates as ObjCTemplates
 
 log = logging.getLogger('global')
 
@@ -77,9 +82,10 @@ class ObjCConfigurationHeaderGenerator(ObjCGenerator):
         }
 
         lines = []
-
         if self.should_generate_commands_for_domain(domain):
             lines.append(Template(ObjCTemplates.ConfigurationCommandProperty).substitute(None, **property_args))
         if self.should_generate_events_for_domain(domain):
             lines.append(Template(ObjCTemplates.ConfigurationEventProperty).substitute(None, **property_args))
-        return lines
+        if not len(lines):
+            return []
+        return [self.wrap_with_guard_for_condition(domain.condition, '\n'.join(lines))]

@@ -25,6 +25,8 @@
 
 #pragma once
 
+#if ENABLE(WEBGL)
+
 #include "WebGLRenderingContextBase.h"
 
 namespace WebCore {
@@ -53,9 +55,14 @@ public:
         WebGLDrawBuffersName,
         OESElementIndexUintName,
         WebGLCompressedTextureATCName,
+        WebGLCompressedTextureETCName,
+        WebGLCompressedTextureETC1Name,
         WebGLCompressedTexturePVRTCName,
         WebGLCompressedTextureASTCName,
         ANGLEInstancedArraysName,
+        EXTColorBufferHalfFloatName,
+        WebGLColorBufferFloatName,
+        EXTColorBufferFloatName,
     };
 
     void ref() { m_context.ref(); }
@@ -71,3 +78,5 @@ protected:
 };
 
 } // namespace WebCore
+
+#endif

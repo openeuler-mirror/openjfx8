@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2013, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -285,9 +285,9 @@ defineProperty("javaBuildNumber", javaRuntimeVersion.substring(javaRuntimeVersio
 
 defineProperty("libAVRepositoryURL", "https://libav.org/releases/")
 defineProperty("FFmpegRepositoryURL", "https://www.ffmpeg.org/releases/")
+defineProperty("icuRepositoryURL", "https://github.com/unicode-org/icu/releases/")
 
-// JFX_DEPS_URL specifies the optional location of an alternate local repository
-defineProperty("JFX_DEPS_URL", "${buildDir}/../respositories/")
+defineProperty("icuVersion", "68.2")
 
 loadProperties("$projectDir/build.properties")
 
@@ -309,6 +309,12 @@ if (BUILD_CLOSED) {
 // gradle version check fails
 defineProperty("GRADLE_VERSION_CHECK", "true")
 ext.IS_GRADLE_VERSION_CHECK = Boolean.parseBoolean(GRADLE_VERSION_CHECK)
+
+// JFX_DEPS_URL specifies the optional location of an alternate local repository
+defineProperty("JFX_DEPS_URL", "${buildDir}/../respositories/")
+
+// JDK_DOCS_LINK specifies the optional URL for offline javadoc linking
+defineProperty("JDK_DOCS_LINK", "")
 
 // COMPILE_WEBKIT specifies whether to build all of webkit.
 defineProperty("COMPILE_WEBKIT", "true")
@@ -339,8 +345,15 @@ ext.IS_COMPILE_HARFBUZZ = Boolean.parseBoolean(COMPILE_HARFBUZZ)
 defineProperty("COMPILE_PARFAIT", "false")
 ext.IS_COMPILE_PARFAIT = Boolean.parseBoolean(COMPILE_PARFAIT)
 
+defineProperty("STATIC_BUILD", "false")
+ext.IS_STATIC_BUILD = Boolean.parseBoolean(STATIC_BUILD)
+
+if (IS_STATIC_BUILD && IS_COMPILE_MEDIA) {
+    throw new GradleException("Can not have COMPILE_MEDIA when STATIC_BUILD is enabled");
+}
+
 // COMPILE_JFR specifies whether to build code that logs to JRockit Flight Recorder
-// defineProperty("COMPILE_JFR", Boolean.toString(file("$JDK_HOME/jre/lib/jfr.jar").exists()))
+//defineProperty("COMPILE_JFR", Boolean.toString(file("$JDK_HOME/jre/lib/jfr.jar").exists()))
 defineProperty("COMPILE_JFR","false")
 ext.IS_COMPILE_JFR = Boolean.parseBoolean(COMPILE_JFR)
 
@@ -389,6 +402,12 @@ ext.IS_HEADLESS_TEST = Boolean.parseBoolean(HEADLESS_TEST);
 // Specifies whether to run system tests that depend on AWT (only used when FULL_TEST is also enabled)
 defineProperty("AWT_TEST", "true")
 ext.IS_AWT_TEST = Boolean.parseBoolean(AWT_TEST);
+
+// Specifies whether to run unstable tests (true) - tests that don't run well with Hudson builds
+// These tests should be protected with :
+//    assumeTrue(Boolean.getBoolean("unstable.test"));
+defineProperty("UNSTABLE_TEST", "false")
+ext.IS_UNSTABLE_TEST = Boolean.parseBoolean(UNSTABLE_TEST);
 
 // Specify the build configuration (Release, Debug, or DebugNative)
 defineProperty("CONF", "Release")
@@ -468,8 +487,8 @@ project.ext.set("defaultHostTarget", IS_MAC ? "mac" : IS_WINDOWS ? "win" : IS_LI
 defineProperty("COMPILE_TARGETS", "$defaultHostTarget")
 
 // Flag indicating whether to import cross compile tools
-def importCrossTools = BUILD_CLOSED ? true : false;
-if (!importCrossTools && hasProperty("IMPORT_CROSS_TOOLS")) {
+def importCrossTools = false
+if (hasProperty("IMPORT_CROSS_TOOLS")) {
     importCrossTools = Boolean.parseBoolean(IMPORT_CROSS_TOOLS);
 }
 ext.IS_IMPORT_CROSS_TOOLS = importCrossTools
@@ -548,7 +567,7 @@ void fetchExternalTools(String configName, List packages, File destdir, boolean 
         }
 
         //fetch all the missing packages
-        if (fetchedPackages.size > 0) {
+        if (fetchedPackages.size() > 0) {
             destdir.mkdirs()
 
             logger.quiet "fetching missing packages $fetchedPackages"
@@ -607,7 +626,7 @@ void fetchExternalTools(String configName, List packages, File destdir, boolean 
                 errors.add(pkgname)
             }
         }
-        if (errors.size > 0) {
+        if (errors.size() > 0) {
             throw new GradleException("Error: missing tool packages: $errors")
         } else {
             logger.quiet "all tool packages are present $packages"
@@ -795,14 +814,17 @@ if (Integer.parseInt(NUM_COMPILE_THREADS.toString()) < 1) {
     NUM_COMPILE_THREADS = 1
 }
 
-// Check for Gradle 4.8, error if < 4.8.
-if (gradle.gradleVersion != "4.8") {
+// Check gradle version
+if (gradle.gradleVersion != jfxGradleVersion) {
     def ver = gradle.gradleVersion.split("[\\.]");
+    def verMin = jfxGradleVersionMin.split("[\\.]");
     def gradleMajor = Integer.parseInt(ver[0]);
     def gradleMinor = Integer.parseInt(ver[1].split("[^0-9]")[0]);
+    def gradleMajorMin = Integer.parseInt(verMin[0]);
+    def gradleMinorMin = Integer.parseInt(verMin[1].split("[^0-9]")[0]);
     def err = "";
-    if (gradleMajor < 4 || (gradleMajor == 4 && gradleMinor < 8)) {
-        err = "Gradle version too old: ${gradle.gradleVersion}; must be at least 4.8"
+    if (gradleMajor < gradleMajorMin || (gradleMajor == gradleMajorMin && gradleMinor < gradleMinorMin)) {
+        err = "Gradle version too old: ${gradle.gradleVersion}; must be at least ${jfxGradleVersionMin}"
     }
 
     if (IS_GRADLE_VERSION_CHECK && err != "") {
@@ -811,7 +833,7 @@ if (gradle.gradleVersion != "4.8") {
 
     logger.warn("*****************************************************************");
     logger.warn("Unsupported gradle version $gradle.gradleVersion in use.");
-    logger.warn("Only version 4.8 is supported. Use this version at your own risk");
+    logger.warn("Only version $jfxGradleVersion is supported. Use this version at your own risk");
     if ( err != "") logger.warn(err);
     logger.warn("*****************************************************************");
 }
@@ -1043,6 +1065,98 @@ void addJSL(Project project, String name, String pkg, Closure compile) {
 }
 
 /**
+ * Verifies that all of the *.java files in a source tree have the
+ * correct package name. If not, fail the build.
+ *
+ * @param sourceRoot the root of the source tree to check
+ * @param hasModuleName true if the sources under sourceRoot are being
+ * compiled as modules, with the immediate child directories being the
+ * root(s) of the named modules being compiled. In this case the package
+ * root is one directory below the sourceRoot.
+ */
+void validatePackages(File sourceRoot, boolean hasModuleName) {
+    if (!sourceRoot.isDirectory()) {
+        return;
+    }
+    def err = false;
+    String sourceString = sourceRoot.toString().replace("\\", "/")
+    def startPos = sourceString.length() + 1
+    logger.info("validating packages for ${sourceRoot}")
+    def inputFiles = fileTree(dir: sourceRoot, include: "**/*.java")
+    inputFiles.each { file ->
+        def packageRoot = file.toString().replace("\\", "/").substring(startPos)
+        if (hasModuleName) {
+            packageRoot = packageRoot.substring(packageRoot.indexOf("/") + 1)
+        }
+        def endPos = packageRoot.lastIndexOf("/")
+        def pkgEx = endPos > -1 ?  packageRoot.substring(0, endPos).replace("/", ".") : ""
+        def pkg = ""
+        file.withReader { reader ->
+            def line
+            while ((line = reader.readLine()) != null) {
+                def words = line.trim().split("[ ;]+")
+                if (words.length > 1 && words[0] == "package") {
+                    pkg = words[1]
+                    break;
+                }
+            }
+        }
+        if (pkg != pkgEx) {
+            err = true
+            println "*** ERROR: File location <${file}> does not match package name <${pkg}>"
+        }
+    }
+    if (err) {
+        fail("Package validation failed")
+    }
+}
+
+/**
+ * Add a task to the given project to validate that the package names
+ * of all java files in the given source sets have the correct package
+ * name. If not, fail the build.
+ */
+void addValidateSourceSets(Project project,
+                           Collection<SourceSet> sourceSets,
+                           Collection<SourceSet> modSourceSets) {
+    def validateSourceSetsTask = project.task("validateSourceSets") {
+        doLast {
+            // Accumulate the root directories from all sourceSets.
+            // We use a Set to elide duplicates (the shims sourceset
+            // will include the dirs from the main sourceset)
+            Set<File> sourceRoots = []
+            sourceSets.each { srcSet ->
+                srcSet.java.srcDirs.each { rootDir ->
+                    sourceRoots += rootDir
+                }
+            }
+            sourceRoots.each { rootDir ->
+                validatePackages(rootDir, false)
+            }
+
+            Set<File> modSourceRoots = []
+            modSourceSets.each { srcSet ->
+                srcSet.java.srcDirs.each { rootDir ->
+                    modSourceRoots += rootDir
+                }
+            }
+            modSourceRoots.each { rootDir ->
+                validatePackages(rootDir, true)
+            }
+        }
+    }
+
+    // Run this for all projects when compiling the test sources
+    // (i.e., when running "gradle test")
+    project.compileTestJava.dependsOn(validateSourceSetsTask)
+}
+
+void addValidateSourceSets(Project project, Collection<SourceSet> sourceSets) {
+    addValidateSourceSets(project, sourceSets, []);
+}
+
+
+/**
  * Parses a JDK version string. The string must be in one of the following
  * two formats:
  *
@@ -1152,29 +1266,15 @@ void addJCov(p, test) {
 }
 
 allprojects {
-    // Setup the repositories that we'll download libraries from. Maven Central is
-    // just easy for most things. The custom "ivy" repo is for downloading SWT. The way it
-    // works is to setup the download URL such that it will resolve to the actual jar file
-    // to download. See SWT_FILE_NAME for the name of the jar that will be used as the
-    // "artifact" in the pattern below. Note that the closed builds use different repositories
-    // so if you are debugging a closed-build artifact related build issue, check out the
-    // closed gradle file instead.
-    if (!BUILD_CLOSED) {
-        repositories {
-            mavenCentral()
-            ivy {
-                if (isGradleVersionGT4()){
-                    metadataSources {
-                        artifact()
-                    }
-                }
-                url "https://download.eclipse.org/eclipse/updates/4.6/R-4.6.3-201703010400/plugins/"
-                patternLayout {
-                    artifact "[artifact].[ext]"
-                }
-            }
-        }
-    }
+
+    // Setup the repositories that we'll download libraries from.
+    // By default we use Maven Central for most things. The custom "ivy"
+    // repo is for downloading SWT. The way it works is to setup the
+    // download URL such that it will resolve to the actual jar file to
+    // download. See SWT_FILE_NAME for the name of the jar that will be
+    // used as the "artifact" in the pattern below.
+    // If JFX_DEPS_URL is set, then that overrides the default
+    // repositories. This allows the dependencies to be cached locally.
 
     if (JFX_DEPS_URL != "") {
         repositories {
@@ -1193,29 +1293,60 @@ allprojects {
         }
     }
 
-    if (JFX_DEPS_URL == "" && IS_BUILD_LIBAV_STUBS) {
+    if (JFX_DEPS_URL == "") {
         repositories {
-
+            mavenCentral()
             ivy {
+                url "https://download.eclipse.org/eclipse/updates/4.6/R-4.6.3-201703010400/plugins/"
                 if (isGradleVersionGT4()){
                     metadataSources {
                         artifact()
                     }
                 }
+                patternLayout {
+                    artifact "[artifact].[ext]"
+                }
+            }
+        }
+    }
+
+    if (JFX_DEPS_URL == "" && IS_BUILD_LIBAV_STUBS) {
+        repositories {
+            ivy {
                 url libAVRepositoryURL
+                if (isGradleVersionGT4()){
+                    metadataSources {
+                        artifact()
+                    }
+                }
                 patternLayout {
                     artifact "[artifact].[ext]"
                 }
             }
             ivy {
+                url FFmpegRepositoryURL
                 if (isGradleVersionGT4()){
                     metadataSources {
                         artifact()
                     }
                 }
-                url FFmpegRepositoryURL
                 patternLayout {
                     artifact "[artifact].[ext]"
+                }
+            }
+        }
+    }
+
+    if (JFX_DEPS_URL == "" && IS_COMPILE_WEBKIT) {
+        def icuReleaseVersion = icuVersion.replaceAll('\\.', '-')
+        repositories {
+            ivy {
+                url icuRepositoryURL
+                metadataSources {
+                    artifact()
+                }
+                patternLayout {
+                    artifact "download/release-$icuReleaseVersion/[artifact].[ext]"
                 }
             }
         }
@@ -1250,6 +1381,11 @@ allprojects {
     def jfxrtJar = "$sdkDir/rt/lib/ext/jfxrt.jar"
     def testJfxrtJar = DO_BUILD_SDK_FOR_TEST ? jfxrtJar : jfxrtJarFromSdk
 
+    // it's not possible to split jfx8u project into modules
+    java {
+        disableAutoTargetJvm()
+    }
+
     // At the moment the ASM library shipped with Gradle that is used to
     // discover the different test classes fails on Java 8, so in order
     // to have sourceCompatibility set to 1.8 I have to also turn scanForClasses off
@@ -1275,6 +1411,8 @@ allprojects {
             systemProperty 'com.sun.javafx.gestures.rotate', 'true'
             systemProperty 'com.sun.javafx.gestures.scroll', 'true'
         }
+
+        systemProperty 'unstable.test', IS_UNSTABLE_TEST
     }
 
     compileTestJava {
@@ -1317,6 +1455,9 @@ project(":base") {
         implementation BUILD_SRC
     }
 
+	//tasks.withType<Jar> { duplicatesStrategy = DuplicatesStrategy.INHERIT }
+	//tasks.withType(Copy).all { duplicatesStrategy 'exclude' }
+	
     // We need to take the VersionInfo.java file and replace the various
     // properties within it
     def replacements = [
@@ -1358,6 +1499,8 @@ project(":base") {
     sourceSets.main.java.srcDirs += "$buildDir/generated-src/version-info"
 
     compileJava.dependsOn processVersionInfo
+
+    addValidateSourceSets(project, sourceSets)
 }
 
 // The graphics module is needed for any graphical JavaFX application. It requires
@@ -1384,6 +1527,8 @@ project(":graphics") {
         antlr3 group: "org.antlr", name: "antlr-runtime",  version: "3.1.3"
         antlr3 group: "org.antlr", name: "stringtemplate", version: "3.2"
     }
+	
+	tasks.withType(Copy).all { duplicatesStrategy 'exclude' }
 
     // Create a single "native" task which will depend on all the individual native tasks for graphics
     project.ext.nativeAllTask = task("native", group: "Build", description: "Compiles and Builds all native libraries for Graphics");
@@ -1684,6 +1829,9 @@ project(":graphics") {
                 copy {
                     into libsDir
                     from f.getParentFile()
+					println ("66666666666666666666666666666666666666\n");
+println (f.getParentFile()); 
+println ("66666666666666666666666666666666666666\n");
                     include "**/*swt*.jar"
                     includeEmptyDirs = false
                     rename ".*swt.*jar", "swt-debug\\.jar"
@@ -1691,6 +1839,14 @@ project(":graphics") {
             }
         }
     }
+    /*
+     * The following is a workaroud for JDK-8222036 (antlr generated
+     * files written to wrong location on Windows). This workaround should
+     * be removed as part of fixing JDK-8222036.
+     */
+    // addValidateSourceSets(project, sourceSets)
+    def srcSets = sourceSets
+    addValidateSourceSets(project, srcSets)
 }
 
 project(":controls") {
@@ -1734,12 +1890,15 @@ project(":controls") {
             }
         }
     }
+
+    addValidateSourceSets(project, sourceSets)
 }
 
 project(":extensions") {
     dependencies {
         implementation BUILD_SRC, project(":base"), project(":graphics")
     }
+    addValidateSourceSets(project, sourceSets)
 }
 
 project(":swing") {
@@ -1754,6 +1913,8 @@ project(":swing") {
     test {
         enabled = IS_FULL_TEST && IS_AWT_TEST
     }
+
+    addValidateSourceSets(project, sourceSets)
 }
 
 project(":swt") {
@@ -1764,6 +1925,8 @@ project(":swt") {
         implementation BUILD_SRC, project(":base"), project(":graphics")
         implementation name: SWT_FILE_NAME
     }
+
+    addValidateSourceSets(project, sourceSets)
 }
 
 project(":fxml") {
@@ -1779,6 +1942,8 @@ project(":fxml") {
         jvmArgs "-Djavafx.toolkit=com.sun.javafx.pgstub.StubToolkit"
         classpath += files("$JDK_HOME/jre/lib/ext/nashorn.jar")
     }
+
+    addValidateSourceSets(project, sourceSets)
 }
 
 project(":builders") {
@@ -1823,6 +1988,7 @@ project(":jmx") {
            it.classpath = files(javafxMxJar) + it.classpath
        }
     }
+    addValidateSourceSets(project, sourceSets)
 }
 
 // This project is for system tests that need to run with a full SDK.
@@ -1843,6 +2009,10 @@ project(":systemTests") {
             exclude("**/painttest/*.*");
             exclude("**/renderlock/*.*");
         }
+        if (!IS_UNSTABLE_TEST) {
+            // JDK-8196607 Don't run monocle test cases
+            exclude("test/robot/com/sun/glass/ui/monocle/**");
+        }
         if (!IS_AWT_TEST) {
             // Disable all AWT-based tests
             exclude("**/javafx/embed/swing/*.*");
@@ -1858,6 +2028,7 @@ project(":systemTests") {
         jvmArgs "-Dprism.forceGPU=true"
         forkEvery = 1
     }
+    addValidateSourceSets(project, sourceSets)
 }
 
 project(":fxpackager") {
@@ -1866,7 +2037,7 @@ project(":fxpackager") {
     }
     // fxpackager has a dependency on ant in order to build the ant jar,
     // and as such needs to point to the apache binary repository
-    if (!BUILD_CLOSED) {
+    if (JFX_DEPS_URL == "") {
         repositories {
             maven {
                 url "https://repository.apache.org"
@@ -2243,6 +2414,8 @@ project(":fxpackager") {
                 packagerDevOpts
         ].flatten()
     }
+
+    addValidateSourceSets(project, sourceSets)
 }
 
 project(":media") {
@@ -2378,6 +2551,7 @@ project(":media") {
                 doLast {
                     exec {
                         commandLine ("make", "${makeJobsFlag}", "-C", "${nativeSrcDir}/gstreamer/projects/${projectDir}/gstreamer-lite")
+
                         args("OUTPUT_DIR=${nativeOutputDir}", "BUILD_TYPE=${buildType}", "BASE_NAME=gstreamer-lite")
 
                         if (t.name == "win") {
@@ -2415,11 +2589,10 @@ project(":media") {
 
                             String sdkDir = System.getenv("BASECLASSES_SDK_DIR");
                             if (sdkDir == null) {
-                                sdkDir = "D:/jenkins/workspace/test-buildtools/open_source/Windows-classic-samples/Windows-classic-samples-d42a2ea76a6d50c6790bbcf88a60de73cce069a9/Samples" // Default value
+                                sdkDir = "D:/jenkins/workspace/JDK8u-WIN64/open_source/Windows-classic-samples/Windows-classic-samples-d42a2ea76a6d50c6790bbcf88a60de73cce069a9/Samples" // Default value
                                 winEnv["BASECLASSES_SDK_DIR"] = sdkDir
                             }
                             environment(winEnv)
-
                             args(IS_64 ? "ARCH=x64" : "ARCH=x32", "RESOURCE=${nativeOutputDir}/${buildType}/${WIN.media.fxpluginsRcFile}")
                         } else {
                             args ("CC=${mediaProperties.compiler}", "LINK=${mediaProperties.linker}", "LIB=${mediaProperties.lib}")
@@ -2442,7 +2615,7 @@ project(":media") {
                 def copyLibAVStubs = {String fromDir, String toDir ->
                     FileCollection config = files("config.h")
                     FileCollection libavcodec = files("avcodec.h", "avfft.h", "dxva2.h", "vaapi.h", "vda.h",
-					                                  "bsf.h", "codec.h", "codec_desc.h", "codec_par.h", "codec_id.h", "packet.h",
+                                                      "bsf.h", "codec.h", "codec_desc.h", "codec_par.h", "codec_id.h", "packet.h",
                                                       "vdpau.h", "version.h", "xvmc.h", "old_codec_ids.h")
                     FileCollection libavdevice = files("avdevice.h", "version.h")
                     FileCollection libavfilter = files("avfiltergraph.h", "avfilter.h", "buffersink.h", "buffersrc.h", "version.h");
@@ -2492,7 +2665,7 @@ project(":media") {
                             into "${toDir}/lib"
                         }
                     }
-                }                
+                }
 
                 def buildFFmpegStubs = task("buildFFmpegStubs", dependsOn: []) {
                     enabled = IS_BUILD_LIBAV_STUBS
@@ -2568,16 +2741,15 @@ project(":media") {
                     }
                 }
 
-
                 def buildAVPlugin = task( "buildAVPlugin", dependsOn: [buildPlugins, buildFFmpegStubs]) {
                     enabled = IS_COMPILE_MEDIA
 
                     doLast {
-                        if (IS_BUILD_LIBAV_STUBS) {                                           
+                        if (IS_BUILD_LIBAV_STUBS) {
                             project.ext.libav.ffmpeg = [:]
                             project.ext.libav.ffmpeg.basedir = "${buildDir}/native/linux/ffmpeg/ffmpeg"
-                            project.ext.libav.ffmpeg.versions = [ "58" ]                        
-                       
+                            project.ext.libav.ffmpeg.versions = [ "58" ]
+
                             project.ext.libav.ffmpeg.versions.each { version ->
                                 def libavDir = "${project.ext.libav.ffmpeg.basedir}-${version}"
                                 File dir = file(libavDir)
@@ -2646,7 +2818,9 @@ project(":media") {
                             environment(WINDOWS_NATIVE_COMPILE_ENVIRONMENT)
                             commandLine ("make", "${makeJobsFlag}", "-C", "${nativeSrcDir}/gstreamer/projects/${projectDir}/glib-lite")
                             args("OUTPUT_DIR=${nativeOutputDir}", "BUILD_TYPE=${buildType}", "BASE_NAME=glib-lite",
-                                 IS_64 ? "ARCH=x64" : "ARCH=x32", "RESOURCE=${nativeOutputDir}/${buildType}/${WIN.media.glibRcFile}")
+                              IS_64 ? "ARCH=x64" : "ARCH=x32", "RESOURCE=${nativeOutputDir}/${buildType}/${WIN.media.glibRcFile}")
+
+
                         }
                     }
                 }
@@ -2685,13 +2859,20 @@ project(":media") {
             dependsOn buildNativeTargets
         }
     }
+    addValidateSourceSets(project, sourceSets)
 }
 
 project(":web") {
     configurations {
         webkit
     }
+
+    getConfigurations().create("icu");
+
     dependencies {
+        if (IS_COMPILE_WEBKIT) {
+            icu name: "icu4c-${icuVersion}-data-bin-l", ext: "zip"
+        }
         implementation project(":base"), project(":graphics"), project(":controls"), project(":media")
     }
 
@@ -2774,7 +2955,14 @@ project(":web") {
         File nativeBuildDir = new File("${webkitOutputDir}")
         nativeBuildDir.mkdirs()
 
-        def compileNativeTask = task("compileNative${t.capital}", dependsOn: generateHeaders) {
+        def getICUFile = task("copyICUFile", type: Copy) {
+            enabled = IS_COMPILE_WEBKIT
+
+            from configurations.icu.files
+            into "$webkitOutputDir/$webkitConfig/icu/data"
+        }
+
+        def compileNativeTask = task("compileNative${t.capital}", dependsOn: [generateHeaders, getICUFile]) {
             doLast {
                 println "Building Webkit configuration /$webkitConfig/ into $webkitOutputDir"
 
@@ -2787,6 +2975,9 @@ project(":web") {
                 exec {
                     workingDir("$projectDir/src/main/native")
                     def cmakeArgs = "-DENABLE_TOOLS=1"
+                    if (IS_STATIC_BUILD) {
+                        cmakeArgs = " $cmakeArgs -DSTATIC_BUILD=1 -DUSE_THIN_ARCHIVES=OFF";
+                    }
                     cmakeArgs = " $cmakeArgs -DCMAKE_C_COMPILER='${webkitProperties.compiler}'"
                     if (t.name == "win") {
                         environment(WINDOWS_NATIVE_COMPILE_ENVIRONMENT)
@@ -2795,19 +2986,22 @@ project(":web") {
                     } else if (t.name == "linux") {
                         cmakeArgs = " $cmakeArgs -DCMAKE_SYSTEM_NAME=Linux"
                         if (IS_64) {
-                        if (OS_ARCH.toLowerCase().contains("aarch"))
-                            cmakeArgs = "$cmakeArgs -DCMAKE_SYSTEM_PROCESSOR=aarch64 -DJAVA_AWT_LIBRARY=${JAVA_HOME}/jre/lib/aarch64 -DJAVA_JVM_LIBRARY=${JAVA_HOME}/jre/lib/aarch64"
-                        else
-                            cmakeArgs = "$cmakeArgs -DCMAKE_SYSTEM_PROCESSOR=x86_64"
+                            if (OS_ARCH.toLowerCase().contains("aarch"))
+                                cmakeArgs = "$cmakeArgs -DCMAKE_SYSTEM_PROCESSOR=aarch64 -DJAVA_AWT_LIBRARY=${JAVA_HOME}/jre/lib/aarch64 -DJAVA_JVM_LIBRARY=${JAVA_HOME}/jre/lib/aarch64"
+                            else
+                                cmakeArgs = "$cmakeArgs -DCMAKE_SYSTEM_PROCESSOR=x86_64"
                         } else {
-                        if (OS_ARCH.toLowerCase().contains("arm"))
-                            fail("ARM target is not supported as of now.")
-                        else
-                            cmakeArgs = "$cmakeArgs -DCMAKE_SYSTEM_PROCESSOR=i586"
+                            if (OS_ARCH.toLowerCase().contains("arm"))
+                                fail("ARM target is not supported as of now.")
+                            else
+                                cmakeArgs = "$cmakeArgs -DCMAKE_SYSTEM_PROCESSOR=i586"
                         }
                         // TODO: Use cflags and ldflags from all platforms
                         def cFlags = webkitProperties.ccFlags?.join(' ') ?: ''
                         def lFlags = webkitProperties.linkFlags?.join(' ') ?: ''
+                        if (IS_STATIC_BUILD) {
+                            cFlags = " $cFlags -DSTATIC_BUILD=1";
+                        }
                         // -shared flag should be omitted while creating executable.
                         def exeFlags = webkitProperties.linkFlags?.join(' ')?.replace('-shared', '') ?: ''
                         cmakeArgs = "$cmakeArgs -DCMAKE_C_FLAGS='${cFlags}' -DCMAKE_CXX_FLAGS='${cFlags}' -DCMAKE_ASM_FLAGS='${cFlags}'"
@@ -2844,7 +3038,7 @@ project(":web") {
                     cmakeArgs += " -DJAVAFX_RELEASE_VERSION=8.0"
                     commandLine("perl", "$projectDir/src/main/native/Tools/Scripts/build-webkit",
                         "--java", "--icu-unicode", targetCpuBitDepthSwitch,
-                        "--cmakeargs=${cmakeArgs}")
+                        "--no-experimental-features", "--cmakeargs=${cmakeArgs}")
                 }
 
                 // Cmake places Windows DLL in bin directory
@@ -2893,6 +3087,8 @@ project(":web") {
     if (IS_COMPILE_WEBKIT) {
         jar.dependsOn compileNative, drtJar
     }
+
+    addValidateSourceSets(project, sourceSets)
 }
 
 allprojects {
@@ -2988,8 +3184,8 @@ task javadoc(type: Javadoc) {
     options.windowTitle("${javadocTitle}")
     options.header("${javadocHeader}")
     options.bottom("${javadocBottom}")
-    if (BUILD_CLOSED) {
-        options.linksOffline(JDK_DOCS, JDK_DOCS_CLOSED);
+    if (JDK_DOCS_LINK != "") {
+        options.linksOffline(JDK_DOCS, JDK_DOCS_LINK);
     } else {
         options.links(JDK_DOCS);
     }
@@ -3015,6 +3211,7 @@ task jfxrt() {
             if (t.enabled) t.dependsOn(jfxrt)
         }
     }
+
 }
 
 task sdk() {
@@ -3140,7 +3337,7 @@ compileTargets { t ->
         description = "Creates the jfxrt.jar for the $t.name target"
         archiveName = "${buildDir}/${sdkDirName}/rt/lib/ext/jfxrt.jar";
         reproducibleFileOrder = true
-
+        archiveName = "jfxrt.jar"
         if (isGradleVersionGT4()){
             destinationDirectory = file("${buildDir}/${sdkDirName}/rt/lib/ext")
             archiveFileName = "jfxrt.jar"
@@ -3256,7 +3453,7 @@ compileTargets { t ->
         dependsOn(jfxrtTask)
 
         doLast() {
-            ant.jar (update: true, index: true, destfile: jfxrtTask.archiveName)
+            ant.jar (update: true, index: true, destfile: "${jfxrtTask.destinationDir}/${jfxrtTask.archiveName}")
         }
     }
     jfxrt.dependsOn(jfxrtIndexTask)
@@ -3265,7 +3462,8 @@ compileTargets { t ->
         enabled = COMPILE_SWT
         group = "Basic"
         description = "Creates the jfxswt.jar for the $t.name target"
-        archiveName = "${buildDir}/${sdkDirName}/rt/lib/jfxswt.jar";
+        destinationDir = file("${buildDir}/${sdkDirName}/rt/lib")
+        archiveName = "jfxswt.jar"
         if (isGradleVersionGT4()){
             destinationDirectory = file("${buildDir}/${sdkDirName}/rt/lib/")
             archiveFileName = "jfxswt.jar"
@@ -3284,7 +3482,7 @@ compileTargets { t ->
         dependsOn(jfxswtTask)
 
         doLast() {
-            ant.jar (update: true, index: true, destfile: jfxswtTask.archiveName)
+            ant.jar (update: true, index: true, destfile: "${jfxswtTask.destinationDir}/${jfxswtTask.archiveName}")
         }
     }
     jfxrt.dependsOn(jfxswtIndexTask)
@@ -3292,7 +3490,8 @@ compileTargets { t ->
     def jmxTask = task ("jmx${t.capital}", type: Jar) {
         group = "Basic"
         description = "Creates the javafx-mx.jar"
-        archiveName = "${buildDir}/${sdkDirName}/lib/javafx-mx.jar";
+        destinationDir = file("${buildDir}/${sdkDirName}/lib")
+        archiveName = "javafx-mx.jar"
         if (isGradleVersionGT4()){
             destinationDirectory = file("${buildDir}/${sdkDirName}/rt/lib/")
             archiveFileName = "javafx-mx.jar"
@@ -3493,7 +3692,7 @@ project(":apps") {
     ant.importBuild 'build.xml'
 
     // Download the Lucene libraries needed for the Ensemble8 app
-    def luceneVersion = "7.4.0"
+    def luceneVersion = "7.7.3"
     getConfigurations().create("lucene");
     dependencies {
         lucene group: "org.apache.lucene", name: "lucene-core", version: luceneVersion

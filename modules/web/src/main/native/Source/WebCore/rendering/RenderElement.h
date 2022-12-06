@@ -28,6 +28,7 @@
 namespace WebCore {
 
 class ControlStates;
+class KeyframeList;
 class RenderBlock;
 class RenderTreeBuilder;
 
@@ -42,6 +43,7 @@ public:
     bool hasInitializedStyle() const { return m_hasInitializedStyle; }
 
     const RenderStyle& style() const { return m_style; }
+    const RenderStyle* parentStyle() const { return !m_parent ? nullptr : &m_parent->style(); }
     const RenderStyle& firstLineStyle() const;
 
     // FIXME: Style shouldn't be mutated.
@@ -57,7 +59,7 @@ public:
     // The pseudo element style can be cached or uncached.  Use the cached method if the pseudo element doesn't respect
     // any pseudo classes (and therefore has no concept of changing state).
     const RenderStyle* getCachedPseudoStyle(PseudoId, const RenderStyle* parentStyle = nullptr) const;
-    std::unique_ptr<RenderStyle> getUncachedPseudoStyle(const PseudoStyleRequest&, const RenderStyle* parentStyle = nullptr, const RenderStyle* ownStyle = nullptr) const;
+    std::unique_ptr<RenderStyle> getUncachedPseudoStyle(const Style::PseudoElementRequest&, const RenderStyle* parentStyle = nullptr, const RenderStyle* ownStyle = nullptr) const;
 
     // This is null for anonymous renderers.
     Element* element() const { return downcast<Element>(RenderObject::node()); }
@@ -96,8 +98,6 @@ public:
     void removeLayers(RenderLayer* parentLayer);
     void moveLayers(RenderLayer* oldParent, RenderLayer* newParent);
     RenderLayer* findNextLayer(RenderLayer* parentLayer, RenderObject* startPoint, bool checkParent = true);
-
-    virtual RenderElement* hoverAncestor() const;
 
     virtual void dirtyLinesFromChangedChild(RenderObject&) { }
 
@@ -185,6 +185,9 @@ public:
     void setVisibleInViewportState(VisibleInViewportState);
     virtual void visibleInViewportStateChanged();
 
+    bool didContibuteToVisuallyNonEmptyPixelCount() const { return m_didContributeToVisuallyNonEmptyPixelCount; }
+    void setDidContibuteToVisuallyNonEmptyPixelCount() { m_didContributeToVisuallyNonEmptyPixelCount = true; }
+
     bool repaintForPausedImageAnimationsIfNeeded(const IntRect& visibleRect, CachedImage&);
     bool hasPausedImageAnimations() const { return m_hasPausedImageAnimations; }
     void setHasPausedImageAnimations(bool b) { m_hasPausedImageAnimations = b; }
@@ -205,7 +208,7 @@ public:
     RenderBlock* containingBlockForFixedPosition() const;
     RenderBlock* containingBlockForAbsolutePosition() const;
 
-    RespectImageOrientationEnum shouldRespectImageOrientation() const;
+    WEBCORE_EXPORT ImageOrientation imageOrientation() const;
 
     void removeFromRenderFragmentedFlow();
     virtual void resetEnclosingFragmentedFlowAndChildInfoIncludingDescendants(RenderFragmentedFlow*);
@@ -222,6 +225,16 @@ public:
 
     RenderObject* attachRendererInternal(RenderPtr<RenderObject> child, RenderObject* beforeChild);
     RenderPtr<RenderObject> detachRendererInternal(RenderObject&);
+
+    virtual bool startTransition(double /* timeOffset */, CSSPropertyID, const RenderStyle* /* fromStyle */, const RenderStyle* /* toStyle */) { return false; }
+    virtual void transitionPaused(double /* timeOffset */, CSSPropertyID) { }
+    virtual void transitionFinished(CSSPropertyID) { }
+
+    virtual bool startAnimation(double /* timeOffset */, const Animation&, const KeyframeList&) { return false; }
+    virtual void animationPaused(double /* timeOffset */, const String& /* name */) { }
+    virtual void animationFinished(const String& /* name */) { }
+
+    virtual void suspendAnimations(MonotonicTime = MonotonicTime()) { }
 
 protected:
     enum BaseTypeFlag {
@@ -243,9 +256,6 @@ protected:
     enum StylePropagationType { PropagateToAllChildren, PropagateToBlockChildrenOnly };
     void propagateStyleToAnonymousChildren(StylePropagationType);
 
-    LayoutUnit valueForLength(const Length&, LayoutUnit maximumValue) const;
-    LayoutUnit minimumValueForLength(const Length&, LayoutUnit maximumValue) const;
-
     void setFirstChild(RenderObject* child) { m_firstChild = child; }
     void setLastChild(RenderObject* child) { m_lastChild = child; }
 
@@ -255,6 +265,7 @@ protected:
     void insertedIntoTree() override;
     void willBeRemovedFromTree() override;
     void willBeDestroyed() override;
+    void notifyFinished(CachedResource&, const NetworkLoadMetrics&) override;
 
     void setRenderInlineAlwaysCreatesLineBoxes(bool b) { m_renderInlineAlwaysCreatesLineBoxes = b; }
     bool renderInlineAlwaysCreatesLineBoxes() const { return m_renderInlineAlwaysCreatesLineBoxes; }
@@ -312,6 +323,7 @@ private:
     bool canDestroyDecodedData() final { return !isVisibleInViewport(); }
     VisibleInViewportState imageFrameAvailable(CachedImage&, ImageAnimatingState, const IntRect* changeRect) final;
     void didRemoveCachedImageClient(CachedImage&) final;
+    void scheduleTimedRenderingUpdate() final;
 
     bool getLeadingCorner(FloatPoint& output, bool& insideFixed) const;
     bool getTrailingCorner(FloatPoint& output, bool& insideFixed) const;
@@ -338,10 +350,12 @@ private:
     unsigned m_renderBlockHasMarginAfterQuirk : 1;
     unsigned m_renderBlockShouldForceRelayoutChildren : 1;
     unsigned m_renderBlockFlowHasMarkupTruncation : 1;
-    unsigned m_renderBlockFlowLineLayoutPath : 2;
+    unsigned m_renderBlockFlowLineLayoutPath : 3;
 
     unsigned m_isRegisteredForVisibleInViewportCallback : 1;
     unsigned m_visibleInViewportState : 2;
+
+    unsigned m_didContributeToVisuallyNonEmptyPixelCount : 1;
 
     RenderObject* m_firstChild;
     RenderObject* m_lastChild;
@@ -364,16 +378,6 @@ inline void RenderElement::setChildNeedsLayout(MarkingBehavior markParents)
     setNormalChildNeedsLayoutBit(true);
     if (markParents == MarkContainingBlockChain)
         markContainingBlocksForLayout();
-}
-
-inline LayoutUnit RenderElement::valueForLength(const Length& length, LayoutUnit maximumValue) const
-{
-    return WebCore::valueForLength(length, maximumValue);
-}
-
-inline LayoutUnit RenderElement::minimumValueForLength(const Length& length, LayoutUnit maximumValue) const
-{
-    return WebCore::minimumValueForLength(length, maximumValue);
 }
 
 inline bool RenderElement::isRenderLayerModelObject() const

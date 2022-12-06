@@ -43,7 +43,7 @@
 #include <wtf/RefCountedLeakCounter.h>
 #include <wtf/StdLibExtras.h>
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
 #include "FrameSelection.h"
 #endif
 
@@ -55,8 +55,8 @@ DEFINE_DEBUG_ONLY_GLOBAL(WTF::RefCountedLeakCounter, cachedPageCounter, ("Cached
 
 CachedPage::CachedPage(Page& page)
     : m_page(page)
-    , m_expirationTime(MonotonicTime::now() + Seconds(page.settings().backForwardCacheExpirationInterval()))
-    , m_cachedMainFrame(std::make_unique<CachedFrame>(page.mainFrame()))
+    , m_expirationTime(MonotonicTime::now() + page.settings().backForwardCacheExpirationInterval())
+    , m_cachedMainFrame(makeUnique<CachedFrame>(page.mainFrame()))
 {
 #ifndef NDEBUG
     cachedPageCounter.increment();
@@ -128,7 +128,7 @@ void CachedPage::restore(Page& page)
     // FIXME: Right now we don't support pages w/ frames in the b/f cache.  This may need to be tweaked when we add support for that.
     Document* focusedDocument = page.focusController().focusedOrMainFrame().document();
     if (Element* element = focusedDocument->focusedElement()) {
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
         // We don't want focused nodes changing scroll position when restoring from the cache
         // as it can cause ugly jumps before we manage to restore the cached position.
         page.mainFrame().selection().suppressScrolling();
@@ -141,7 +141,7 @@ void CachedPage::restore(Page& page)
         }
 #endif
         element->updateFocusAppearance(SelectionRestorationMode::Restore);
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
         if (frameView)
             frameView->setProhibitsScrolling(hadProhibitsScrolling);
         page.mainFrame().selection().restoreScrolling();
@@ -153,7 +153,7 @@ void CachedPage::restore(Page& page)
 
     page.setNeedsRecalcStyleInAllFrames();
 
-#if ENABLE(VIDEO_TRACK)
+#if ENABLE(VIDEO)
     if (m_needsCaptionPreferencesChanged)
         page.captionPreferencesChanged();
 #endif
@@ -173,7 +173,7 @@ void CachedPage::clear()
     ASSERT(m_cachedMainFrame);
     m_cachedMainFrame->clear();
     m_cachedMainFrame = nullptr;
-#if ENABLE(VIDEO_TRACK)
+#if ENABLE(VIDEO)
     m_needsCaptionPreferencesChanged = false;
 #endif
     m_needsDeviceOrPageScaleChanged = false;

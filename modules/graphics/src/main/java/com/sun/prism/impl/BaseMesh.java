@@ -1025,6 +1025,11 @@ public abstract class BaseMesh extends BaseGraphicsResource implements Mesh {
         return face;
     }
 
+    @Override
+    public boolean isValid() {
+        return true;
+    }
+
     // Package scope method for testing
     boolean test_isVertexBufferNull() {
         return vertexBuffer == null;

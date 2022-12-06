@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,6 +23,8 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#pragma once
+
 #include <wtf/HashSet.h>
 #include <wtf/RefCounted.h>
 #include <wtf/text/WTFString.h>
@@ -38,7 +40,7 @@ OBJC_CLASS WebView;
 
 class WebViewGroup : public RefCounted<WebViewGroup> {
 public:
-    static RefPtr<WebViewGroup> getOrCreate(const String& name, const String& localStorageDatabasePath);
+    static Ref<WebViewGroup> getOrCreate(const String& name, const String& localStorageDatabasePath);
     ~WebViewGroup();
 
     static WebViewGroup* get(const String& name);

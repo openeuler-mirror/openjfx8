@@ -106,6 +106,7 @@ jpeg_alloc_huff_table (j_common_ptr cinfo)
   return tbl;
 }
 
+
 /*
  * Set up the standard Huffman tables (cf. JPEG standard section K.3).
  * IMPORTANT: these are only valid for 8-bit data precision!

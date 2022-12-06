@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,7 +25,7 @@
 
 #include "config.h"
 
-#include <wtf/java/JavaEnv.h>
+#include "PlatformJavaClasses.h"
 #include "LocalizedStrings.h"
 #include "NotImplemented.h"
 
@@ -36,7 +36,7 @@ namespace WebCore {
 
 String getLocalizedProperty(String name)
 {
-    JNIEnv* env = WebCore_GetJavaEnv();
+    JNIEnv* env = WTF::GetJavaEnv();
 
     static JGClass cls(env->FindClass("com/sun/webkit/LocalizedStrings"));
     ASSERT(cls);
@@ -49,7 +49,7 @@ String getLocalizedProperty(String name)
 
     JLString ls(static_cast<jstring>(env->CallStaticObjectMethod(cls, mid,
         (jstring)name.toJavaString(env))));
-    CheckAndClearException(env);
+    WTF::CheckAndClearException(env);
 
     return !ls ? name : String(env, ls);
 }
@@ -372,7 +372,6 @@ String contextMenuItemTagEnterVideoFullscreen()
     return String(); // UNSUPPORTED: getLocalizedProperty("contextMenuItemTagEnterVideoFullscreen");
 }
 
-#if ENABLE(VIDEO_TRACK)
 String textTrackSubtitlesText()
 {
     return String::fromUTF8("Subtitles");
@@ -397,7 +396,6 @@ String audioTrackNoLabelText()
 {
     return String::fromUTF8("No label");
 }
-#endif
 
 String contextMenuItemTagMediaPlay()
 {
@@ -487,6 +485,11 @@ String AXWebAreaText()
     return getLocalizedProperty("AXWebAreaText");
 }
 
+String AXAutoFillCreditCardLabel()
+{
+    return getLocalizedProperty("AXAutoFillCreditCardLabel");
+}
+
 String AXLinkText()
 {
     return getLocalizedProperty("AXLinkText");
@@ -515,6 +518,16 @@ String AXDefinitionListTermText()
 String AXDefinitionListDefinitionText()
 {
     return getLocalizedProperty("AXDefinitionListDefinitionText");
+}
+
+String AXFigureText()
+{
+    return getLocalizedProperty("AXFigureText");
+}
+
+String AXARIAContentGroupText(const String& ariaType)
+{
+    return getLocalizedProperty(String("AXARIAContentGroupText") + ariaType);
 }
 
 String AXButtonActionVerb()
@@ -705,5 +718,15 @@ String unsupportedPluginText()
 {
     notImplemented();
     return String::fromUTF8("Unsupported Plug-in");
+}
+
+String pluginTooSmallText()
+{
+    return String::fromUTF8("Plug-In too small");
+}
+
+String localizedString(const char* key)
+{
+    return String::fromUTF8(key, strlen(key));
 }
 } // namespace WebCore

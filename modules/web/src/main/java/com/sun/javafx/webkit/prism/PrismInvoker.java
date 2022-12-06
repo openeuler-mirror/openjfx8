@@ -29,11 +29,16 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.locks.ReentrantLock;
 import com.sun.javafx.application.PlatformImpl;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import com.sun.javafx.tk.RenderJob;
 import com.sun.javafx.tk.Toolkit;
 import com.sun.webkit.Invoker;
 
 public final class PrismInvoker extends Invoker {
+
+    private static final Logger log =
+            Logger.getLogger(PrismInvoker.class.getName());
 
     public PrismInvoker() {
     }
@@ -87,10 +92,8 @@ public final class PrismInvoker extends Invoker {
             try {
                 // block until job is complete
                 f.get();
-            } catch (ExecutionException ex) {
-                throw new AssertionError(ex);
-            } catch (InterruptedException ex) {
-                // ignore; recovery is impossible
+            } catch (ExecutionException | InterruptedException ex) {
+                log.log(Level.SEVERE, "RenderJob error", ex);
             }
         }
     }

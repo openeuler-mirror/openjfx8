@@ -45,20 +45,15 @@ WebDatabaseProvider::~WebDatabaseProvider()
 #if ENABLE(INDEXED_DATABASE)
 WebCore::IDBClient::IDBConnectionToServer& WebDatabaseProvider::idbConnectionToServerForSession(const PAL::SessionID& sessionID)
 {
-    auto result = m_idbServerMap.add(sessionID.sessionID(), nullptr);
-    if (result.isNewEntry) {
-        if (sessionID.isEphemeral())
-            result.iterator->value = WebCore::InProcessIDBServer::create();
-        else
-            result.iterator->value = WebCore::InProcessIDBServer::create(indexedDatabaseDirectoryPath());
-    }
-
-    return result.iterator->value->connectionToServer();
+    return m_idbServerMap.ensure(sessionID, [&sessionID] {
+        return sessionID.isEphemeral() ? InProcessIDBServer::create(sessionID) : InProcessIDBServer::create(sessionID, indexedDatabaseDirectoryPath());
+    }).iterator->value->connectionToServer();
 }
 
 void WebDatabaseProvider::deleteAllDatabases()
 {
     for (auto& server : m_idbServerMap.values())
-        server->idbServer().closeAndDeleteDatabasesModifiedSince(-WallTime::infinity(), [] { });
+        server->closeAndDeleteDatabasesModifiedSince(-WallTime::infinity());
 }
+
 #endif

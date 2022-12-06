@@ -25,11 +25,10 @@
 
 #pragma once
 
-#if OS(LINUX)
-
 namespace WTF {
 
 struct ProcessMemoryStatus {
+    WTF_MAKE_STRUCT_FAST_ALLOCATED;
     size_t size { 0 };
     size_t resident { 0 };
     size_t shared { 0 };
@@ -39,11 +38,9 @@ struct ProcessMemoryStatus {
     size_t dt { 0 };
 };
 
-void currentProcessMemoryStatus(ProcessMemoryStatus&);
+WTF_EXPORT_PRIVATE void currentProcessMemoryStatus(ProcessMemoryStatus&);
 
 } // namespace WTF
 
 using WTF::ProcessMemoryStatus;
 using WTF::currentProcessMemoryStatus;
-
-#endif // OS(LINUX)

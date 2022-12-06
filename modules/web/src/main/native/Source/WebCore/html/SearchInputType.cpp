@@ -52,7 +52,7 @@ SearchInputType::SearchInputType(HTMLInputElement& element)
 
 void SearchInputType::addSearchResult()
 {
-#if !PLATFORM(IOS)
+#if !PLATFORM(IOS_FAMILY)
     // Normally we've got the correct renderer by the time we get here. However when the input type changes
     // we don't update the associated renderers until after the next tree update, so we could actually end up here
     // with a mismatched renderer (e.g. through form submission).
@@ -64,12 +64,15 @@ void SearchInputType::addSearchResult()
 
 static void updateResultButtonPseudoType(SearchFieldResultsButtonElement& resultButton, int maxResults)
 {
+    static MainThreadNeverDestroyed<const AtomString> webkitSearchDecorationName("-webkit-search-decoration", AtomString::ConstructFromLiteral);
+    static MainThreadNeverDestroyed<const AtomString> webkitSearchResultsDecorationName("-webkit-search-results-decoration", AtomString::ConstructFromLiteral);
+    static MainThreadNeverDestroyed<const AtomString> webkitSearchResultsButtonName("-webkit-search-results-button", AtomString::ConstructFromLiteral);
     if (!maxResults)
-        resultButton.setPseudo(AtomicString("-webkit-search-results-decoration", AtomicString::ConstructFromLiteral));
+        resultButton.setPseudo(webkitSearchResultsDecorationName);
     else if (maxResults < 0)
-        resultButton.setPseudo(AtomicString("-webkit-search-decoration", AtomicString::ConstructFromLiteral));
+        resultButton.setPseudo(webkitSearchDecorationName);
     else
-        resultButton.setPseudo(AtomicString("-webkit-search-results-button", AtomicString::ConstructFromLiteral));
+        resultButton.setPseudo(webkitSearchResultsButtonName);
 }
 
 void SearchInputType::attributeChanged(const QualifiedName& name)
@@ -89,7 +92,7 @@ RenderPtr<RenderElement> SearchInputType::createInputRenderer(RenderStyle&& styl
     return createRenderer<RenderSearchField>(*element(), WTFMove(style));
 }
 
-const AtomicString& SearchInputType::formControlType() const
+const AtomString& SearchInputType::formControlType() const
 {
     return InputTypeNames::search();
 }
@@ -134,13 +137,11 @@ HTMLElement* SearchInputType::cancelButtonElement() const
     return m_cancelButton.get();
 }
 
-void SearchInputType::handleKeydownEvent(KeyboardEvent& event)
+auto SearchInputType::handleKeydownEvent(KeyboardEvent& event) -> ShouldCallBaseEventHandler
 {
     ASSERT(element());
-    if (element()->isDisabledOrReadOnly()) {
-        TextFieldInputType::handleKeydownEvent(event);
-        return;
-    }
+    if (element()->isDisabledOrReadOnly())
+        return TextFieldInputType::handleKeydownEvent(event);
 
     const String& key = event.keyIdentifier();
     if (key == "U+001B") {
@@ -148,9 +149,9 @@ void SearchInputType::handleKeydownEvent(KeyboardEvent& event)
         protectedInputElement->setValueForUser(emptyString());
         protectedInputElement->onSearch();
         event.setDefaultHandled();
-        return;
+        return ShouldCallBaseEventHandler::Yes;
     }
-    TextFieldInputType::handleKeydownEvent(event);
+    return TextFieldInputType::handleKeydownEvent(event);
 }
 
 void SearchInputType::destroyShadowSubtree()

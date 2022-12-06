@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,22 +33,14 @@ struct ClassInfo;
 
 class JSDestructibleObject : public JSNonFinalObject {
 public:
-    typedef JSNonFinalObject Base;
+    using Base = JSNonFinalObject;
 
-    static const bool needsDestruction = true;
+    static constexpr bool needsDestruction = true;
 
-    template<typename CellType>
-    static CompleteSubspace* subspaceFor(VM& vm)
-    {
-        return &vm.destructibleObjectSpace;
-    }
-
-    const ClassInfo* classInfo() const { return m_classInfo.unpoisoned(); }
-
-    static ptrdiff_t classInfoOffset() { return OBJECT_OFFSETOF(JSDestructibleObject, m_classInfo); }
+    const ClassInfo* classInfo() const { return m_classInfo; }
 
 protected:
-    JSDestructibleObject(VM& vm, Structure* structure, Butterfly* butterfly = 0)
+    JSDestructibleObject(VM& vm, Structure* structure, Butterfly* butterfly = nullptr)
         : JSNonFinalObject(vm, structure, butterfly)
         , m_classInfo(structure->classInfo())
     {
@@ -56,7 +48,7 @@ protected:
     }
 
 private:
-    PoisonedClassInfoPtr m_classInfo;
+    const ClassInfo* m_classInfo;
 };
 
 } // namespace JSC

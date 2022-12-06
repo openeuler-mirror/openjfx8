@@ -23,12 +23,11 @@
 
 #include "CSSParser.h"
 #include "Color.h"
+#include "ColorSerialization.h"
 #include "FloatPoint.h"
 #include "FloatRect.h"
 #include "QualifiedName.h"
 #include "SVGParserUtilities.h"
-#include <wtf/text/StringBuilder.h>
-#include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
@@ -39,7 +38,7 @@ template<>
 struct SVGPropertyTraits<bool> {
     static bool initialValue() { return false; }
     static bool fromString(const String& string) { return string == "true"; }
-    static std::optional<bool> parse(const QualifiedName&, const String&) { ASSERT_NOT_REACHED(); return initialValue(); }
+    static Optional<bool> parse(const QualifiedName&, const String&) { ASSERT_NOT_REACHED(); return initialValue(); }
     static String toString(bool type) { return type ? "true" : "false"; }
 };
 
@@ -47,20 +46,20 @@ template<>
 struct SVGPropertyTraits<Color> {
     static Color initialValue() { return Color(); }
     static Color fromString(const String& string) { return CSSParser::parseColor(string.stripWhiteSpace()); }
-    static std::optional<Color> parse(const QualifiedName&, const String& string)
+    static Optional<Color> parse(const QualifiedName&, const String& string)
     {
         Color color = CSSParser::parseColor(string.stripWhiteSpace());
         if (!color.isValid())
-            return std::nullopt;
+            return WTF::nullopt;
         return color;
     }
-    static String toString(const Color& type) { return type.serialized(); }
+    static String toString(const Color& type) { return serializationForHTML(type); }
 };
 
 template<>
 struct SVGPropertyTraits<unsigned> {
     static unsigned initialValue() { return 0; }
-    static std::optional<unsigned> parse(const QualifiedName&, const String&) { ASSERT_NOT_REACHED(); return initialValue(); }
+    static Optional<unsigned> parse(const QualifiedName&, const String&) { ASSERT_NOT_REACHED(); return initialValue(); }
     static String toString(unsigned type) { return String::number(type); }
 };
 
@@ -68,7 +67,7 @@ template<>
 struct SVGPropertyTraits<int> {
     static int initialValue() { return 0; }
     static int fromString(const String&string) { return string.toIntStrict(); }
-    static std::optional<int> parse(const QualifiedName&, const String&) { ASSERT_NOT_REACHED(); return initialValue(); }
+    static Optional<int> parse(const QualifiedName&, const String&) { ASSERT_NOT_REACHED(); return initialValue(); }
     static String toString(int type) { return String::number(type); }
 };
 
@@ -77,12 +76,12 @@ struct SVGPropertyTraits<std::pair<int, int>> {
     static std::pair<int, int> initialValue() { return { }; }
     static std::pair<int, int> fromString(const String& string)
     {
-        float firstNumber = 0, secondNumber = 0;
-        if (!parseNumberOptionalNumber(string, firstNumber, secondNumber))
+        auto result = parseNumberOptionalNumber(string);
+        if (!result)
             return { };
-        return std::make_pair(static_cast<int>(roundf(firstNumber)), static_cast<int>(roundf(secondNumber)));
+        return std::make_pair(static_cast<int>(std::round(result->first)), static_cast<int>(std::round(result->second)));
     }
-    static std::optional<std::pair<int, int>> parse(const QualifiedName&, const String&) { ASSERT_NOT_REACHED(); return initialValue(); }
+    static Optional<std::pair<int, int>> parse(const QualifiedName&, const String&) { ASSERT_NOT_REACHED(); return initialValue(); }
     static String toString(std::pair<int, int>) { ASSERT_NOT_REACHED(); return emptyString(); }
 };
 
@@ -91,17 +90,11 @@ struct SVGPropertyTraits<float> {
     static float initialValue() { return 0; }
     static float fromString(const String& string)
     {
-        float number = 0;
-        if (!parseNumberFromString(string, number))
-            return 0;
-        return number;
+        return parseNumber(string).valueOr(0);
     }
-    static std::optional<float> parse(const QualifiedName&, const String& string)
+    static Optional<float> parse(const QualifiedName&, const String& string)
     {
-        float number;
-        if (!parseNumberFromString(string, number))
-            return std::nullopt;
-        return number;
+        return parseNumber(string);
     }
     static String toString(float type) { return String::number(type); }
 };
@@ -111,12 +104,9 @@ struct SVGPropertyTraits<std::pair<float, float>> {
     static std::pair<float, float> initialValue() { return { }; }
     static std::pair<float, float> fromString(const String& string)
     {
-        float firstNumber = 0, secondNumber = 0;
-        if (!parseNumberOptionalNumber(string, firstNumber, secondNumber))
-            return { };
-        return std::make_pair(firstNumber, secondNumber);
+        return parseNumberOptionalNumber(string).valueOr(std::pair<float, float> { });
     }
-    static std::optional<std::pair<float, float>> parse(const QualifiedName&, const String&) { ASSERT_NOT_REACHED(); return initialValue(); }
+    static Optional<std::pair<float, float>> parse(const QualifiedName&, const String&) { ASSERT_NOT_REACHED(); return initialValue(); }
     static String toString(std::pair<float, float>) { ASSERT_NOT_REACHED(); return emptyString(); }
 };
 
@@ -125,25 +115,15 @@ struct SVGPropertyTraits<FloatPoint> {
     static FloatPoint initialValue() { return FloatPoint(); }
     static FloatPoint fromString(const String& string)
     {
-        FloatPoint point;
-        if (!parsePoint(string, point))
-            return { };
-        return point;
+        return parsePoint(string).valueOr(FloatPoint { });
     }
-    static std::optional<FloatPoint> parse(const QualifiedName&, const String& string)
+    static Optional<FloatPoint> parse(const QualifiedName&, const String& string)
     {
-        FloatPoint point;
-        if (!parsePoint(string, point))
-            return std::nullopt;
-        return point;
+        return parsePoint(string);
     }
     static String toString(const FloatPoint& type)
     {
-        StringBuilder builder;
-        builder.appendNumber(type.x());
-        builder.append(' ');
-        builder.appendNumber(type.y());
-        return builder.toString();
+        return makeString(type.x(), ' ', type.y());
     }
 };
 
@@ -152,29 +132,15 @@ struct SVGPropertyTraits<FloatRect> {
     static FloatRect initialValue() { return FloatRect(); }
     static FloatRect fromString(const String& string)
     {
-        FloatRect rect;
-        if (!parseRect(string, rect))
-            return { };
-        return rect;
+        return parseRect(string).valueOr(FloatRect { });
     }
-    static std::optional<FloatRect> parse(const QualifiedName&, const String& string)
+    static Optional<FloatRect> parse(const QualifiedName&, const String& string)
     {
-        FloatRect rect;
-        if (!parseRect(string, rect))
-            return std::nullopt;
-        return rect;
+        return parseRect(string);
     }
     static String toString(const FloatRect& type)
     {
-        StringBuilder builder;
-        builder.appendNumber(type.x());
-        builder.append(' ');
-        builder.appendNumber(type.y());
-        builder.append(' ');
-        builder.appendNumber(type.width());
-        builder.append(' ');
-        builder.appendNumber(type.height());
-        return builder.toString();
+        return makeString(type.x(), ' ', type.y(), ' ', type.width(), ' ', type.height());
     }
 };
 
@@ -182,7 +148,7 @@ template<>
 struct SVGPropertyTraits<String> {
     static String initialValue() { return String(); }
     static String fromString(const String& string) { return string; }
-    static std::optional<String> parse(const QualifiedName&, const String& string) { return string; }
+    static Optional<String> parse(const QualifiedName&, const String& string) { return string; }
     static String toString(const String& string) { return string; }
 };
 

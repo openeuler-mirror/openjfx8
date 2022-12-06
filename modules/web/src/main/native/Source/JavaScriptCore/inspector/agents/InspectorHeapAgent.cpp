@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,26 +31,24 @@
 #include "InjectedScript.h"
 #include "InjectedScriptManager.h"
 #include "InspectorEnvironment.h"
-#include "JSCInlines.h"
+#include "JSBigInt.h"
 #include "VM.h"
 #include <wtf/Stopwatch.h>
 
-using namespace JSC;
-
 namespace Inspector {
+
+using namespace JSC;
 
 InspectorHeapAgent::InspectorHeapAgent(AgentContext& context)
     : InspectorAgentBase("Heap"_s)
     , m_injectedScriptManager(context.injectedScriptManager)
-    , m_frontendDispatcher(std::make_unique<HeapFrontendDispatcher>(context.frontendRouter))
+    , m_frontendDispatcher(makeUnique<HeapFrontendDispatcher>(context.frontendRouter))
     , m_backendDispatcher(HeapBackendDispatcher::create(context.backendDispatcher, this))
     , m_environment(context.environment)
 {
 }
 
-InspectorHeapAgent::~InspectorHeapAgent()
-{
-}
+InspectorHeapAgent::~InspectorHeapAgent() = default;
 
 void InspectorHeapAgent::didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*)
 {
@@ -58,29 +56,31 @@ void InspectorHeapAgent::didCreateFrontendAndBackend(FrontendRouter*, BackendDis
 
 void InspectorHeapAgent::willDestroyFrontendAndBackend(DisconnectReason)
 {
-    // Stop tracking without taking a snapshot.
-    m_tracking = false;
-
     ErrorString ignored;
     disable(ignored);
 }
 
-void InspectorHeapAgent::enable(ErrorString&)
+void InspectorHeapAgent::enable(ErrorString& errorString)
 {
-    if (m_enabled)
+    if (m_enabled) {
+        errorString = "Heap domain already enabled"_s;
         return;
+    }
 
     m_enabled = true;
 
     m_environment.vm().heap.addObserver(this);
 }
 
-void InspectorHeapAgent::disable(ErrorString&)
+void InspectorHeapAgent::disable(ErrorString& errorString)
 {
-    if (!m_enabled)
+    if (!m_enabled) {
+        errorString = "Heap domain already disabled"_s;
         return;
+    }
 
     m_enabled = false;
+    m_tracking = false;
 
     m_environment.vm().heap.removeObserver(this);
 
@@ -91,7 +91,7 @@ void InspectorHeapAgent::gc(ErrorString&)
 {
     VM& vm = m_environment.vm();
     JSLockHolder lock(vm);
-    sanitizeStackForVM(&vm);
+    sanitizeStackForVM(vm);
     vm.heap.collectNow(Sync, CollectionScope::Full);
 }
 
@@ -103,11 +103,11 @@ void InspectorHeapAgent::snapshot(ErrorString&, double* timestamp, String* snaps
     HeapSnapshotBuilder snapshotBuilder(vm.ensureHeapProfiler());
     snapshotBuilder.buildSnapshot();
 
-    *timestamp = m_environment.executionStopwatch()->elapsedTime().seconds();
+    *timestamp = m_environment.executionStopwatch().elapsedTime().seconds();
     *snapshotData = snapshotBuilder.json([&] (const HeapSnapshotNode& node) {
         if (Structure* structure = node.cell->structure(vm)) {
             if (JSGlobalObject* globalObject = structure->globalObject()) {
-                if (!m_environment.canAccessInspectedScriptState(globalObject->globalExec()))
+                if (!m_environment.canAccessInspectedScriptState(globalObject))
                     return false;
             }
         }
@@ -143,30 +143,30 @@ void InspectorHeapAgent::stopTracking(ErrorString& errorString)
     m_frontendDispatcher->trackingComplete(timestamp, snapshotData);
 }
 
-std::optional<HeapSnapshotNode> InspectorHeapAgent::nodeForHeapObjectIdentifier(ErrorString& errorString, unsigned heapObjectIdentifier)
+Optional<HeapSnapshotNode> InspectorHeapAgent::nodeForHeapObjectIdentifier(ErrorString& errorString, unsigned heapObjectIdentifier)
 {
     HeapProfiler* heapProfiler = m_environment.vm().heapProfiler();
     if (!heapProfiler) {
         errorString = "No heap snapshot"_s;
-        return std::nullopt;
+        return WTF::nullopt;
     }
 
     HeapSnapshot* snapshot = heapProfiler->mostRecentSnapshot();
     if (!snapshot) {
         errorString = "No heap snapshot"_s;
-        return std::nullopt;
+        return WTF::nullopt;
     }
 
-    const std::optional<HeapSnapshotNode> optionalNode = snapshot->nodeForObjectIdentifier(heapObjectIdentifier);
+    const Optional<HeapSnapshotNode> optionalNode = snapshot->nodeForObjectIdentifier(heapObjectIdentifier);
     if (!optionalNode) {
         errorString = "No object for identifier, it may have been collected"_s;
-        return std::nullopt;
+        return WTF::nullopt;
     }
 
     return optionalNode;
 }
 
-void InspectorHeapAgent::getPreview(ErrorString& errorString, int heapObjectId, std::optional<String>& resultString, RefPtr<Protocol::Debugger::FunctionDetails>& functionDetails, RefPtr<Protocol::Runtime::ObjectPreview>& objectPreview)
+void InspectorHeapAgent::getPreview(ErrorString& errorString, int heapObjectId, Optional<String>& resultString, RefPtr<Protocol::Debugger::FunctionDetails>& functionDetails, RefPtr<Protocol::Runtime::ObjectPreview>& objectPreview)
 {
     // Prevent the cell from getting collected as we look it up.
     VM& vm = m_environment.vm();
@@ -174,7 +174,7 @@ void InspectorHeapAgent::getPreview(ErrorString& errorString, int heapObjectId, 
     DeferGC deferGC(vm.heap);
 
     unsigned heapObjectIdentifier = static_cast<unsigned>(heapObjectId);
-    const std::optional<HeapSnapshotNode> optionalNode = nodeForHeapObjectIdentifier(errorString, heapObjectIdentifier);
+    const Optional<HeapSnapshotNode> optionalNode = nodeForHeapObjectIdentifier(errorString, heapObjectIdentifier);
     if (!optionalNode)
         return;
 
@@ -182,6 +182,12 @@ void InspectorHeapAgent::getPreview(ErrorString& errorString, int heapObjectId, 
     JSCell* cell = optionalNode->cell;
     if (cell->isString()) {
         resultString = asString(cell)->tryGetValue();
+        return;
+    }
+
+    // BigInt preview.
+    if (cell->isHeapBigInt()) {
+        resultString = JSBigInt::tryGetString(vm, asHeapBigInt(cell), 10);
         return;
     }
 
@@ -199,7 +205,7 @@ void InspectorHeapAgent::getPreview(ErrorString& errorString, int heapObjectId, 
         return;
     }
 
-    InjectedScript injectedScript = m_injectedScriptManager.injectedScriptFor(globalObject->globalExec());
+    InjectedScript injectedScript = m_injectedScriptManager.injectedScriptFor(globalObject);
     if (injectedScript.hasNoValue()) {
         errorString = "Unable to get object details - InjectedScript"_s;
         return;
@@ -223,24 +229,24 @@ void InspectorHeapAgent::getRemoteObject(ErrorString& errorString, int heapObjec
     DeferGC deferGC(vm.heap);
 
     unsigned heapObjectIdentifier = static_cast<unsigned>(heapObjectId);
-    const std::optional<HeapSnapshotNode> optionalNode = nodeForHeapObjectIdentifier(errorString, heapObjectIdentifier);
+    const Optional<HeapSnapshotNode> optionalNode = nodeForHeapObjectIdentifier(errorString, heapObjectIdentifier);
     if (!optionalNode)
         return;
 
     JSCell* cell = optionalNode->cell;
     Structure* structure = cell->structure(vm);
     if (!structure) {
-        errorString = "Unable to get object details"_s;
+        errorString = "Unable to get object details - Structure"_s;
         return;
     }
 
     JSGlobalObject* globalObject = structure->globalObject();
     if (!globalObject) {
-        errorString = "Unable to get object details"_s;
+        errorString = "Unable to get object details - GlobalObject"_s;
         return;
     }
 
-    InjectedScript injectedScript = m_injectedScriptManager.injectedScriptFor(globalObject->globalExec());
+    InjectedScript injectedScript = m_injectedScriptManager.injectedScriptFor(globalObject);
     if (injectedScript.hasNoValue()) {
         errorString = "Unable to get object details - InjectedScript"_s;
         return;
@@ -267,7 +273,7 @@ void InspectorHeapAgent::willGarbageCollect()
     if (!m_enabled)
         return;
 
-    m_gcStartTime = m_environment.executionStopwatch()->elapsedTime();
+    m_gcStartTime = m_environment.executionStopwatch().elapsedTime();
 }
 
 void InspectorHeapAgent::didGarbageCollect(CollectionScope scope)
@@ -284,7 +290,7 @@ void InspectorHeapAgent::didGarbageCollect(CollectionScope scope)
 
     // FIXME: Include number of bytes freed by collection.
 
-    Seconds endTime = m_environment.executionStopwatch()->elapsedTime();
+    Seconds endTime = m_environment.executionStopwatch().elapsedTime();
     dispatchGarbageCollectedEvent(protocolTypeForHeapOperation(scope), m_gcStartTime, endTime);
 
     m_gcStartTime = Seconds::nan();

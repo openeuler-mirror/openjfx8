@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,16 +36,18 @@
 
 namespace JSC { namespace DFG {
 
-void handleExitCounts(CCallHelpers&, const OSRExitBase&);
+void handleExitCounts(VM&, CCallHelpers&, const OSRExitBase&);
 void reifyInlinedCallFrames(CCallHelpers&, const OSRExitBase&);
 void adjustAndJumpToTarget(VM&, CCallHelpers&, const OSRExitBase&);
+MacroAssemblerCodePtr<JSEntryPtrTag> callerReturnPC(CodeBlock* baselineCodeBlockForCaller, BytecodeIndex callBytecodeIndex, InlineCallFrame::Kind callerKind, bool& callerIsLLInt);
+CCallHelpers::Address calleeSaveSlot(InlineCallFrame*, CodeBlock* baselineCodeBlock, GPRReg calleeSave);
 
 template <typename JITCodeType>
-void adjustFrameAndStackInOSRExitCompilerThunk(MacroAssembler& jit, VM* vm, JITCode::JITType jitType)
+void adjustFrameAndStackInOSRExitCompilerThunk(MacroAssembler& jit, VM& vm, JITType jitType)
 {
-    ASSERT(jitType == JITCode::DFGJIT || jitType == JITCode::FTLJIT);
+    ASSERT(jitType == JITType::DFGJIT || jitType == JITType::FTLJIT);
 
-    bool isFTLOSRExit = jitType == JITCode::FTLJIT;
+    bool isFTLOSRExit = jitType == JITType::FTLJIT;
     RegisterSet registersToPreserve;
     registersToPreserve.set(GPRInfo::regT0);
     if (isFTLOSRExit) {
@@ -58,7 +60,7 @@ void adjustFrameAndStackInOSRExitCompilerThunk(MacroAssembler& jit, VM* vm, JITC
     if (isFTLOSRExit)
         scratchSize += sizeof(void*);
 
-    ScratchBuffer* scratchBuffer = vm->scratchBufferForSize(scratchSize);
+    ScratchBuffer* scratchBuffer = vm.scratchBufferForSize(scratchSize);
     char* buffer = static_cast<char*>(scratchBuffer->dataBuffer());
 
     jit.pushToSave(GPRInfo::regT1);
@@ -80,14 +82,13 @@ void adjustFrameAndStackInOSRExitCompilerThunk(MacroAssembler& jit, VM* vm, JITC
     jit.popToRestore(GPRInfo::regT1);
 
     // We need to reset FP in the case of an exception.
-    jit.loadPtr(vm->addressOfCallFrameForCatch(), GPRInfo::regT0);
+    jit.loadPtr(vm.addressOfCallFrameForCatch(), GPRInfo::regT0);
     MacroAssembler::Jump didNotHaveException = jit.branchTestPtr(MacroAssembler::Zero, GPRInfo::regT0);
     jit.move(GPRInfo::regT0, GPRInfo::callFrameRegister);
     didNotHaveException.link(&jit);
     // We need to make sure SP is correct in case of an exception.
     jit.loadPtr(MacroAssembler::Address(GPRInfo::callFrameRegister, CallFrameSlot::codeBlock * static_cast<int>(sizeof(Register))), GPRInfo::regT0);
     jit.loadPtr(MacroAssembler::Address(GPRInfo::regT0, CodeBlock::jitCodeOffset()), GPRInfo::regT0);
-    jit.xorPtr(MacroAssembler::TrustedImmPtr(CodeBlockPoison::key()), GPRInfo::regT0);
     jit.addPtr(MacroAssembler::TrustedImm32(JITCodeType::commonDataOffset()), GPRInfo::regT0);
     jit.load32(MacroAssembler::Address(GPRInfo::regT0, CommonData::frameRegisterCountOffset()), GPRInfo::regT0);
     // This does virtualRegisterForLocal(frameRegisterCount - 1)*sizeof(Register) where:

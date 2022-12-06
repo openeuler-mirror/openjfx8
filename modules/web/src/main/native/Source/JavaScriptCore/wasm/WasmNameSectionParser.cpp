@@ -28,14 +28,13 @@
 
 #if ENABLE(WEBASSEMBLY)
 
-#include "IdentifierInlines.h"
 #include "WasmNameSection.h"
 
 namespace JSC { namespace Wasm {
 
 auto NameSectionParser::parse() -> Result
 {
-    RefPtr<NameSection> nameSection(adoptRef(*new NameSection(m_info.hash)));
+    Ref<NameSection> nameSection = NameSection::create();
     WASM_PARSER_FAIL_IF(!nameSection->functionNames.tryReserveCapacity(m_info.functionIndexSpaceSize()), "can't allocate enough memory for function names");
     nameSection->functionNames.resize(m_info.functionIndexSpaceSize());
 

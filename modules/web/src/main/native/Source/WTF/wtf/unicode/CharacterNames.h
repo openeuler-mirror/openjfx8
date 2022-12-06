@@ -23,8 +23,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef CharacterNames_h
-#define CharacterNames_h
+#pragma once
 
 #include <unicode/utypes.h>
 
@@ -47,6 +46,7 @@ const UChar blackUpPointingTriangle = 0x25B2;
 const UChar bullet = 0x2022;
 const UChar bullseye = 0x25CE;
 const UChar carriageReturn = 0x000D;
+const UChar combiningEnclosingKeycap = 0x20E3;
 const UChar ethiopicPrefaceColon = 0x1366;
 const UChar ethiopicWordspace = 0x1361;
 const UChar firstStrongIsolate = 0x2068;
@@ -73,6 +73,7 @@ const UChar narrowNonBreakingSpace = 0x202F;
 const UChar newlineCharacter = 0x000A;
 const UChar noBreakSpace = 0x00A0;
 const UChar objectReplacementCharacter = 0xFFFC;
+const UChar optionKey = 0x2325;
 const UChar popDirectionalFormatting = 0x202C;
 const UChar popDirectionalIsolate = 0x2069;
 const UChar quotationMark = 0x0022;
@@ -91,6 +92,7 @@ const UChar tabCharacter = 0x0009;
 const UChar tibetanMarkDelimiterTshegBstar = 0x0F0C;
 const UChar tibetanMarkIntersyllabicTsheg = 0x0F0B;
 const UChar32 ugariticWordDivider = 0x1039F;
+const UChar upArrowhead = 0x2303;
 const UChar whiteBullet = 0x25E6;
 const UChar whiteCircle = 0x25CB;
 const UChar whiteSesameDot = 0xFE46;
@@ -115,6 +117,7 @@ using WTF::Unicode::blackUpPointingTriangle;
 using WTF::Unicode::bullet;
 using WTF::Unicode::bullseye;
 using WTF::Unicode::carriageReturn;
+using WTF::Unicode::combiningEnclosingKeycap;
 using WTF::Unicode::ethiopicPrefaceColon;
 using WTF::Unicode::ethiopicWordspace;
 using WTF::Unicode::firstStrongIsolate;
@@ -157,6 +160,7 @@ using WTF::Unicode::tabCharacter;
 using WTF::Unicode::tibetanMarkDelimiterTshegBstar;
 using WTF::Unicode::tibetanMarkIntersyllabicTsheg;
 using WTF::Unicode::ugariticWordDivider;
+using WTF::Unicode::upArrowhead;
 using WTF::Unicode::whiteBullet;
 using WTF::Unicode::whiteCircle;
 using WTF::Unicode::whiteSesameDot;
@@ -167,5 +171,3 @@ using WTF::Unicode::zeroWidthJoiner;
 using WTF::Unicode::zeroWidthNoBreakSpace;
 using WTF::Unicode::zeroWidthNonJoiner;
 using WTF::Unicode::zeroWidthSpace;
-
-#endif // CharacterNames_h

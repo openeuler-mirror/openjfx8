@@ -28,7 +28,7 @@
 #if ENABLE(SERVICE_WORKER)
 
 #include "SecurityOriginData.h"
-#include "URL.h"
+#include <wtf/URL.h>
 
 namespace WebCore {
 
@@ -41,6 +41,8 @@ public:
     unsigned hash() const;
 
     bool operator==(const ServiceWorkerRegistrationKey&) const;
+    bool operator!=(const ServiceWorkerRegistrationKey& key) const { return !(*this == key); }
+    bool isEmpty() const { return *this == emptyKey(); }
     WEBCORE_EXPORT bool isMatching(const SecurityOriginData& topOrigin, const URL& clientURL) const;
     bool originIsMatching(const SecurityOriginData& topOrigin, const URL& clientURL) const;
     size_t scopeLength() const { return m_scope.string().length(); }
@@ -54,12 +56,12 @@ public:
     ServiceWorkerRegistrationKey isolatedCopy() const;
 
     template<class Encoder> void encode(Encoder&) const;
-    template<class Decoder> static std::optional<ServiceWorkerRegistrationKey> decode(Decoder&);
+    template<class Decoder> static Optional<ServiceWorkerRegistrationKey> decode(Decoder&);
 
     String toDatabaseKey() const;
-    static std::optional<ServiceWorkerRegistrationKey> fromDatabaseKey(const String&);
+    static Optional<ServiceWorkerRegistrationKey> fromDatabaseKey(const String&);
 
-#ifndef NDEBUG
+#if !LOG_DISABLED
     String loggingString() const;
 #endif
 
@@ -71,20 +73,22 @@ private:
 template<class Encoder>
 void ServiceWorkerRegistrationKey::encode(Encoder& encoder) const
 {
+    RELEASE_ASSERT(!m_topOrigin.isEmpty());
+    RELEASE_ASSERT(!m_scope.isNull());
     encoder << m_topOrigin << m_scope;
 }
 
 template<class Decoder>
-std::optional<ServiceWorkerRegistrationKey> ServiceWorkerRegistrationKey::decode(Decoder& decoder)
+Optional<ServiceWorkerRegistrationKey> ServiceWorkerRegistrationKey::decode(Decoder& decoder)
 {
-    std::optional<SecurityOriginData> topOrigin;
+    Optional<SecurityOriginData> topOrigin;
     decoder >> topOrigin;
     if (!topOrigin)
-        return std::nullopt;
+        return WTF::nullopt;
 
     URL scope;
     if (!decoder.decode(scope))
-        return std::nullopt;
+        return WTF::nullopt;
 
     return ServiceWorkerRegistrationKey { WTFMove(*topOrigin), WTFMove(scope) };
 }
@@ -102,13 +106,11 @@ struct ServiceWorkerRegistrationKeyHash {
 template<> struct HashTraits<WebCore::ServiceWorkerRegistrationKey> : GenericHashTraits<WebCore::ServiceWorkerRegistrationKey> {
     static WebCore::ServiceWorkerRegistrationKey emptyValue() { return WebCore::ServiceWorkerRegistrationKey::emptyKey(); }
 
-    static void constructDeletedValue(WebCore::ServiceWorkerRegistrationKey& slot) { slot.setScope(WebCore::URL(HashTableDeletedValue)); }
+    static void constructDeletedValue(WebCore::ServiceWorkerRegistrationKey& slot) { slot.setScope(URL(HashTableDeletedValue)); }
     static bool isDeletedValue(const WebCore::ServiceWorkerRegistrationKey& slot) { return slot.scope().isHashTableDeletedValue(); }
 };
 
-template<> struct DefaultHash<WebCore::ServiceWorkerRegistrationKey> {
-    typedef ServiceWorkerRegistrationKeyHash Hash;
-};
+template<> struct DefaultHash<WebCore::ServiceWorkerRegistrationKey> : ServiceWorkerRegistrationKeyHash { };
 
 } // namespace WTF
 

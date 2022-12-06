@@ -1,10 +1,10 @@
 /*
- * Copyright (c) 2011, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2019, Oracle and/or its affiliates. All rights reserved.
  */
 #include "config.h"
 #include "ResourceRequest.h"
 
-#include <wtf/java/JavaEnv.h>
+#include "PlatformJavaClasses.h"
 
 namespace ResourceRequestJavaInternal {
 
@@ -36,13 +36,13 @@ unsigned initializeMaximumHTTPConnectionCountPerHost()
     // requests. Our java framework employs HttpURLConnection for all
     // HTTP exchanges, so we delegate this call to java to return
     // the value of the "http.maxConnections" system property.
-    JNIEnv* env = WebCore_GetJavaEnv();
+    JNIEnv* env = WTF::GetJavaEnv();
     initRefs(env);
 
     jint result = env->CallStaticIntMethod(
             networkContextClass,
             getMaximumHTTPConnectionCountPerHostMethod);
-    CheckAndClearException(env);
+    WTF::CheckAndClearException(env);
 
     ASSERT(result >= 0);
     return result;

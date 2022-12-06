@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,12 +29,36 @@
 #include <mutex>
 #include <wtf/HashTraits.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/text/TextStream.h>
 #include <wtf/text/WTFString.h>
 
 namespace WTF {
 
-template<typename T> class ObjectIdentifier {
+class ObjectIdentifierBase {
+protected:
+    WTF_EXPORT_PRIVATE static uint64_t generateIdentifierInternal();
+    WTF_EXPORT_PRIVATE static uint64_t generateThreadSafeIdentifierInternal();
+};
+
+template<typename T> class ObjectIdentifier : private ObjectIdentifierBase {
 public:
+    static ObjectIdentifier generate()
+    {
+        RELEASE_ASSERT(!m_generationProtected);
+        return ObjectIdentifier { generateIdentifierInternal() };
+    }
+
+    static ObjectIdentifier generateThreadSafe()
+    {
+        RELEASE_ASSERT(!m_generationProtected);
+        return ObjectIdentifier { generateThreadSafeIdentifierInternal() };
+    }
+
+    static void enableGenerationProtection()
+    {
+        m_generationProtected = true;
+    }
+
     ObjectIdentifier() = default;
 
     ObjectIdentifier(HashTableDeletedValueType) : m_identifier(hashTableDeletedValue()) { }
@@ -45,13 +69,13 @@ public:
         ASSERT(isValidIdentifier(m_identifier));
         encoder << m_identifier;
     }
-    template<typename Decoder> static std::optional<ObjectIdentifier> decode(Decoder& decoder)
+
+    template<typename Decoder> static Optional<ObjectIdentifier> decode(Decoder& decoder)
     {
-        std::optional<uint64_t> identifier;
+        Optional<uint64_t> identifier;
         decoder >> identifier;
-        if (!identifier)
-            return std::nullopt;
-        ASSERT(isValidIdentifier(*identifier));
+        if (!identifier || !isValidIdentifier(*identifier))
+            return WTF::nullopt;
         return ObjectIdentifier { *identifier };
     }
 
@@ -73,9 +97,19 @@ public:
         return String::number(m_identifier);
     }
 
+    struct MarkableTraits {
+        static bool isEmptyValue(ObjectIdentifier identifier)
+        {
+            return !identifier.m_identifier;
+        }
+
+        static constexpr ObjectIdentifier emptyValue()
+        {
+            return ObjectIdentifier();
+        }
+    };
+
 private:
-    template<typename U> friend ObjectIdentifier<U> generateObjectIdentifier();
-    template<typename U> friend ObjectIdentifier<U> generateThreadSafeObjectIdentifier();
     template<typename U> friend ObjectIdentifier<U> makeObjectIdentifier(uint64_t);
     friend struct HashTraits<ObjectIdentifier>;
     template<typename U> friend struct ObjectIdentifierHash;
@@ -83,29 +117,14 @@ private:
     static uint64_t hashTableDeletedValue() { return std::numeric_limits<uint64_t>::max(); }
     static bool isValidIdentifier(uint64_t identifier) { return identifier && identifier != hashTableDeletedValue(); }
 
-    explicit ObjectIdentifier(uint64_t identifier)
+    explicit constexpr ObjectIdentifier(uint64_t identifier)
         : m_identifier(identifier)
     {
     }
 
     uint64_t m_identifier { 0 };
+    inline static bool m_generationProtected { false };
 };
-
-template<typename T> inline ObjectIdentifier<T> generateObjectIdentifier()
-{
-    static uint64_t currentIdentifier;
-    return ObjectIdentifier<T> { ++currentIdentifier };
-}
-
-template<typename T> inline ObjectIdentifier<T> generateThreadSafeObjectIdentifier()
-{
-    static LazyNeverDestroyed<std::atomic<uint64_t>> currentIdentifier;
-    static std::once_flag initializeCurrentIdentifier;
-    std::call_once(initializeCurrentIdentifier, [] {
-        currentIdentifier.construct(0);
-    });
-    return ObjectIdentifier<T> { ++currentIdentifier.get() };
-}
 
 template<typename T> inline ObjectIdentifier<T> makeObjectIdentifier(uint64_t identifier)
 {
@@ -115,31 +134,34 @@ template<typename T> inline ObjectIdentifier<T> makeObjectIdentifier(uint64_t id
 template<typename T> struct ObjectIdentifierHash {
     static unsigned hash(const ObjectIdentifier<T>& identifier) { return intHash(identifier.m_identifier); }
     static bool equal(const ObjectIdentifier<T>& a, const ObjectIdentifier<T>& b) { return a == b; }
-    static const bool safeToCompareToEmptyOrDeleted = true;
+    static constexpr bool safeToCompareToEmptyOrDeleted = true;
 };
 
 template<typename T> struct HashTraits<ObjectIdentifier<T>> : SimpleClassHashTraits<ObjectIdentifier<T>> { };
 
-template<typename T> struct DefaultHash<ObjectIdentifier<T>> {
-    typedef ObjectIdentifierHash<T> Hash;
-};
+template<typename T> struct DefaultHash<ObjectIdentifier<T>> : ObjectIdentifierHash<T> { };
+
+template<typename T>
+TextStream& operator<<(TextStream& ts, const ObjectIdentifier<T>& identifier)
+{
+    ts << identifier.toUInt64();
+    return ts;
+}
 
 } // namespace WTF
 
 using WTF::ObjectIdentifier;
-using WTF::generateObjectIdentifier;
-using WTF::generateThreadSafeObjectIdentifier;
 using WTF::makeObjectIdentifier;
 
-namespace WebCore {
+// namespace WebCore {
 
-enum ProcessIdentifierType { };
-using ProcessIdentifier = ObjectIdentifier<ProcessIdentifierType>;
+// enum ProcessIdentifierType { };
+// using ProcessIdentifier = ObjectIdentifier<ProcessIdentifierType>;
 
-namespace Process {
+// namespace Process {
 
-WEBCORE_EXPORT void setIdentifier(ProcessIdentifier);
-WEBCORE_EXPORT ProcessIdentifier identifier();
+// WEBCORE_EXPORT void setIdentifier(ProcessIdentifier);
+// WEBCORE_EXPORT ProcessIdentifier identifier();
 
-} // namespace Process
-} // namespace WebCore
+// } // namespace Process
+// } // namespace WebCore

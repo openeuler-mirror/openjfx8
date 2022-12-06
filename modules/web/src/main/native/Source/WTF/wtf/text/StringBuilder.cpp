@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010, 2013, 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2019 Apple Inc. All rights reserved.
  * Copyright (C) 2012 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -25,28 +25,33 @@
  */
 
 #include "config.h"
-#include "StringBuilder.h"
+#include <wtf/text/StringBuilder.h>
 
-#include "IntegerToStringConversion.h"
-#include "MathExtras.h"
-#include "WTFString.h"
 #include <wtf/dtoa.h>
 
 namespace WTF {
 
+static constexpr unsigned maxCapacity = String::MaxLength;
+
 static unsigned expandedCapacity(unsigned capacity, unsigned requiredLength)
 {
-    static const unsigned minimumCapacity = 16;
-    return std::max(requiredLength, std::max(minimumCapacity, capacity * 2));
+    static constexpr unsigned minimumCapacity = 16;
+    return std::max(requiredLength, std::max(minimumCapacity, std::min(capacity * 2, maxCapacity)));
 }
 
 void StringBuilder::reifyString() const
 {
+    ASSERT(!hasOverflowed());
+
     // Check if the string already exists.
     if (!m_string.isNull()) {
-        ASSERT(m_string.length() == m_length);
+        ASSERT(m_string.length() == m_length.unsafeGet<unsigned>());
         return;
     }
+
+#if ASSERT_ENABLED
+    m_isReified = true;
+#endif
 
     // Check for empty.
     if (!m_length) {
@@ -55,20 +60,27 @@ void StringBuilder::reifyString() const
     }
 
     // Must be valid in the buffer, take a substring (unless string fills the buffer).
-    ASSERT(m_buffer && m_length <= m_buffer->length());
-    if (m_length == m_buffer->length())
+    ASSERT(m_buffer && m_length.unsafeGet<unsigned>() <= m_buffer->length());
+    if (m_length.unsafeGet<unsigned>() == m_buffer->length())
         m_string = m_buffer.get();
     else
-        m_string = StringImpl::createSubstringSharingImpl(*m_buffer, 0, m_length);
+        m_string = StringImpl::createSubstringSharingImpl(*m_buffer, 0, m_length.unsafeGet());
 }
 
 void StringBuilder::resize(unsigned newSize)
 {
-    // Check newSize < m_length, hence m_length > 0.
-    ASSERT(newSize <= m_length);
-    if (newSize == m_length)
+    if (hasOverflowed())
         return;
-    ASSERT(m_length);
+
+    // Check newSize < m_length, hence m_length > 0.
+    unsigned oldLength = m_length.unsafeGet();
+    ASSERT(newSize <= oldLength);
+    if (newSize == oldLength)
+        return;
+    ASSERT(oldLength);
+
+    m_length = newSize;
+    ASSERT(!hasOverflowed());
 
     // If there is a buffer, we only need to duplicate it if it has more than one ref.
     if (m_buffer) {
@@ -79,16 +91,14 @@ void StringBuilder::resize(unsigned newSize)
             else
                 allocateBuffer(m_buffer->characters16(), m_buffer->length());
         }
-        m_length = newSize;
-        ASSERT(m_buffer->length() >= m_length);
+        ASSERT(hasOverflowed() || m_buffer->length() >= m_length.unsafeGet<unsigned>());
         return;
     }
 
     // Since m_length && !m_buffer, the string must be valid in m_string, and m_string.length() > 0.
     ASSERT(!m_string.isEmpty());
-    ASSERT(m_length == m_string.length());
+    ASSERT(oldLength == m_string.length());
     ASSERT(newSize < m_string.length());
-    m_length = newSize;
     m_string = StringImpl::createSubstringSharingImpl(*m_string.impl(), 0, newSize);
 }
 
@@ -96,10 +106,13 @@ void StringBuilder::resize(unsigned newSize)
 // or m_buffer, neither will be reassigned until the copy has completed).
 void StringBuilder::allocateBuffer(const LChar* currentCharacters, unsigned requiredLength)
 {
+    ASSERT(!hasOverflowed());
     ASSERT(m_is8Bit);
     // Copy the existing data into a new buffer, set result to point to the end of the existing data.
-    auto buffer = StringImpl::createUninitialized(requiredLength, m_bufferCharacters8);
-    memcpy(m_bufferCharacters8, currentCharacters, static_cast<size_t>(m_length) * sizeof(LChar)); // This can't overflow.
+    auto buffer = StringImpl::tryCreateUninitialized(requiredLength, m_bufferCharacters8);
+    if (UNLIKELY(!buffer))
+        return didOverflow();
+    std::memcpy(m_bufferCharacters8, currentCharacters, m_length.unsafeGet());
 
     // Update the builder state.
     m_buffer = WTFMove(buffer);
@@ -111,10 +124,13 @@ void StringBuilder::allocateBuffer(const LChar* currentCharacters, unsigned requ
 // or m_buffer,  neither will be reassigned until the copy has completed).
 void StringBuilder::allocateBuffer(const UChar* currentCharacters, unsigned requiredLength)
 {
+    ASSERT(!hasOverflowed());
     ASSERT(!m_is8Bit);
     // Copy the existing data into a new buffer, set result to point to the end of the existing data.
-    auto buffer = StringImpl::createUninitialized(requiredLength, m_bufferCharacters16);
-    memcpy(m_bufferCharacters16, currentCharacters, static_cast<size_t>(m_length) * sizeof(UChar)); // This can't overflow.
+    auto buffer = StringImpl::tryCreateUninitialized(requiredLength, m_bufferCharacters16);
+    if (UNLIKELY(!buffer))
+        return didOverflow();
+    std::memcpy(m_bufferCharacters16, currentCharacters, static_cast<size_t>(m_length.unsafeGet()) * sizeof(UChar)); // This can't overflow.
 
     // Update the builder state.
     m_buffer = WTFMove(buffer);
@@ -126,11 +142,15 @@ void StringBuilder::allocateBuffer(const UChar* currentCharacters, unsigned requ
 // from either m_string or m_buffer, neither will be reassigned until the copy has completed).
 void StringBuilder::allocateBufferUpConvert(const LChar* currentCharacters, unsigned requiredLength)
 {
+    ASSERT(!hasOverflowed());
     ASSERT(m_is8Bit);
-    ASSERT(requiredLength >= m_length);
+    unsigned length = m_length.unsafeGet();
+    ASSERT(requiredLength <= maxCapacity && requiredLength >= length);
     // Copy the existing data into a new buffer, set result to point to the end of the existing data.
-    auto buffer = StringImpl::createUninitialized(requiredLength, m_bufferCharacters16);
-    for (unsigned i = 0; i < m_length; ++i)
+    auto buffer = StringImpl::tryCreateUninitialized(requiredLength, m_bufferCharacters16);
+    if (UNLIKELY(!buffer))
+        return didOverflow(); // Treat a failure to allcoate as an overflow.
+    for (unsigned i = 0; i < length; ++i)
         m_bufferCharacters16[i] = currentCharacters[i];
 
     m_is8Bit = false;
@@ -141,7 +161,7 @@ void StringBuilder::allocateBufferUpConvert(const LChar* currentCharacters, unsi
     ASSERT(m_buffer->length() == requiredLength);
 }
 
-template <>
+template<>
 void StringBuilder::reallocateBuffer<LChar>(unsigned requiredLength)
 {
     // If the buffer has only one ref (by this StringBuilder), reallocate it,
@@ -151,14 +171,17 @@ void StringBuilder::reallocateBuffer<LChar>(unsigned requiredLength)
     ASSERT(m_is8Bit);
     ASSERT(m_buffer->is8Bit());
 
-    if (m_buffer->hasOneRef())
-        m_buffer = StringImpl::reallocate(m_buffer.releaseNonNull(), requiredLength, m_bufferCharacters8);
-    else
+    if (m_buffer->hasOneRef()) {
+        auto expectedStringImpl = StringImpl::tryReallocate(m_buffer.releaseNonNull(), requiredLength, m_bufferCharacters8);
+        if (UNLIKELY(!expectedStringImpl))
+            return didOverflow();
+        m_buffer = WTFMove(expectedStringImpl.value());
+    } else
         allocateBuffer(m_buffer->characters8(), requiredLength);
-    ASSERT(m_buffer->length() == requiredLength);
+    ASSERT(hasOverflowed() || m_buffer->length() == requiredLength);
 }
 
-template <>
+template<>
 void StringBuilder::reallocateBuffer<UChar>(unsigned requiredLength)
 {
     // If the buffer has only one ref (by this StringBuilder), reallocate it,
@@ -167,15 +190,21 @@ void StringBuilder::reallocateBuffer<UChar>(unsigned requiredLength)
 
     if (m_buffer->is8Bit())
         allocateBufferUpConvert(m_buffer->characters8(), requiredLength);
-    else if (m_buffer->hasOneRef())
-        m_buffer = StringImpl::reallocate(m_buffer.releaseNonNull(), requiredLength, m_bufferCharacters16);
-    else
+    else if (m_buffer->hasOneRef()) {
+        auto expectedStringImpl = StringImpl::tryReallocate(m_buffer.releaseNonNull(), requiredLength, m_bufferCharacters16);
+        if (UNLIKELY(!expectedStringImpl))
+            return didOverflow();
+        m_buffer = WTFMove(expectedStringImpl.value());
+    } else
         allocateBuffer(m_buffer->characters16(), requiredLength);
-    ASSERT(m_buffer->length() == requiredLength);
+    ASSERT(hasOverflowed() || m_buffer->length() == requiredLength);
 }
 
 void StringBuilder::reserveCapacity(unsigned newCapacity)
 {
+    if (hasOverflowed())
+        return;
+    ASSERT(newCapacity <= String::MaxLength);
     if (m_buffer) {
         // If there is already a buffer, then grow if necessary.
         if (newCapacity > m_buffer->length()) {
@@ -186,9 +215,10 @@ void StringBuilder::reserveCapacity(unsigned newCapacity)
         }
     } else {
         // Grow the string, if necessary.
-        if (newCapacity > m_length) {
-            if (!m_length) {
-                LChar* nullPlaceholder = 0;
+        unsigned length = m_length.unsafeGet();
+        if (newCapacity > length) {
+            if (!length) {
+                LChar* nullPlaceholder = nullptr;
                 allocateBuffer(nullPlaceholder, newCapacity);
             } else if (m_string.is8Bit())
                 allocateBuffer(m_string.characters8(), newCapacity);
@@ -196,113 +226,154 @@ void StringBuilder::reserveCapacity(unsigned newCapacity)
                 allocateBuffer(m_string.characters16(), newCapacity);
         }
     }
-    ASSERT(!newCapacity || m_buffer->length() >= newCapacity);
+    ASSERT(hasOverflowed() || !newCapacity || m_buffer->length() >= newCapacity);
 }
 
-// Make 'length' additional capacity be available in m_buffer, update m_string & m_length,
+// Make 'additionalLength' additional capacity be available in m_buffer, update m_string & m_length,
 // return a pointer to the newly allocated storage.
-template <typename CharType>
-ALWAYS_INLINE CharType* StringBuilder::appendUninitialized(unsigned length)
+// Returns nullptr if the size of the new builder would have overflowed
+template<typename CharacterType> ALWAYS_INLINE CharacterType* StringBuilder::extendBufferForAppending(unsigned additionalLength)
 {
-    ASSERT(length);
+    ASSERT(additionalLength);
 
     // Calculate the new size of the builder after appending.
-    unsigned requiredLength = length + m_length;
-    if (requiredLength < length)
-        CRASH();
-
-    if ((m_buffer) && (requiredLength <= m_buffer->length())) {
-        // If the buffer is valid it must be at least as long as the current builder contents!
-        ASSERT(m_buffer->length() >= m_length);
-        unsigned currentLength = m_length;
-        m_string = String();
-        m_length = requiredLength;
-        return getBufferCharacters<CharType>() + currentLength;
+    CheckedInt32 requiredLength = m_length + additionalLength;
+    if (requiredLength.hasOverflowed()) {
+        didOverflow();
+        return nullptr;
     }
 
-    return appendUninitializedSlow<CharType>(requiredLength);
+    return extendBufferForAppendingWithoutOverflowCheck<CharacterType>(requiredLength);
 }
 
-// Make 'length' additional capacity be available in m_buffer, update m_string & m_length,
-// return a pointer to the newly allocated storage.
-template <typename CharType>
-CharType* StringBuilder::appendUninitializedSlow(unsigned requiredLength)
+template<typename CharacterType> ALWAYS_INLINE CharacterType* StringBuilder::extendBufferForAppendingWithoutOverflowCheck(CheckedInt32 requiredLength)
 {
+    ASSERT(!requiredLength.hasOverflowed());
+
+    if (m_buffer && (requiredLength.unsafeGet<unsigned>() <= m_buffer->length())) {
+        // If the buffer is valid it must be at least as long as the current builder contents!
+        ASSERT(m_buffer->length() >= m_length.unsafeGet<unsigned>());
+        unsigned currentLength = m_length.unsafeGet();
+        m_string = String();
+        m_length = requiredLength;
+        return getBufferCharacters<CharacterType>() + currentLength;
+    }
+
+    return extendBufferForAppendingSlowCase<CharacterType>(requiredLength.unsafeGet());
+}
+
+LChar* StringBuilder::extendBufferForAppending8(CheckedInt32 requiredLength)
+{
+    if (UNLIKELY(requiredLength.hasOverflowed())) {
+        didOverflow();
+        return nullptr;
+    }
+    return extendBufferForAppendingWithoutOverflowCheck<LChar>(requiredLength);
+}
+
+UChar* StringBuilder::extendBufferForAppending16(CheckedInt32 requiredLength)
+{
+    if (UNLIKELY(requiredLength.hasOverflowed())) {
+        didOverflow();
+        return nullptr;
+    }
+    if (m_is8Bit) {
+        const LChar* characters;
+        if (m_buffer) {
+            ASSERT(m_buffer->length() >= m_length.unsafeGet<unsigned>());
+            characters = m_buffer->characters8();
+        } else {
+            ASSERT(m_string.length() == m_length.unsafeGet<unsigned>());
+            characters = m_string.isNull() ? nullptr : m_string.characters8();
+        }
+        allocateBufferUpConvert(characters, expandedCapacity(capacity(), requiredLength.unsafeGet()));
+        if (UNLIKELY(hasOverflowed()))
+            return nullptr;
+        unsigned oldLength = m_length.unsafeGet();
+        m_length = requiredLength.unsafeGet();
+        return m_bufferCharacters16 + oldLength;
+    }
+    return extendBufferForAppendingWithoutOverflowCheck<UChar>(requiredLength);
+}
+
+// Make 'requiredLength' capacity be available in m_buffer, update m_string & m_length,
+// return a pointer to the newly allocated storage.
+template<typename CharacterType> CharacterType* StringBuilder::extendBufferForAppendingSlowCase(unsigned requiredLength)
+{
+    ASSERT(!hasOverflowed());
     ASSERT(requiredLength);
 
     if (m_buffer) {
         // If the buffer is valid it must be at least as long as the current builder contents!
-        ASSERT(m_buffer->length() >= m_length);
+        ASSERT(m_buffer->length() >= m_length.unsafeGet<unsigned>());
 
-        reallocateBuffer<CharType>(expandedCapacity(capacity(), requiredLength));
+        reallocateBuffer<CharacterType>(expandedCapacity(capacity(), requiredLength));
     } else {
-        ASSERT(m_string.length() == m_length);
-        allocateBuffer(m_length ? m_string.characters<CharType>() : 0, expandedCapacity(capacity(), requiredLength));
+        ASSERT(m_string.length() == m_length.unsafeGet<unsigned>());
+        allocateBuffer(m_length ? m_string.characters<CharacterType>() : nullptr, expandedCapacity(capacity(), requiredLength));
     }
+    if (UNLIKELY(hasOverflowed()))
+        return nullptr;
 
-    CharType* result = getBufferCharacters<CharType>() + m_length;
+    CharacterType* result = getBufferCharacters<CharacterType>() + m_length.unsafeGet();
     m_length = requiredLength;
-    ASSERT(m_buffer->length() >= m_length);
+    ASSERT(!hasOverflowed());
+    ASSERT(m_buffer->length() >= m_length.unsafeGet<unsigned>());
     return result;
 }
 
-void StringBuilder::append(const UChar* characters, unsigned length)
+void StringBuilder::appendCharacters(const UChar* characters, unsigned length)
 {
-    if (!length)
+    if (!length || hasOverflowed())
         return;
 
     ASSERT(characters);
 
-    if (m_is8Bit) {
-        if (length == 1 && !(*characters & ~0xff)) {
-            // Append as 8 bit character
-            LChar lChar = static_cast<LChar>(*characters);
-            append(&lChar, 1);
-            return;
-        }
+    if (m_is8Bit && length == 1 && isLatin1(characters[0])) {
+        append(static_cast<LChar>(characters[0]));
+        return;
+    }
 
-        // Calculate the new size of the builder after appending.
-        unsigned requiredLength = length + m_length;
-        if (requiredLength < length)
-            CRASH();
+    // FIXME: Should we optimize memory by keeping the string 8-bit when all the characters are Latin-1?
 
-        if (m_buffer) {
-            // If the buffer is valid it must be at least as long as the current builder contents!
-            ASSERT(m_buffer->length() >= m_length);
-
-            allocateBufferUpConvert(m_buffer->characters8(), expandedCapacity(capacity(), requiredLength));
-        } else {
-            ASSERT(m_string.length() == m_length);
-            allocateBufferUpConvert(m_string.isNull() ? 0 : m_string.characters8(), expandedCapacity(capacity(), requiredLength));
-        }
-
-        memcpy(m_bufferCharacters16 + m_length, characters, static_cast<size_t>(length) * sizeof(UChar));
-        m_length = requiredLength;
-    } else
-        memcpy(appendUninitialized<UChar>(length), characters, static_cast<size_t>(length) * sizeof(UChar));
-    ASSERT(m_buffer->length() >= m_length);
+    UChar* destination = extendBufferForAppending16(m_length + length);
+    if (UNLIKELY(!destination))
+        return;
+    std::memcpy(destination, characters, static_cast<size_t>(length) * sizeof(UChar));
+    ASSERT(!hasOverflowed());
+    ASSERT(m_buffer->length() >= m_length.unsafeGet<unsigned>());
 }
 
-void StringBuilder::append(const LChar* characters, unsigned length)
+void StringBuilder::appendCharacters(const LChar* characters, unsigned length)
 {
-    if (!length)
+    if (!length || hasOverflowed())
         return;
+
     ASSERT(characters);
 
     if (m_is8Bit) {
-        LChar* dest = appendUninitialized<LChar>(length);
+        LChar* destination = extendBufferForAppending<LChar>(length);
+        if (!destination) {
+            ASSERT(hasOverflowed());
+            return;
+        }
         if (length > 8)
-            memcpy(dest, characters, static_cast<size_t>(length) * sizeof(LChar));
+            std::memcpy(destination, characters, length);
         else {
+            // FIXME: How strong is our evidence that this is faster than memcpy? What platforms is this true for?
             const LChar* end = characters + length;
             while (characters < end)
-                *(dest++) = *(characters++);
+                *destination++ = *characters++;
         }
     } else {
-        UChar* dest = appendUninitialized<UChar>(length);
+        UChar* destination = extendBufferForAppending<UChar>(length);
+        if (!destination) {
+            ASSERT(hasOverflowed());
+            return;
+        }
         const LChar* end = characters + length;
         while (characters < end)
-            *(dest++) = *(characters++);
+            *destination++ = *characters++;
     }
 }
 
@@ -312,7 +383,7 @@ void StringBuilder::append(CFStringRef string)
 {
     // Fast path: avoid constructing a temporary String when possible.
     if (auto* characters = CFStringGetCStringPtr(string, kCFStringEncodingISOLatin1)) {
-        append(reinterpret_cast<const LChar*>(characters), CFStringGetLength(string));
+        appendCharacters(reinterpret_cast<const LChar*>(characters), CFStringGetLength(string));
         return;
     }
     append(String(string));
@@ -325,7 +396,7 @@ void StringBuilder::appendNumber(int number)
     numberToStringSigned<StringBuilder>(number, this);
 }
 
-void StringBuilder::appendNumber(unsigned int number)
+void StringBuilder::appendNumber(unsigned number)
 {
     numberToStringUnsigned<StringBuilder>(number, this);
 }
@@ -350,39 +421,48 @@ void StringBuilder::appendNumber(unsigned long long number)
     numberToStringUnsigned<StringBuilder>(number, this);
 }
 
-void StringBuilder::appendNumber(double number, unsigned precision, TrailingZerosTruncatingPolicy trailingZerosTruncatingPolicy)
-{
-    NumberToStringBuffer buffer;
-    append(numberToFixedPrecisionString(number, precision, buffer, trailingZerosTruncatingPolicy == TruncateTrailingZeros));
-}
-
-void StringBuilder::appendECMAScriptNumber(double number)
+void StringBuilder::appendNumber(float number)
 {
     NumberToStringBuffer buffer;
     append(numberToString(number, buffer));
 }
 
-void StringBuilder::appendFixedWidthNumber(double number, unsigned decimalPlaces)
+void StringBuilder::appendNumber(double number)
 {
     NumberToStringBuffer buffer;
-    append(numberToFixedWidthString(number, decimalPlaces, buffer));
+    append(numberToString(number, buffer));
 }
 
 bool StringBuilder::canShrink() const
 {
-    // Only shrink the buffer if it's less than 80% full. Need to tune this heuristic!
-    return m_buffer && m_buffer->length() > (m_length + (m_length >> 2));
+    if (hasOverflowed())
+        return false;
+    // Only shrink the buffer if it's less than 80% full.
+    // FIXME: We should tune this heuristic based some actual test case measurements.
+    unsigned length = m_length.unsafeGet();
+    return m_buffer && m_buffer->length() > (length + (length >> 2));
 }
 
 void StringBuilder::shrinkToFit()
 {
     if (canShrink()) {
         if (m_is8Bit)
-            reallocateBuffer<LChar>(m_length);
+            reallocateBuffer<LChar>(m_length.unsafeGet());
         else
-            reallocateBuffer<UChar>(m_length);
+            reallocateBuffer<UChar>(m_length.unsafeGet());
+        ASSERT(!hasOverflowed());
         m_string = WTFMove(m_buffer);
     }
+}
+
+bool StringBuilder::isAllASCII() const
+{
+    auto length = this->length();
+    if (!length)
+        return true;
+    if (m_is8Bit)
+        return charactersAreAllASCII(characters8(), length);
+    return charactersAreAllASCII(characters16(), length);
 }
 
 } // namespace WTF

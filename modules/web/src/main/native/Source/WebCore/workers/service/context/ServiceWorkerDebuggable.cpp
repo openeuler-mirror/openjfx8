@@ -38,16 +38,16 @@ using namespace Inspector;
 
 ServiceWorkerDebuggable::ServiceWorkerDebuggable(ServiceWorkerThreadProxy& serviceWorkerThreadProxy, const ServiceWorkerContextData& data)
     : m_serviceWorkerThreadProxy(serviceWorkerThreadProxy)
-    , m_scopeURL(data.registration.scopeURL)
+    , m_scopeURL(data.registration.scopeURL.string())
 {
 }
 
-void ServiceWorkerDebuggable::connect(Inspector::FrontendChannel* channel, bool, bool)
+void ServiceWorkerDebuggable::connect(FrontendChannel& channel, bool, bool)
 {
     m_serviceWorkerThreadProxy.inspectorProxy().connectToWorker(channel);
 }
 
-void ServiceWorkerDebuggable::disconnect(Inspector::FrontendChannel* channel)
+void ServiceWorkerDebuggable::disconnect(FrontendChannel& channel)
 {
     m_serviceWorkerThreadProxy.inspectorProxy().disconnectFromWorker(channel);
 }

@@ -29,19 +29,17 @@
 
 namespace JSC {
 
-void InferredValue::finalizeUnconditionally(VM& vm)
+template<typename JSCellType>
+void InferredValue<JSCellType>::finalizeUnconditionally(VM& vm)
 {
-    JSValue value = m_value.get();
+    JSCellType* value = inferredValue();
 
-    if (value && value.isCell()) {
-        if (Heap::isMarked(value.asCell()))
+    if (value) {
+        if (vm.heap.isMarked(value))
             return;
 
         invalidate(vm, StringFireDetail("InferredValue clean-up during GC"));
     }
-
-    vm.inferredValuesWithFinalizers.remove(this);
 }
 
 } // namespace JSC
-

@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2015 Andy VanWagoner (andy@vanwagoner.family)
- * Copyright (C) 2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,43 +26,27 @@
 
 #pragma once
 
-#if ENABLE(INTL)
-
 #include "InternalFunction.h"
+#include "IntlObject.h"
 
 namespace JSC {
 
-class IntlDateTimeFormat;
 class IntlDateTimeFormatPrototype;
 
 class IntlDateTimeFormatConstructor final : public InternalFunction {
 public:
     typedef InternalFunction Base;
-    static const unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
-    template<typename CellType>
-    static IsoSubspace* subspaceFor(VM& vm)
-    {
-        return &vm.intlDateTimeFormatConstructorSpace;
-    }
-
-    static IntlDateTimeFormatConstructor* create(VM&, Structure*, IntlDateTimeFormatPrototype*, Structure*);
+    static IntlDateTimeFormatConstructor* create(VM&, Structure*, IntlDateTimeFormatPrototype*);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     DECLARE_INFO;
 
-    Structure* dateTimeFormatStructure() const { return m_dateTimeFormatStructure.get(); }
-
-protected:
-    void finishCreation(VM&, IntlDateTimeFormatPrototype*, Structure*);
-
 private:
     IntlDateTimeFormatConstructor(VM&, Structure*);
-    static void visitChildren(JSCell*, SlotVisitor&);
-
-    WriteBarrier<Structure> m_dateTimeFormatStructure;
+    void finishCreation(VM&, IntlDateTimeFormatPrototype*);
 };
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(IntlDateTimeFormatConstructor, InternalFunction);
 
 } // namespace JSC
-
-#endif // ENABLE(INTL)

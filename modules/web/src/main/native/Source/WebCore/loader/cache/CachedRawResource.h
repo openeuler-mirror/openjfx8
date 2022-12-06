@@ -29,18 +29,14 @@ namespace WebCore {
 class CachedResourceClient;
 class ResourceTiming;
 class SharedBufferDataView;
-class SubresourceLoader;
 
 class CachedRawResource final : public CachedResource {
 public:
-    CachedRawResource(CachedResourceRequest&&, Type, PAL::SessionID);
+    CachedRawResource(CachedResourceRequest&&, Type, const PAL::SessionID&, const CookieJar*);
 
-    // FIXME: AssociatedURLLoader shouldn't be a DocumentThreadableLoader and therefore shouldn't
-    // use CachedRawResource. However, it is, and it needs to be able to defer loading.
-    // This can be fixed by splitting CORS preflighting out of DocumentThreacableLoader.
-    virtual void setDefersLoading(bool);
+    void setDefersLoading(bool);
 
-    virtual void setDataBufferingPolicy(DataBufferingPolicy);
+    void setDataBufferingPolicy(DataBufferingPolicy);
 
     // FIXME: This is exposed for the InspectorInstrumentation for preflights in DocumentThreadableLoader. It's also really lame.
     unsigned long identifier() const { return m_identifier; }
@@ -57,7 +53,7 @@ private:
     void didAddClient(CachedResourceClient&) final;
     void updateBuffer(SharedBuffer&) final;
     void updateData(const char* data, unsigned length) final;
-    void finishLoading(SharedBuffer*) final;
+    void finishLoading(SharedBuffer*, const NetworkLoadMetrics&) final;
 
     bool shouldIgnoreHTTPStatusCodeErrors() const override { return true; }
     void allClientsRemoved() override;
@@ -70,8 +66,12 @@ private:
     void switchClientsToRevalidatedResource() override;
     bool mayTryReplaceEncodedData() const override { return m_allowEncodedDataReplacement; }
 
-    std::optional<SharedBufferDataView> calculateIncrementalDataChunk(const SharedBuffer*) const;
+    Optional<SharedBufferDataView> calculateIncrementalDataChunk(const SharedBuffer*) const;
     void notifyClientsDataWasReceived(const char* data, unsigned length);
+
+#if USE(QUICK_LOOK)
+    void previewResponseReceived(const ResourceResponse&) final;
+#endif
 
     unsigned long m_identifier;
     bool m_allowEncodedDataReplacement;
@@ -94,7 +94,7 @@ private:
     struct DelayedFinishLoading {
         RefPtr<SharedBuffer> buffer;
     };
-    std::optional<DelayedFinishLoading> m_delayedFinishLoading;
+    Optional<DelayedFinishLoading> m_delayedFinishLoading;
 };
 
 } // namespace WebCore

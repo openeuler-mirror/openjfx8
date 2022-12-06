@@ -27,8 +27,12 @@
 #include "GIFImageDecoder.h"
 #include "ICOImageDecoder.h"
 #include "JPEGImageDecoder.h"
+#include "NotImplemented.h"
 #include "PNGImageDecoder.h"
 #include "SharedBuffer.h"
+#if USE(OPENJPEG)
+#include "JPEG2000ImageDecoder.h"
+#endif
 #if USE(WEBP)
 #include "WEBPImageDecoder.h"
 #endif
@@ -38,7 +42,6 @@
 
 
 namespace WebCore {
-using namespace std;
 
 namespace {
 
@@ -73,6 +76,19 @@ bool matchesJPEGSignature(char* contents)
 {
     return !memcmp(contents, "\xFF\xD8\xFF", 3);
 }
+
+#if USE(OPENJPEG)
+bool matchesJP2Signature(char* contents)
+{
+    return !memcmp(contents, "\x00\x00\x00\x0C\x6A\x50\x20\x20\x0D\x0A\x87\x0A", 12)
+        || !memcmp(contents, "\x0D\x0A\x87\x0A", 4);
+}
+
+bool matchesJ2KSignature(char* contents)
+{
+    return !memcmp(contents, "\xFF\x4F\xFF\x51", 4);
+}
+#endif
 
 #if USE(WEBP)
 bool matchesWebPSignature(char* contents)
@@ -118,6 +134,14 @@ RefPtr<ScalableImageDecoder> ScalableImageDecoder::create(SharedBuffer& data, Al
     if (matchesJPEGSignature(contents))
         return JPEGImageDecoder::create(alphaOption, gammaAndColorProfileOption);
 
+#if USE(OPENJPEG)
+    if (matchesJP2Signature(contents))
+        return JPEG2000ImageDecoder::create(JPEG2000ImageDecoder::Format::JP2, alphaOption, gammaAndColorProfileOption);
+
+    if (matchesJ2KSignature(contents))
+        return JPEG2000ImageDecoder::create(JPEG2000ImageDecoder::Format::J2K, alphaOption, gammaAndColorProfileOption);
+#endif
+
 #if USE(WEBP)
     if (matchesWebPSignature(contents))
         return WEBPImageDecoder::create(alphaOption, gammaAndColorProfileOption);
@@ -129,55 +153,14 @@ RefPtr<ScalableImageDecoder> ScalableImageDecoder::create(SharedBuffer& data, Al
     return nullptr;
 }
 
-namespace {
-
-enum MatchType {
-    Exact,
-    UpperBound,
-    LowerBound
-};
-
-inline void fillScaledValues(Vector<int>& scaledValues, double scaleRate, int length)
-{
-    double inflateRate = 1. / scaleRate;
-    scaledValues.reserveCapacity(static_cast<int>(length * scaleRate + 0.5));
-    for (int scaledIndex = 0; ; ++scaledIndex) {
-        int index = static_cast<int>(scaledIndex * inflateRate + 0.5);
-        if (index >= length)
-            break;
-        scaledValues.append(index);
-    }
-}
-
-template <MatchType type> int getScaledValue(const Vector<int>& scaledValues, int valueToMatch, int searchStart)
-{
-    if (scaledValues.isEmpty())
-        return valueToMatch;
-
-    const int* dataStart = scaledValues.data();
-    const int* dataEnd = dataStart + scaledValues.size();
-    const int* matched = std::lower_bound(dataStart + searchStart, dataEnd, valueToMatch);
-    switch (type) {
-    case Exact:
-        return matched != dataEnd && *matched == valueToMatch ? matched - dataStart : -1;
-    case LowerBound:
-        return matched != dataEnd && *matched == valueToMatch ? matched - dataStart : matched - dataStart - 1;
-    case UpperBound:
-    default:
-        return matched != dataEnd ? matched - dataStart : -1;
-    }
-}
-
-}
-
 bool ScalableImageDecoder::frameIsCompleteAtIndex(size_t index) const
 {
     LockHolder lockHolder(m_mutex);
-    // FIXME(176089): asking whether enough data has been appended for a decode
-    // operation to succeed should not require decoding the entire frame.
-    // This function should be implementable in a way that allows const.
-    auto* buffer = const_cast<ScalableImageDecoder*>(this)->frameBufferAtIndex(index);
-    return buffer && buffer->isComplete();
+    if (index >= m_frameBufferCache.size())
+        return false;
+
+    auto& frame = m_frameBufferCache[index];
+    return frame.isComplete();
 }
 
 bool ScalableImageDecoder::frameHasAlphaAtIndex(size_t index) const
@@ -185,9 +168,11 @@ bool ScalableImageDecoder::frameHasAlphaAtIndex(size_t index) const
     LockHolder lockHolder(m_mutex);
     if (m_frameBufferCache.size() <= index)
         return true;
-    if (m_frameBufferCache[index].isComplete())
-        return m_frameBufferCache[index].hasAlpha();
-    return true;
+
+    auto& frame = m_frameBufferCache[index];
+    if (!frame.isComplete())
+        return true;
+    return frame.hasAlpha();
 }
 
 unsigned ScalableImageDecoder::frameBytesAtIndex(size_t index, SubsamplingLevel) const
@@ -202,20 +187,21 @@ unsigned ScalableImageDecoder::frameBytesAtIndex(size_t index, SubsamplingLevel)
 Seconds ScalableImageDecoder::frameDurationAtIndex(size_t index) const
 {
     LockHolder lockHolder(m_mutex);
-    // FIXME(176089): asking for the duration of a sub-image should not require decoding
-    // the entire frame. This function should be implementable in a way that
-    // allows const.
-    auto* buffer = const_cast<ScalableImageDecoder*>(this)->frameBufferAtIndex(index);
-    if (!buffer || buffer->isInvalid())
+    if (index >= m_frameBufferCache.size())
+        return 0_s;
+
+    auto& frame = m_frameBufferCache[index];
+    if (!frame.isComplete())
         return 0_s;
 
     // Many annoying ads specify a 0 duration to make an image flash as quickly as possible.
     // We follow Firefox's behavior and use a duration of 100 ms for any frames that specify
     // a duration of <= 10 ms. See <rdar://problem/7689300> and <http://webkit.org/b/36082>
     // for more information.
-    if (buffer->duration() < 11_ms)
+    Seconds duration = frame.duration();
+    if (duration < 11_ms)
         return 100_ms;
-    return buffer->duration();
+    return duration;
 }
 
 NativeImagePtr ScalableImageDecoder::createFrameImageAtIndex(size_t index, SubsamplingLevel, const DecodingOptions&)
@@ -234,47 +220,11 @@ NativeImagePtr ScalableImageDecoder::createFrameImageAtIndex(size_t index, Subsa
     return buffer->backingStore()->image();
 }
 
-void ScalableImageDecoder::prepareScaleDataIfNecessary()
+#if USE(DIRECT2D)
+void ScalableImageDecoder::setTargetContext(ID2D1RenderTarget*)
 {
-    m_scaled = false;
-    m_scaledColumns.clear();
-    m_scaledRows.clear();
-
-    int width = size().width();
-    int height = size().height();
-    int numPixels = height * width;
-    if (m_maxNumPixels <= 0 || numPixels <= m_maxNumPixels)
-        return;
-
-    m_scaled = true;
-    double scale = sqrt(m_maxNumPixels / (double)numPixels);
-    fillScaledValues(m_scaledColumns, scale, width);
-    fillScaledValues(m_scaledRows, scale, height);
+    notImplemented();
 }
-
-int ScalableImageDecoder::upperBoundScaledX(int origX, int searchStart)
-{
-    return getScaledValue<UpperBound>(m_scaledColumns, origX, searchStart);
-}
-
-int ScalableImageDecoder::lowerBoundScaledX(int origX, int searchStart)
-{
-    return getScaledValue<LowerBound>(m_scaledColumns, origX, searchStart);
-}
-
-int ScalableImageDecoder::upperBoundScaledY(int origY, int searchStart)
-{
-    return getScaledValue<UpperBound>(m_scaledRows, origY, searchStart);
-}
-
-int ScalableImageDecoder::lowerBoundScaledY(int origY, int searchStart)
-{
-    return getScaledValue<LowerBound>(m_scaledRows, origY, searchStart);
-}
-
-int ScalableImageDecoder::scaledY(int origY, int searchStart)
-{
-    return getScaledValue<Exact>(m_scaledRows, origY, searchStart);
-}
+#endif
 
 }

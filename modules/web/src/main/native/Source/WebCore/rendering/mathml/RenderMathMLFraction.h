@@ -50,8 +50,8 @@ private:
     const char* renderName() const final { return "RenderMathMLFraction"; }
 
     void computePreferredLogicalWidths() final;
-    void layoutBlock(bool relayoutChildren, LayoutUnit pageLogicalHeight = 0) final;
-    std::optional<int> firstLineBaseline() const final;
+    void layoutBlock(bool relayoutChildren, LayoutUnit pageLogicalHeight = 0_lu) final;
+    Optional<int> firstLineBaseline() const final;
     void paint(PaintInfo&, const LayoutPoint&) final;
     RenderMathMLOperator* unembellishedOperator() const final;
 
@@ -62,19 +62,12 @@ private:
     RenderBox& denominator() const;
     LayoutUnit horizontalOffset(RenderBox&, MathMLFractionElement::FractionAlignment) const;
     struct FractionParameters {
-        LayoutUnit numeratorGapMin;
-        LayoutUnit denominatorGapMin;
-        LayoutUnit numeratorMinShiftUp;
-        LayoutUnit denominatorMinShiftDown;
+        LayoutUnit numeratorShiftUp;
+        LayoutUnit denominatorShiftDown;
     };
     FractionParameters fractionParameters() const;
-    struct StackParameters {
-        LayoutUnit gapMin;
-        LayoutUnit topShiftUp;
-        LayoutUnit bottomShiftDown;
-    };
-    StackParameters stackParameters() const;
-    LayoutUnit ascentOverHorizontalAxis() const;
+    FractionParameters stackParameters() const;
+    LayoutUnit fractionAscent() const;
 };
 
 } // namespace WebCore

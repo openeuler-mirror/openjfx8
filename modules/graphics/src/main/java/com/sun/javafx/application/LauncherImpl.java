@@ -78,7 +78,6 @@ public class LauncherImpl {
     private static final String MF_JAVAFX_MAIN = "JavaFX-Application-Class";
     private static final String MF_JAVAFX_PRELOADER = "JavaFX-Preloader-Class";
     private static final String MF_JAVAFX_CLASS_PATH = "JavaFX-Class-Path";
-    private static final String MF_JAVAFX_FEATURE_PROXY = "JavaFX-Feature-Proxy";
     private static final String MF_JAVAFX_ARGUMENT_PREFIX = "JavaFX-Argument-";
     private static final String MF_JAVAFX_PARAMETER_NAME_PREFIX = "JavaFX-Parameter-Name-";
     private static final String MF_JAVAFX_PARAMETER_VALUE_PREFIX = "JavaFX-Parameter-Value-";
@@ -231,7 +230,7 @@ public class LauncherImpl {
         /*
          * For now, just open the jar and get JavaFX-Application-Class and
          * JavaFX-Preloader and pass them to launchApplication. In the future
-         * we'll need to load requested jar files and set up the proxy
+         * we'll need to load requested jar files
          */
         String mainClassName = null;
         String preloaderClassName = null;
@@ -266,12 +265,6 @@ public class LauncherImpl {
                      */
                     appLoader = setupJavaFXClassLoader(new File(launchName), fxClassPath);
                 }
-            }
-
-            // Support JavaFX-Feature-Proxy (only supported setting is 'auto', anything else is ignored)
-            String proxySetting = jarAttrs.getValue(MF_JAVAFX_FEATURE_PROXY);
-            if (proxySetting != null && "auto".equals(proxySetting.toLowerCase())) {
-                trySetAutoProxy();
             }
 
             // process arguments and parameters if no args have been passed by the launcher
@@ -498,93 +491,6 @@ public class LauncherImpl {
             }
         }
         return null;
-    }
-
-    private static void trySetAutoProxy() {
-        // if explicit proxy settings are proxided we will skip autoproxy
-        // Note: we only check few most popular settings.
-        if (System.getProperty("http.proxyHost") != null
-             || System.getProperty("https.proxyHost") != null
-             || System.getProperty("ftp.proxyHost") != null
-             || System.getProperty("socksProxyHost") != null) {
-           if (verbose) {
-               System.out.println("Explicit proxy settings detected. Skip autoconfig.");
-               System.out.println("  http.proxyHost=" + System.getProperty("http.proxyHost"));
-               System.out.println("  https.proxyHost=" + System.getProperty("https.proxyHost"));
-               System.out.println("  ftp.proxyHost=" + System.getProperty("ftp.proxyHost"));
-               System.out.println("  socksProxyHost=" + System.getProperty("socksProxyHost"));
-           }
-           return;
-        }
-        if (System.getProperty("javafx.autoproxy.disable") != null) {
-            if (verbose) {
-                System.out.println("Disable autoproxy on request.");
-            }
-            return;
-        }
-
-        // grab deploy.jar
-        // Note that we don't need to keep deploy.jar in the JavaFX classloader
-        // it is only needed long enough to configure the proxy
-        String javaHome = System.getProperty("java.home");
-        File jreLibDir = new File(javaHome, "lib");
-        File deployJar = new File(jreLibDir, "deploy.jar");
-
-        URL[] deployURLs;
-        try {
-            deployURLs = new URL[] {
-                deployJar.toURI().toURL()
-            };
-        } catch (MalformedURLException ex) {
-            if (trace) {
-                System.err.println("Unable to build URL to deploy.jar: "+ex);
-                ex.printStackTrace();
-            }
-            return; // give up setting proxy, usually silently
-        }
-
-        try {
-            URLClassLoader dcl = new URLClassLoader(deployURLs);
-            Class sm = Class.forName("com.sun.deploy.services.ServiceManager",
-                    true,
-                    dcl);
-            Class params[] = {Integer.TYPE};
-            Method setservice = sm.getDeclaredMethod("setService", params);
-            String osname = System.getProperty("os.name");
-
-            String servicename;
-            if (osname.startsWith("Win")) {
-                servicename = "STANDALONE_TIGER_WIN32";
-            } else if (osname.contains("Mac")) {
-                servicename = "STANDALONE_TIGER_MACOSX";
-            } else {
-                servicename = "STANDALONE_TIGER_UNIX";
-            }
-            Object values[] = new Object[1];
-            Class pt = Class.forName("com.sun.deploy.services.PlatformType",
-                    true,
-                    dcl);
-            values[0] = pt.getField(servicename).get(null);
-            setservice.invoke(null, values);
-
-            Class dps = Class.forName(
-                    "com.sun.deploy.net.proxy.DeployProxySelector",
-                    true,
-                    dcl);
-            Method m = dps.getDeclaredMethod("reset", new Class[0]);
-            m.invoke(null, new Object[0]);
-
-            if (verbose) {
-                System.out.println("Autoconfig of proxy is completed.");
-            }
-        } catch (Exception e) {
-            if (verbose) {
-                System.err.println("Failed to autoconfig proxy due to "+e);
-            }
-            if (trace) {
-                e.printStackTrace();
-            }
-        }
     }
 
     private static String decodeBase64(String inp) throws IOException {
@@ -925,15 +831,7 @@ public class LauncherImpl {
             }
         } finally {
             PlatformImpl.removeListener(listener);
-            // Workaround until RT-13281 is implemented
-            // Don't call exit if we detect an error in javaws mode
-//            PlatformImpl.tkExit();
-            final boolean isJavaws = System.getSecurityManager() != null;
-            if (error && isJavaws) {
-                System.err.println("Workaround until RT-13281 is implemented: keep toolkit alive");
-            } else {
-                PlatformImpl.tkExit();
-            }
+            PlatformImpl.tkExit();
         }
     }
 
@@ -975,35 +873,11 @@ public class LauncherImpl {
         });
     }
 
-    private static Method notifyMethod = null;
-
     public static void notifyPreloader(Application app, final PreloaderNotification info) {
         if (launchCalled.get()) {
             // Standalone launcher mode
             notifyCurrentPreloader(info);
             return;
-        }
-
-        synchronized (LauncherImpl.class) {
-            if (notifyMethod == null) {
-                final String fxPreloaderClassName =
-                        "com.sun.deploy.uitoolkit.impl.fx.FXPreloader";
-                try {
-                    Class fxPreloaderClass = Class.forName(fxPreloaderClassName);
-                    notifyMethod = fxPreloaderClass.getMethod(
-                            "notifyCurrentPreloader", PreloaderNotification.class);
-                } catch (Exception ex) {
-                    ex.printStackTrace();
-                    return;
-                }
-            }
-        }
-
-        try {
-            // Call using reflection: FXPreloader.notifyCurrentPreloader(pe)
-            notifyMethod.invoke(null, info);
-        } catch (Exception ex) {
-            ex.printStackTrace();
         }
     }
 

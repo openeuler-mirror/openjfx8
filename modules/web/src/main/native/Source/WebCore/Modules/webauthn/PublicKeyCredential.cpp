@@ -28,27 +28,44 @@
 
 #if ENABLE(WEB_AUTHN)
 
-#include "AuthenticatorManager.h"
+#include "AuthenticatorCoordinator.h"
+#include "AuthenticatorResponse.h"
+#include "Document.h"
 #include "JSDOMPromiseDeferred.h"
+#include "Page.h"
+#include "RuntimeEnabledFeatures.h"
 #include <wtf/text/Base64.h>
 
 namespace WebCore {
 
-PublicKeyCredential::PublicKeyCredential(RefPtr<ArrayBuffer>&& id, RefPtr<AuthenticatorResponse>&& response)
-    : BasicCredential(WTF::base64URLEncode(id->data(), id->byteLength()), Type::PublicKey, Discovery::Remote)
-    , m_rawId(WTFMove(id))
+Ref<PublicKeyCredential> PublicKeyCredential::create(Ref<AuthenticatorResponse>&& response)
+{
+    return adoptRef(*new PublicKeyCredential(WTFMove(response)));
+}
+
+ArrayBuffer* PublicKeyCredential::rawId() const
+{
+    return m_response->rawId();
+}
+
+AuthenticationExtensionsClientOutputs PublicKeyCredential::getClientExtensionResults() const
+{
+    return m_response->extensions();
+}
+
+PublicKeyCredential::PublicKeyCredential(Ref<AuthenticatorResponse>&& response)
+    : BasicCredential(WTF::base64URLEncode(response->rawId()->data(), response->rawId()->byteLength()), Type::PublicKey, Discovery::Remote)
     , m_response(WTFMove(response))
 {
 }
 
-ExceptionOr<bool> PublicKeyCredential::getClientExtensionResults() const
+void PublicKeyCredential::isUserVerifyingPlatformAuthenticatorAvailable(Document& document, DOMPromiseDeferred<IDLBoolean>&& promise)
 {
-    return Exception { NotSupportedError };
-}
-
-void PublicKeyCredential::isUserVerifyingPlatformAuthenticatorAvailable(DOMPromiseDeferred<IDLBoolean>&& promise)
-{
-    AuthenticatorManager::singleton().isUserVerifyingPlatformAuthenticatorAvailable(WTFMove(promise));
+    if (!RuntimeEnabledFeatures::sharedFeatures().webAuthenticationLocalAuthenticatorEnabled()) {
+        promise.resolve(false);
+        return;
+    }
+    document.page()->authenticatorCoordinator().isUserVerifyingPlatformAuthenticatorAvailable(WTFMove(promise));
 }
 
 } // namespace WebCore

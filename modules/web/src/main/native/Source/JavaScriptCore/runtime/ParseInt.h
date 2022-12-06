@@ -26,6 +26,7 @@
 #pragma once
 
 #include "JSCJSValue.h"
+#include "Lexer.h"
 #include <wtf/dtoa.h>
 
 namespace JSC {
@@ -101,23 +102,8 @@ static double parseIntOverflow(StringView string, int radix)
 
 ALWAYS_INLINE static bool isStrWhiteSpace(UChar c)
 {
-    switch (c) {
-    // ECMA-262-5th 7.2 & 7.3
-    case 0x0009:
-    case 0x000A:
-    case 0x000B:
-    case 0x000C:
-    case 0x000D:
-    case 0x0020:
-    case 0x00A0:
-    case 0x180E: // This character used to be in Zs category before Unicode 6.3, and EcmaScript says that we should keep treating it as such.
-    case 0x2028:
-    case 0x2029:
-    case 0xFEFF:
-        return true;
-    default:
-        return c > 0xFF && u_charType(c) == U_SPACE_SEPARATOR;
-    }
+    // https://tc39.github.io/ecma262/#sec-tonumber-applied-to-the-string-type
+    return Lexer<UChar>::isWhiteSpace(c) || Lexer<UChar>::isLineTerminator(c);
 }
 
 // ES5.1 15.1.2.2
@@ -212,18 +198,17 @@ ALWAYS_INLINE static double parseInt(StringView s, int radix)
 }
 
 template<typename CallbackWhenNoException>
-static ALWAYS_INLINE typename std::result_of<CallbackWhenNoException(StringView)>::type toStringView(ExecState* exec, JSValue value, CallbackWhenNoException callback)
+static ALWAYS_INLINE typename std::result_of<CallbackWhenNoException(StringView)>::type toStringView(JSGlobalObject* globalObject, JSValue value, CallbackWhenNoException callback)
 {
-    VM& vm = exec->vm();
+    VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSString* string = value.toStringOrNull(exec);
+    JSString* string = value.toStringOrNull(globalObject);
     EXCEPTION_ASSERT(!!scope.exception() == !string);
     if (UNLIKELY(!string))
         return { };
-    auto viewWithString = string->viewWithUnderlyingString(exec);
+    auto viewWithString = string->viewWithUnderlyingString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    scope.release();
-    return callback(viewWithString.view);
+    RELEASE_AND_RETURN(scope, callback(viewWithString.view));
 }
 
 // Mapping from integers 0..35 to digit identifying this value, for radix 2..36.

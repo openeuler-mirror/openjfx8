@@ -44,13 +44,14 @@ class ScriptExecutionContext;
 class UnhandledPromise;
 
 class RejectedPromiseTracker {
+    WTF_MAKE_FAST_ALLOCATED;
     WTF_MAKE_NONCOPYABLE(RejectedPromiseTracker);
 public:
     explicit RejectedPromiseTracker(ScriptExecutionContext&, JSC::VM&);
     ~RejectedPromiseTracker();
 
-    void promiseRejected(JSC::ExecState&, JSDOMGlobalObject&, JSC::JSPromise&);
-    void promiseHandled(JSC::ExecState&, JSDOMGlobalObject&, JSC::JSPromise&);
+    void promiseRejected(JSDOMGlobalObject&, JSC::JSPromise&);
+    void promiseHandled(JSDOMGlobalObject&, JSC::JSPromise&);
 
     void processQueueSoon();
 

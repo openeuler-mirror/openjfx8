@@ -24,11 +24,10 @@
  */
 
 #include "config.h"
-#include "WallTime.h"
+#include <wtf/WallTime.h>
 
-#include "MonotonicTime.h"
-#include "PrintStream.h"
-#include "TimeWithDynamicClockType.h"
+#include <wtf/MonotonicTime.h>
+#include <wtf/PrintStream.h>
 
 namespace WTF {
 

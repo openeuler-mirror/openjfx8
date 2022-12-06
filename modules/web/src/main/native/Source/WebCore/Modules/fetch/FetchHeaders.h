@@ -30,7 +30,6 @@
 
 #include "ExceptionOr.h"
 #include "HTTPHeaderMap.h"
-#include <wtf/EnumTraits.h>
 #include <wtf/HashTraits.h>
 #include <wtf/Variant.h>
 #include <wtf/Vector.h>
@@ -48,7 +47,7 @@ public:
     };
 
     using Init = Variant<Vector<Vector<String>>, Vector<WTF::KeyValuePair<String, String>>>;
-    static ExceptionOr<Ref<FetchHeaders>> create(std::optional<Init>&&);
+    static ExceptionOr<Ref<FetchHeaders>> create(Optional<Init>&&);
 
     static Ref<FetchHeaders> create(Guard guard = Guard::None, HTTPHeaderMap&& headers = { }) { return adoptRef(*new FetchHeaders { guard, WTFMove(headers) }); }
     static Ref<FetchHeaders> create(const FetchHeaders& headers) { return adoptRef(*new FetchHeaders { headers }); }
@@ -70,7 +69,7 @@ public:
     class Iterator {
     public:
         explicit Iterator(FetchHeaders&);
-        std::optional<WTF::KeyValuePair<String, String>> next();
+        Optional<WTF::KeyValuePair<String, String>> next();
 
     private:
         Ref<FetchHeaders> m_headers;
@@ -79,6 +78,7 @@ public:
     };
     Iterator createIterator() { return Iterator { *this }; }
 
+    void setInternalHeaders(HTTPHeaderMap&& headers) { m_headers = WTFMove(headers); }
     const HTTPHeaderMap& internalHeaders() const { return m_headers; }
 
     void setGuard(Guard);
@@ -86,7 +86,7 @@ public:
 
 private:
     FetchHeaders(Guard, HTTPHeaderMap&&);
-    FetchHeaders(const FetchHeaders&);
+    explicit FetchHeaders(const FetchHeaders&);
 
     Guard m_guard;
     HTTPHeaderMap m_headers;

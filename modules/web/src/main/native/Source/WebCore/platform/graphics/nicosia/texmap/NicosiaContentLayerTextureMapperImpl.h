@@ -41,6 +41,7 @@ class TextureMapperPlatformLayerProxy;
 namespace Nicosia {
 
 class ContentLayerTextureMapperImpl final : public ContentLayer::Impl {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     class Client {
     public:
@@ -56,6 +57,8 @@ public:
 
     void invalidateClient();
 
+    bool flushUpdate();
+
     WebCore::TextureMapperPlatformLayerProxy& proxy() const { return m_proxy; }
     void swapBuffersIfNeeded();
 
@@ -64,6 +67,7 @@ private:
     struct {
         Lock lock;
         Client* client { nullptr };
+        bool pendingUpdate { true }; // Starts off with a pending update.
     } m_client;
 };
 

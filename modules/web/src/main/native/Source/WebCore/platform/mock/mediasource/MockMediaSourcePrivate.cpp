@@ -46,6 +46,9 @@ MockMediaSourcePrivate::MockMediaSourcePrivate(MockMediaPlayerMediaSource& paren
     : m_player(parent)
     , m_client(client)
 {
+#if !RELEASE_LOG_DISABLED
+    m_client->setLogIdentifier(m_player.mediaPlayerLogIdentifier());
+#endif
 }
 
 MockMediaSourcePrivate::~MockMediaSourcePrivate()
@@ -59,7 +62,7 @@ MediaSourcePrivate::AddStatus MockMediaSourcePrivate::addSourceBuffer(const Cont
     MediaEngineSupportParameters parameters;
     parameters.isMediaSource = true;
     parameters.type = contentType;
-    if (MockMediaPlayerMediaSource::supportsType(parameters) == MediaPlayer::IsNotSupported)
+    if (MockMediaPlayerMediaSource::supportsType(parameters) == MediaPlayer::SupportsType::IsNotSupported)
         return NotSupported;
 
     m_sourceBuffers.append(MockSourceBufferPrivate::create(this));
@@ -93,7 +96,7 @@ void MockMediaSourcePrivate::durationChanged()
 void MockMediaSourcePrivate::markEndOfStream(EndOfStreamStatus status)
 {
     if (status == EosNoError)
-        m_player.setNetworkState(MediaPlayer::Loaded);
+        m_player.setNetworkState(MediaPlayer::NetworkState::Loaded);
     m_isEnded = true;
 }
 
@@ -165,21 +168,31 @@ MediaTime MockMediaSourcePrivate::seekToTime(const MediaTime& targetTime, const 
             seekTime = sourceSeekTime;
     }
 
-    for (auto& buffer : m_activeSourceBuffers)
-        buffer->seekToTime(seekTime);
-
     return seekTime;
 }
 
-std::optional<VideoPlaybackQualityMetrics> MockMediaSourcePrivate::videoPlaybackQualityMetrics()
+Optional<VideoPlaybackQualityMetrics> MockMediaSourcePrivate::videoPlaybackQualityMetrics()
 {
     return VideoPlaybackQualityMetrics {
         m_totalVideoFrames,
         m_droppedVideoFrames,
         m_corruptedVideoFrames,
-        m_totalFrameDelay.toDouble()
+        m_totalFrameDelay.toDouble(),
+        0,
     };
 }
+
+#if !RELEASE_LOG_DISABLED
+const Logger& MockMediaSourcePrivate::mediaSourceLogger() const
+{
+    return m_player.mediaPlayerLogger();
+}
+
+const void* MockMediaSourcePrivate::mediaSourceLogIdentifier()
+{
+    return m_player.mediaPlayerLogIdentifier();
+}
+#endif
 
 }
 

@@ -23,8 +23,7 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef DoublyLinkedList_h
-#define DoublyLinkedList_h
+#pragma once
 
 namespace WTF {
 
@@ -66,7 +65,8 @@ template<typename T> inline T* DoublyLinkedListNode<T>::next() const
     return static_cast<const T*>(this)->m_next;
 }
 
-template<typename T> class DoublyLinkedList {
+template<typename T>
+class DoublyLinkedList {
 public:
     DoublyLinkedList();
 
@@ -216,5 +216,3 @@ template<typename T> inline void DoublyLinkedList<T>::append(DoublyLinkedList<T>
 
 using WTF::DoublyLinkedListNode;
 using WTF::DoublyLinkedList;
-
-#endif

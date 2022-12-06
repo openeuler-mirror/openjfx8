@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2014, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2012, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -40,6 +40,22 @@
 #include <fontconfig/fontconfig.h>
 
 #include <jni.h>
+
+#ifdef STATIC_BUILD
+JNIEXPORT jint JNICALL
+JNI_OnLoad_javafx_font(JavaVM * vm, void * reserved) {
+#ifdef JNI_VERSION_1_8
+    //min. returned JNI_VERSION required by JDK8 for builtin libraries
+    JNIEnv *env;
+    if ((*vm)->GetEnv(vm, (void **)&env, JNI_VERSION_1_8) != JNI_OK) {
+        return JNI_VERSION_1_4;
+    }
+    return JNI_VERSION_1_8;
+#else
+    return JNI_VERSION_1_4;
+#endif
+}
+#endif
 
 /*
  * We are not explicitly linking against fontconfig. This isn't so
@@ -386,10 +402,11 @@ Java_com_sun_javafx_font_FontConfigManager_getFontConfig
         }
         fontCount = 0;
         minGlyphs = 20;
+        FcCharSet *unionCharset = NULL;
         for (j=0; j<nfonts; j++) {
             FcPattern *fontPattern = fontset->fonts[j];
             FcChar8 *fontformat;
-            FcCharSet *unionCharset = NULL, *charset;
+            FcCharSet *charset;
 
             fontformat = NULL;
             (*FcPatternGetString)(fontPattern, FC_FONTFORMAT, 0, &fontformat);
@@ -438,6 +455,13 @@ Java_com_sun_javafx_font_FontConfigManager_getFontConfig
             (*FcPatternGetString)(fontPattern, FC_STYLE, 0, &styleStr[j]);
             (*FcPatternGetString)(fontPattern, FC_FULLNAME, 0, &fullname[j]);
             if (!includeFallbacks) {
+                break;
+            }
+            if (fontCount == 254) {
+                /* Upstream Java code currently stores this in a byte;
+                 * And we need one slot free for when this sequence is
+                 * used as a fallback sequeunce.
+                 */
                 break;
             }
         }

@@ -42,20 +42,31 @@
 #include "PlatformDisplayWin.h"
 #endif
 
-#if PLATFORM(WPE)
-#include "PlatformDisplayWPE.h"
+#if USE(WPE_RENDERER)
+#include "PlatformDisplayLibWPE.h"
 #endif
 
 #if PLATFORM(GTK)
-#include <gdk/gdk.h>
+#include "GtkVersioning.h"
 #endif
 
 #if PLATFORM(GTK) && PLATFORM(X11)
+#if USE(GTK4)
+#include <gdk/x11/gdkx.h>
+#else
 #include <gdk/gdkx.h>
 #endif
+#if defined(None)
+#undef None
+#endif
+#endif
 
-#if PLATFORM(GTK) && PLATFORM(WAYLAND) && !defined(GTK_API_VERSION_2)
+#if PLATFORM(GTK) && PLATFORM(WAYLAND)
+#if USE(GTK4)
+#include <gdk/wayland/gdkwayland.h>
+#else
 #include <gdk/gdkwayland.h>
+#endif
 #endif
 
 #if USE(EGL)
@@ -74,26 +85,18 @@ namespace WebCore {
 std::unique_ptr<PlatformDisplay> PlatformDisplay::createPlatformDisplay()
 {
 #if PLATFORM(GTK)
-#if defined(GTK_API_VERSION_2)
-    return PlatformDisplayX11::create(GDK_DISPLAY_XDISPLAY(gdk_display_get_default()));
-#else
-    GdkDisplay* display = gdk_display_manager_get_default_display(gdk_display_manager_get());
+    if (gtk_init_check(nullptr, nullptr)) {
+        GdkDisplay* display = gdk_display_manager_get_default_display(gdk_display_manager_get());
 #if PLATFORM(X11)
-    if (GDK_IS_X11_DISPLAY(display))
-        return PlatformDisplayX11::create(GDK_DISPLAY_XDISPLAY(display));
+        if (GDK_IS_X11_DISPLAY(display))
+            return PlatformDisplayX11::create(GDK_DISPLAY_XDISPLAY(display));
 #endif
 #if PLATFORM(WAYLAND)
-    if (GDK_IS_WAYLAND_DISPLAY(display))
-        return PlatformDisplayWayland::create(gdk_wayland_display_get_wl_display(display));
+        if (GDK_IS_WAYLAND_DISPLAY(display))
+            return PlatformDisplayWayland::create(gdk_wayland_display_get_wl_display(display));
 #endif
-#endif
+    }
 #endif // PLATFORM(GTK)
-
-#if PLATFORM(WPE)
-    return PlatformDisplayWPE::create();
-#elif PLATFORM(WIN)
-    return PlatformDisplayWin::create();
-#endif
 
 #if PLATFORM(WAYLAND)
     if (auto platformDisplay = PlatformDisplayWayland::create())
@@ -112,24 +115,32 @@ std::unique_ptr<PlatformDisplay> PlatformDisplay::createPlatformDisplay()
     return PlatformDisplayX11::create(nullptr);
 #endif
 
+#if USE(WPE_RENDERER)
+    return PlatformDisplayLibWPE::create();
+#elif PLATFORM(WIN)
+    return PlatformDisplayWin::create();
+#endif
+
     RELEASE_ASSERT_NOT_REACHED();
 }
 
 PlatformDisplay& PlatformDisplay::sharedDisplay()
 {
+#if PLATFORM(WIN)
+    // ANGLE D3D renderer isn't thread-safe. Don't destruct it on non-main threads which calls _exit().
+    ASSERT(isMainThread());
+    static PlatformDisplay* display = createPlatformDisplay().release();
+    return *display;
+#else
     static std::once_flag onceFlag;
-#if COMPILER(CLANG)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wexit-time-destructors"
-#endif
+    IGNORE_CLANG_WARNINGS_BEGIN("exit-time-destructors")
     static std::unique_ptr<PlatformDisplay> display;
-#if COMPILER(CLANG)
-#pragma clang diagnostic pop
-#endif
+    IGNORE_CLANG_WARNINGS_END
     std::call_once(onceFlag, []{
         display = createPlatformDisplay();
     });
     return *display;
+#endif
 }
 
 static PlatformDisplay* s_sharedDisplayForCompositing;
@@ -154,9 +165,11 @@ PlatformDisplay::PlatformDisplay(NativeDisplayOwned displayOwned)
 
 PlatformDisplay::~PlatformDisplay()
 {
-#if USE(EGL)
+#if USE(EGL) && !PLATFORM(WIN)
     ASSERT(m_eglDisplay == EGL_NO_DISPLAY);
 #endif
+    if (s_sharedDisplayForCompositing == this)
+        s_sharedDisplayForCompositing = nullptr;
 }
 
 #if USE(EGL) || USE(GLX)
@@ -226,27 +239,28 @@ void PlatformDisplay::initializeEGLDisplay()
         // EGL atexit handlers and the PlatformDisplay destructor.
         // See https://bugs.webkit.org/show_bug.cgi?id=157973.
         eglAtexitHandlerInitialized = true;
-        std::atexit(shutDownEglDisplays);
+        std::atexit([] {
+            while (!eglDisplays().isEmpty()) {
+                auto* display = eglDisplays().takeAny();
+                display->terminateEGLDisplay();
+            }
+        });
     }
 #endif
 }
 
 void PlatformDisplay::terminateEGLDisplay()
 {
+#if ENABLE(VIDEO) && USE(GSTREAMER_GL)
+    m_gstGLDisplay = nullptr;
+    m_gstGLContext = nullptr;
+#endif
     m_sharingGLContext = nullptr;
     ASSERT(m_eglDisplayInitialized);
     if (m_eglDisplay == EGL_NO_DISPLAY)
         return;
     eglTerminate(m_eglDisplay);
     m_eglDisplay = EGL_NO_DISPLAY;
-}
-
-void PlatformDisplay::shutDownEglDisplays()
-{
-    while (!eglDisplays().isEmpty()) {
-        auto* display = eglDisplays().takeAny();
-        display->terminateEGLDisplay();
-    }
 }
 
 #endif // USE(EGL)

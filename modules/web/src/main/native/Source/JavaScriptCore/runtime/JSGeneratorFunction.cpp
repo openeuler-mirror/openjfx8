@@ -26,13 +26,8 @@
 #include "config.h"
 #include "JSGeneratorFunction.h"
 
-#include "Error.h"
-#include "JSCInlines.h"
-#include "JSCJSValue.h"
-#include "JSFunction.h"
+#include "JSCellInlines.h"
 #include "JSFunctionInlines.h"
-#include "JSObject.h"
-#include "PropertySlot.h"
 #include "VM.h"
 
 namespace JSC {
@@ -60,7 +55,7 @@ JSGeneratorFunction* JSGeneratorFunction::create(VM& vm, FunctionExecutable* exe
 JSGeneratorFunction* JSGeneratorFunction::create(VM& vm, FunctionExecutable* executable, JSScope* scope, Structure* structure)
 {
     JSGeneratorFunction* generatorFunction = createImpl(vm, executable, scope, structure);
-    executable->singletonFunction()->notifyWrite(vm, generatorFunction, "Allocating a generator function");
+    executable->notifyCreation(vm, generatorFunction, "Allocating a generator function");
     return generatorFunction;
 }
 

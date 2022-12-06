@@ -27,12 +27,12 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef WTF_Deque_h
-#define WTF_Deque_h
+#pragma once
 
 // FIXME: Could move what Vector and Deque share into a separate file.
 // Deque doesn't actually use Vector.
 
+#include <algorithm>
 #include <iterator>
 #include <wtf/Vector.h>
 
@@ -43,7 +43,7 @@ template<typename T, size_t inlineCapacity> class DequeIterator;
 template<typename T, size_t inlineCapacity> class DequeConstIterator;
 
 template<typename T, size_t inlineCapacity = 0>
-class Deque {
+class Deque final {
     WTF_MAKE_FAST_ALLOCATED;
 public:
     typedef T ValueType;
@@ -76,7 +76,7 @@ public:
     const_reverse_iterator rbegin() const { return const_reverse_iterator(end()); }
     const_reverse_iterator rend() const { return const_reverse_iterator(begin()); }
 
-    template<typename U> bool contains(const U&);
+    template<typename U> bool contains(const U&) const;
 
     T& first() { ASSERT(m_start != m_end); return m_buffer.buffer()[m_start]; }
     const T& first() const { ASSERT(m_start != m_end); return m_buffer.buffer()[m_start]; }
@@ -114,8 +114,8 @@ public:
 
     void clear();
 
-    template<typename Predicate>
-    iterator findIf(Predicate&&);
+    template<typename Predicate> iterator findIf(const Predicate&);
+    template<typename Predicate> const_iterator findIf(const Predicate&) const;
 
 private:
     friend class DequeIteratorBase<T, inlineCapacity>;
@@ -142,6 +142,7 @@ private:
 
 template<typename T, size_t inlineCapacity = 0>
 class DequeIteratorBase {
+    WTF_MAKE_FAST_ALLOCATED;
 protected:
     DequeIteratorBase();
     DequeIteratorBase(const Deque<T, inlineCapacity>*, size_t);
@@ -178,6 +179,7 @@ private:
 
 template<typename T, size_t inlineCapacity = 0>
 class DequeIterator : public DequeIteratorBase<T, inlineCapacity> {
+    WTF_MAKE_FAST_ALLOCATED;
 private:
     typedef DequeIteratorBase<T, inlineCapacity> Base;
     typedef DequeIterator<T, inlineCapacity> Iterator;
@@ -209,6 +211,7 @@ public:
 
 template<typename T, size_t inlineCapacity = 0>
 class DequeConstIterator : public DequeIteratorBase<T, inlineCapacity> {
+    WTF_MAKE_FAST_ALLOCATED;
 private:
     typedef DequeIteratorBase<T, inlineCapacity> Base;
     typedef DequeConstIterator<T, inlineCapacity> Iterator;
@@ -395,14 +398,16 @@ inline void Deque<T, inlineCapacity>::clear()
 
 template<typename T, size_t inlineCapacity>
 template<typename Predicate>
-inline auto Deque<T, inlineCapacity>::findIf(Predicate&& predicate) -> iterator
+inline auto Deque<T, inlineCapacity>::findIf(const Predicate& predicate) -> iterator
 {
-    iterator end_iterator = end();
-    for (iterator it = begin(); it != end_iterator; ++it) {
-        if (predicate(*it))
-            return it;
-    }
-    return end_iterator;
+    return std::find_if(begin(), end(), predicate);
+}
+
+template<typename T, size_t inlineCapacity>
+template<typename Predicate>
+inline auto Deque<T, inlineCapacity>::findIf(const Predicate& predicate) const -> const_iterator
+{
+    return std::find_if(begin(), end(), predicate);
 }
 
 template<typename T, size_t inlineCapacity>
@@ -441,13 +446,10 @@ void Deque<T, inlineCapacity>::expandCapacity()
 
 template<typename T, size_t inlineCapacity>
 template<typename U>
-bool Deque<T, inlineCapacity>::contains(const U& searchValue)
+bool Deque<T, inlineCapacity>::contains(const U& searchValue) const
 {
-    for (auto& value : *this) {
-        if (value == searchValue)
-            return true;
-    }
-    return false;
+    auto endIterator = end();
+    return std::find(begin(), endIterator, searchValue) != endIterator;
 }
 
 template<typename T, size_t inlineCapacity>
@@ -785,5 +787,3 @@ inline T* DequeIteratorBase<T, inlineCapacity>::before() const
 } // namespace WTF
 
 using WTF::Deque;
-
-#endif // WTF_Deque_h

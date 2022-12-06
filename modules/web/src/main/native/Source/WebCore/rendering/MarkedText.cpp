@@ -68,18 +68,18 @@ Vector<MarkedText> subdivide(const Vector<MarkedText>& markedTexts, OverlapStrat
     for (unsigned i = 1; i < numberOfOffsets; ++i) {
         if (offsets[i].value > offsets[i - 1].value) {
             if (overlapStrategy == OverlapStrategy::Frontmost) {
-                std::optional<unsigned> frontmost;
+                Optional<unsigned> frontmost;
                 for (unsigned j = 0; j < i; ++j) {
                     if (!processedMarkedTexts.contains(offsets[j].markedText) && (!frontmost || offsets[j].markedText->type > offsets[*frontmost].markedText->type))
                         frontmost = j;
                 }
                 if (frontmost)
-                    result.append({ offsetSoFar, offsets[i].value, offsets[*frontmost].markedText->type, offsets[*frontmost].markedText->marker });
+                    result.append({ offsetSoFar, offsets[i].value, offsets[*frontmost].markedText->type, offsets[*frontmost].markedText->marker, offsets[*frontmost].markedText->highlightName });
             } else {
                 // The appended marked texts may not be in paint order. We will fix this up at the end of this function.
                 for (unsigned j = 0; j < i; ++j) {
                     if (!processedMarkedTexts.contains(offsets[j].markedText))
-                        result.append({ offsetSoFar, offsets[i].value, offsets[j].markedText->type, offsets[j].markedText->marker });
+                        result.append({ offsetSoFar, offsets[i].value, offsets[j].markedText->type, offsets[j].markedText->marker, offsets[j].markedText->highlightName });
                 }
             }
             offsetSoFar = offsets[i].value;

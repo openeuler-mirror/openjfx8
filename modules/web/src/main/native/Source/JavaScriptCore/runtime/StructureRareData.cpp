@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,10 +27,15 @@
 #include "StructureRareData.h"
 
 #include "AdaptiveInferredPropertyValueWatchpointBase.h"
+#include "JSImmutableButterfly.h"
+#include "JSObjectInlines.h"
 #include "JSPropertyNameEnumerator.h"
 #include "JSString.h"
-#include "JSCInlines.h"
 #include "ObjectPropertyConditionSet.h"
+#include "ObjectToStringAdaptiveStructureWatchpoint.h"
+#include "StructureChain.h"
+#include "StructureInlines.h"
+#include "StructureRareDataInlines.h"
 
 namespace JSC {
 
@@ -55,7 +60,8 @@ void StructureRareData::destroy(JSCell* cell)
 
 StructureRareData::StructureRareData(VM& vm, Structure* previous)
     : JSCell(vm, vm.structureRareDataStructure.get())
-    , m_giveUpOnObjectToStringValueCache(false)
+    , m_maxOffset(invalidOffset)
+    , m_transitionOffset(invalidOffset)
 {
     if (previous)
         m_previous.set(vm, this, previous);
@@ -68,51 +74,30 @@ void StructureRareData::visitChildren(JSCell* cell, SlotVisitor& visitor)
 
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_previous);
-    visitor.append(thisObject->m_objectToStringValue);
+    visitor.appendUnbarriered(thisObject->objectToStringValue());
     visitor.append(thisObject->m_cachedPropertyNameEnumerator);
-}
-
-JSPropertyNameEnumerator* StructureRareData::cachedPropertyNameEnumerator() const
-{
-    return m_cachedPropertyNameEnumerator.get();
-}
-
-void StructureRareData::setCachedPropertyNameEnumerator(VM& vm, JSPropertyNameEnumerator* enumerator)
-{
-    m_cachedPropertyNameEnumerator.set(vm, this, enumerator);
+    auto* cachedOwnKeys = thisObject->m_cachedOwnKeys.unvalidatedGet();
+    if (cachedOwnKeys != cachedOwnKeysSentinel())
+        visitor.appendUnbarriered(cachedOwnKeys);
 }
 
 // ----------- Object.prototype.toString() helper watchpoint classes -----------
 
-class ObjectToStringAdaptiveInferredPropertyValueWatchpoint : public AdaptiveInferredPropertyValueWatchpointBase {
+class ObjectToStringAdaptiveInferredPropertyValueWatchpoint final : public AdaptiveInferredPropertyValueWatchpointBase {
 public:
     typedef AdaptiveInferredPropertyValueWatchpointBase Base;
     ObjectToStringAdaptiveInferredPropertyValueWatchpoint(const ObjectPropertyCondition&, StructureRareData*);
 
 private:
-    bool isValid() const override;
-    void handleFire(VM&, const FireDetail&) override;
+    bool isValid() const final;
+    void handleFire(VM&, const FireDetail&) final;
 
     StructureRareData* m_structureRareData;
 };
 
-class ObjectToStringAdaptiveStructureWatchpoint : public Watchpoint {
-public:
-    ObjectToStringAdaptiveStructureWatchpoint(const ObjectPropertyCondition&, StructureRareData*);
-
-    void install(VM&);
-
-protected:
-    void fireInternal(VM&, const FireDetail&) override;
-
-private:
-    ObjectPropertyCondition m_key;
-    StructureRareData* m_structureRareData;
-};
-
-void StructureRareData::setObjectToStringValue(ExecState* exec, VM& vm, Structure* ownStructure, JSString* value, PropertySlot toStringTagSymbolSlot)
+void StructureRareData::setObjectToStringValue(JSGlobalObject* globalObject, VM& vm, Structure* ownStructure, JSString* value, const PropertySlot& toStringTagSymbolSlot)
 {
-    if (m_giveUpOnObjectToStringValueCache)
+    if (canCacheObjectToStringValue())
         return;
 
     ObjectPropertyConditionSet conditionSet;
@@ -126,15 +111,17 @@ void StructureRareData::setObjectToStringValue(ExecState* exec, VM& vm, Structur
 
         // This will not create a condition for the current structure but that is good because we know the Symbol.toStringTag
         // is not on the ownStructure so we will transisition if one is added and this cache will no longer be used.
-        conditionSet = generateConditionsForPrototypePropertyHit(vm, this, exec, ownStructure, toStringTagSymbolSlot.slotBase(), vm.propertyNames->toStringTagSymbol.impl());
+        prepareChainForCaching(globalObject, ownStructure, toStringTagSymbolSlot.slotBase());
+        conditionSet = generateConditionsForPrototypePropertyHit(vm, this, globalObject, ownStructure, toStringTagSymbolSlot.slotBase(), vm.propertyNames->toStringTagSymbol.impl());
         ASSERT(!conditionSet.isValid() || conditionSet.hasOneSlotBaseCondition());
-    } else if (toStringTagSymbolSlot.isUnset())
-        conditionSet = generateConditionsForPropertyMiss(vm, this, exec, ownStructure, vm.propertyNames->toStringTagSymbol.impl());
-    else
+    } else if (toStringTagSymbolSlot.isUnset()) {
+        prepareChainForCaching(globalObject, ownStructure, nullptr);
+        conditionSet = generateConditionsForPropertyMiss(vm, this, globalObject, ownStructure, vm.propertyNames->toStringTagSymbol.impl());
+    } else
         return;
 
     if (!conditionSet.isValid()) {
-        m_giveUpOnObjectToStringValueCache = true;
+        giveUpOnObjectToStringValueCache();
         return;
     }
 
@@ -147,11 +134,11 @@ void StructureRareData::setObjectToStringValue(ExecState* exec, VM& vm, Structur
 
             // The equivalence condition won't be watchable if we have already seen a replacement.
             if (!equivCondition.isWatchable()) {
-                m_giveUpOnObjectToStringValueCache = true;
+                giveUpOnObjectToStringValueCache();
                 return;
             }
         } else if (!condition.isWatchable()) {
-            m_giveUpOnObjectToStringValueCache = true;
+            giveUpOnObjectToStringValueCache();
             return;
         }
     }
@@ -159,7 +146,7 @@ void StructureRareData::setObjectToStringValue(ExecState* exec, VM& vm, Structur
     ASSERT(conditionSet.structuresEnsureValidity());
     for (ObjectPropertyCondition condition : conditionSet) {
         if (condition.condition().kind() == PropertyCondition::Presence) {
-            m_objectToStringAdaptiveInferredValueWatchpoint = std::make_unique<ObjectToStringAdaptiveInferredPropertyValueWatchpoint>(equivCondition, this);
+            m_objectToStringAdaptiveInferredValueWatchpoint = makeUnique<ObjectToStringAdaptiveInferredPropertyValueWatchpoint>(equivCondition, this);
             m_objectToStringAdaptiveInferredValueWatchpoint->install(vm);
         } else
             m_objectToStringAdaptiveWatchpointSet.add(condition, this)->install(vm);
@@ -168,42 +155,31 @@ void StructureRareData::setObjectToStringValue(ExecState* exec, VM& vm, Structur
     m_objectToStringValue.set(vm, this, value);
 }
 
-inline void StructureRareData::clearObjectToStringValue()
+void StructureRareData::clearObjectToStringValue()
 {
     m_objectToStringAdaptiveWatchpointSet.clear();
     m_objectToStringAdaptiveInferredValueWatchpoint.reset();
-    m_objectToStringValue.clear();
+    if (!canCacheObjectToStringValue())
+        m_objectToStringValue.clear();
+}
+
+void StructureRareData::finalizeUnconditionally(VM& vm)
+{
+    if (m_objectToStringAdaptiveInferredValueWatchpoint) {
+        if (!m_objectToStringAdaptiveInferredValueWatchpoint->key().isStillLive(vm)) {
+            clearObjectToStringValue();
+            return;
+        }
+    }
+    for (auto* watchpoint : m_objectToStringAdaptiveWatchpointSet) {
+        if (!watchpoint->key().isStillLive(vm)) {
+            clearObjectToStringValue();
+            return;
+        }
+    }
 }
 
 // ------------- Methods for Object.prototype.toString() helper watchpoint classes --------------
-
-ObjectToStringAdaptiveStructureWatchpoint::ObjectToStringAdaptiveStructureWatchpoint(const ObjectPropertyCondition& key, StructureRareData* structureRareData)
-    : m_key(key)
-    , m_structureRareData(structureRareData)
-{
-    RELEASE_ASSERT(key.watchingRequiresStructureTransitionWatchpoint());
-    RELEASE_ASSERT(!key.watchingRequiresReplacementWatchpoint());
-}
-
-void ObjectToStringAdaptiveStructureWatchpoint::install(VM& vm)
-{
-    RELEASE_ASSERT(m_key.isWatchable());
-
-    m_key.object()->structure(vm)->addTransitionWatchpoint(this);
-}
-
-void ObjectToStringAdaptiveStructureWatchpoint::fireInternal(VM& vm, const FireDetail&)
-{
-    if (!m_structureRareData->isLive())
-        return;
-
-    if (m_key.isWatchable(PropertyCondition::EnsureWatchability)) {
-        install(vm);
-        return;
-    }
-
-    m_structureRareData->clearObjectToStringValue();
-}
 
 ObjectToStringAdaptiveInferredPropertyValueWatchpoint::ObjectToStringAdaptiveInferredPropertyValueWatchpoint(const ObjectPropertyCondition& key, StructureRareData* structureRareData)
     : Base(key)

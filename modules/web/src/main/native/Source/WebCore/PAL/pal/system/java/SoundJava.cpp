@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2017, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2019, Oracle and/or its affiliates. All rights reserved.
  */
 #include "config.h"
 
@@ -22,14 +22,14 @@ void systemBeep()
     ASSERT(cls);
 
     JLObject toolkit(env->CallStaticObjectMethod(cls, getDefaultToolkitMID));
-    CheckAndClearException(env);
+    WTF::CheckAndClearException(env);
     ASSERT(toolkit);
 
     static jmethodID beepMID = env->GetMethodID(cls, "beep", "()V");
     ASSERT(beepMID);
 
     env->CallVoidMethod(toolkit, beepMID);
-    CheckAndClearException(env);
+    WTF::CheckAndClearException(env);
 }
 
 } // namespace WebCore

@@ -27,16 +27,13 @@ package javafx.application;
 
 import java.net.URI;
 
-import netscape.javascript.JSObject;
-
 import com.sun.javafx.application.HostServicesDelegate;
 
 /**
  * This class provides HostServices for an Application. This includes
  * methods to get the code base and document base for an Application,
- * show a web page in a browser, and communicate with the enclosing web page
- * using JavaScript if the Application is running in
- * a browser.
+ * and to show a web page in a browser.
+ *
  * @since JavaFX 2.0
  */
 public final class HostServices {
@@ -54,9 +51,7 @@ public final class HostServices {
 
     /**
      * Gets the code base URI for this application.
-     * If the application was launched via a JNLP file, this method returns
-     * the codebase parameter specified in the JNLP file.
-     * If the application was launched in standalone mode, this method returns
+     * This method returns
      * the directory containing the application jar file. If the
      * application is not packaged in a jar file, this method
      * returns the empty string.
@@ -69,12 +64,7 @@ public final class HostServices {
 
     /**
      * Gets the document base URI for this application.
-     * If the application is embedded in a browser, this method returns the
-     * URI of the web page containing the application.
-     * If the application was launched in webstart mode, this method returns
-     * the the codebase parameter specified in the JNLP file (the document
-     * base and the code base are the same in this mode).
-     * If the application was launched in standalone mode, this method returns
+     * This method returns
      * the URI of the current directory.
      *
      * @return the document base URI for this application.
@@ -125,34 +115,6 @@ public final class HostServices {
      */
     public final void showDocument(String uri) {
         delegate.showDocument(uri);
-    }
-
-    /**
-     * Returns the JavaScript handle of the enclosing DOM window of the web
-     * page containing this application.
-     * This handle is used to access the web page by calling from Java into
-     * JavaScript.
-     * If the application is not embedded into a web page, this method
-     * return null.
-     *
-     * <p>Example:</p>
-     * <ul>
-     * <pre>
-     * JSObject jsWin = getHostServices().getWebContext();
-     * if (jsWin != null) {
-     *     jsWin.eval("var b = document.body;" +
-     *                "var newdiv = document.createElement('div');" +
-     *                "newdiv.innerHTML = '&lt;br&gt;Hello from JavaScript!';" +
-     *                "b.appendChild(newdiv);");
-     * }
-     * </pre>
-     * </ul>
-     *
-     * @return handle of the enclosing DOM window of the web page containing
-     * this application
-     */
-    public final JSObject getWebContext() {
-        return delegate.getWebContext();
     }
 
 }

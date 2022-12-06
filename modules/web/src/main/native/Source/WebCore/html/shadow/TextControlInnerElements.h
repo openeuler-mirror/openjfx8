@@ -37,10 +37,10 @@ class TextControlInnerContainer final : public HTMLDivElement {
     WTF_MAKE_ISO_ALLOCATED(TextControlInnerContainer);
 public:
     static Ref<TextControlInnerContainer> create(Document&);
-protected:
+private:
     TextControlInnerContainer(Document&);
     RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) override;
-    std::optional<ElementStyle> resolveCustomStyle(const RenderStyle& parentStyle, const RenderStyle* shadowHostStyle) override;
+    Optional<Style::ElementStyle> resolveCustomStyle(const RenderStyle& parentStyle, const RenderStyle* shadowHostStyle) override;
 };
 
 class TextControlInnerElement final : public HTMLDivElement {
@@ -48,11 +48,10 @@ class TextControlInnerElement final : public HTMLDivElement {
 public:
     static Ref<TextControlInnerElement> create(Document&);
 
-protected:
-    TextControlInnerElement(Document&);
-    std::optional<ElementStyle> resolveCustomStyle(const RenderStyle& parentStyle, const RenderStyle* shadowHostStyle) override;
-
 private:
+    TextControlInnerElement(Document&);
+    Optional<Style::ElementStyle> resolveCustomStyle(const RenderStyle& parentStyle, const RenderStyle* shadowHostStyle) override;
+
     bool isMouseFocusable() const override { return false; }
 };
 
@@ -68,7 +67,7 @@ public:
 private:
     TextControlInnerTextElement(Document&);
     RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) override;
-    std::optional<ElementStyle> resolveCustomStyle(const RenderStyle& parentStyle, const RenderStyle* shadowHostStyle) override;
+    Optional<Style::ElementStyle> resolveCustomStyle(const RenderStyle& parentStyle, const RenderStyle* shadowHostStyle) override;
     bool isMouseFocusable() const override { return false; }
     bool isTextControlInnerTextElement() const override { return true; }
 };
@@ -81,7 +80,7 @@ public:
 private:
     TextControlPlaceholderElement(Document&);
 
-    std::optional<ElementStyle> resolveCustomStyle(const RenderStyle& parentStyle, const RenderStyle* shadowHostStyle) override;
+    Optional<Style::ElementStyle> resolveCustomStyle(const RenderStyle& parentStyle, const RenderStyle* shadowHostStyle) override;
 };
 
 class SearchFieldResultsButtonElement final : public HTMLDivElement {
@@ -90,7 +89,7 @@ public:
     static Ref<SearchFieldResultsButtonElement> create(Document&);
 
     void defaultEventHandler(Event&) override;
-#if !PLATFORM(IOS)
+#if !PLATFORM(IOS_FAMILY)
     bool willRespondToMouseClickEvents() override;
 #endif
 
@@ -105,13 +104,14 @@ public:
     static Ref<SearchFieldCancelButtonElement> create(Document&);
 
     void defaultEventHandler(Event&) override;
-#if !PLATFORM(IOS)
+#if !PLATFORM(IOS_FAMILY)
     bool willRespondToMouseClickEvents() override;
 #endif
 
 private:
     SearchFieldCancelButtonElement(Document&);
     bool isMouseFocusable() const override { return false; }
+    Optional<Style::ElementStyle> resolveCustomStyle(const RenderStyle& parentStyle, const RenderStyle* shadowHostStyle) override;
 };
 
 } // namespace WebCore

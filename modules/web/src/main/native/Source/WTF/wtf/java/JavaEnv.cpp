@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,12 +23,14 @@
  * questions.
 */
 #include "config.h"
-#include <wtf/java/JavaEnv.h>
 
 #include <wtf/Assertions.h>
-
+#include <wtf/java/JavaEnv.h>
 
 JavaVM* jvm = 0;
+
+namespace WTF {
+JGClass comSunWebkitFileSystem;
 
 bool CheckAndClearException(JNIEnv* env)
 {
@@ -40,157 +42,6 @@ bool CheckAndClearException(JNIEnv* env)
     return false;
 }
 
-namespace WebCore {
-
-jclass PG_GetGraphicsManagerClass(JNIEnv* env)
-{
-    static JGClass graphicsManagerCls(
-        env->FindClass("com/sun/webkit/graphics/WCGraphicsManager"));
-    ASSERT(graphicsManagerCls);
-    return graphicsManagerCls;
-}
-
-jclass PG_GetGraphicsContextClass(JNIEnv* env)
-{
-    static JGClass graphicsContextCls(
-        env->FindClass("com/sun/webkit/graphics/WCGraphicsContext"));
-    ASSERT(graphicsContextCls);
-    return graphicsContextCls;
-}
-
-jclass PG_GetPathClass(JNIEnv* env)
-{
-    static JGClass pathCls(
-        env->FindClass("com/sun/webkit/graphics/WCPath"));
-    ASSERT(pathCls);
-    return pathCls;
-}
-
-jclass PG_GetPathIteratorClass(JNIEnv* env)
-{
-    static JGClass pathIteratorCls(
-        env->FindClass("com/sun/webkit/graphics/WCPathIterator"));
-    ASSERT(pathIteratorCls);
-    return pathIteratorCls;
-}
-
-
-jclass PG_GetImageClass(JNIEnv* env)
-{
-    static JGClass imageCls(
-        env->FindClass("com/sun/webkit/graphics/WCImage"));
-    ASSERT(imageCls);
-    return imageCls;
-}
-
-jclass PG_GetImageFrameClass(JNIEnv* env)
-{
-    static JGClass imageFrameCls(
-        env->FindClass("com/sun/webkit/graphics/WCImageFrame"));
-    ASSERT(imageFrameCls);
-    return imageFrameCls;
-}
-
-jclass PG_GetRectangleClass(JNIEnv* env)
-{
-    static JGClass rectangleCls(
-        env->FindClass("com/sun/webkit/graphics/WCRectangle"));
-    ASSERT(rectangleCls);
-    return rectangleCls;
-}
-
-jclass PG_GetFontClass(JNIEnv* env)
-{
-    static JGClass fontCls(
-        env->FindClass("com/sun/webkit/graphics/WCFont"));
-    ASSERT(fontCls);
-    return fontCls;
-}
-
-jclass PG_GetFontCustomPlatformDataClass(JNIEnv* env)
-{
-    static JGClass fontCustomPlatformDataCls(env->FindClass(
-            "com/sun/webkit/graphics/WCFontCustomPlatformData"));
-    ASSERT(fontCustomPlatformDataCls);
-    return fontCustomPlatformDataCls;
-}
-
-JLObject PL_GetGraphicsManager(JNIEnv* env)
-{
-    static jmethodID getGraphicsManagerMID = env->GetStaticMethodID(PG_GetGraphicsManagerClass(env),
-            "getGraphicsManager",
-            "()Lcom/sun/webkit/graphics/WCGraphicsManager;");
-    ASSERT(getGraphicsManagerMID);
-
-    JLObject mgr(env->CallStaticObjectMethod(
-        PG_GetGraphicsManagerClass(env), getGraphicsManagerMID));
-    ASSERT(mgr);
-    CheckAndClearException(env);
-
-    return mgr;
-}
-
-jclass PG_GetGraphicsImageDecoderClass(JNIEnv* env)
-{
-    static JGClass graphicsImageDecoderCls(
-        env->FindClass("com/sun/webkit/graphics/WCImageDecoder"));
-    ASSERT(graphicsImageDecoderCls);
-    return graphicsImageDecoderCls;
-}
-
-jclass PG_GetRefClass(JNIEnv* env)
-{
-    static JGClass refCls(
-        env->FindClass("com/sun/webkit/graphics/Ref"));
-    ASSERT(refCls);
-    return refCls;
-}
-
-jclass PG_GetRenderQueueClass(JNIEnv* env)
-{
-    static JGClass rqCls(
-        env->FindClass("com/sun/webkit/graphics/WCRenderQueue"));
-    ASSERT(rqCls);
-    return rqCls;
-}
-
-jclass PG_GetMediaPlayerClass(JNIEnv* env)
-{
-    static JGClass mediaPlayerCls(
-        env->FindClass("com/sun/webkit/graphics/WCMediaPlayer"));
-    ASSERT(mediaPlayerCls);
-    return mediaPlayerCls;
-}
-
-jclass PG_GetTransformClass(JNIEnv* env)
-{
-    static JGClass cls(
-        env->FindClass("com/sun/webkit/graphics/WCTransform"));
-    ASSERT(cls);
-    return cls;
-}
-
-jclass PG_GetWebPageClass(JNIEnv* env)
-{
-    static JGClass cls(
-        env->FindClass("com/sun/webkit/WebPage"));
-    ASSERT(cls);
-    return cls;
-}
-
-jclass PG_GetColorChooserClass(JNIEnv* env)
-{
-    static JGClass cls(
-        env->FindClass("com/sun/webkit/ColorChooser"));
-    return cls;
-}
-
-jclass getTimerClass(JNIEnv* env)
-{
-    static JGClass timerCls(
-        env->FindClass("com/sun/webkit/Timer"));
-    return timerCls;
-}
 
 jclass PL_GetClass(JNIEnv* env)
 {
@@ -254,14 +105,18 @@ bool PL_IsEnabled(JNIEnv* env, jobject perfLogger)
     return isEnabled;
 }
 
-} // namespace WebCore
+} // namespace WTF
 
 extern "C" {
 
 #if PLATFORM(JAVA_WIN) && !defined(NDEBUG)
 #include <crtdbg.h>
 #endif
+#ifdef STATIC_BUILD
+JNIEXPORT jint JNICALL JNI_OnLoad_jfxwebkit(JavaVM* vm, void*)
+#else
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*)
+#endif
 {
 #if PLATFORM(JAVA_WIN) && !defined(NDEBUG)
     _CrtSetReportMode( _CRT_ERROR, _CRTDBG_MODE_FILE );
@@ -277,6 +132,21 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*)
     _CrtSetDbgFlag( tmpFlag );
 #endif
     jvm = vm;
+
+    JNIEnv* env = WTF::GetJavaEnv();
+
+    // Class com.sun.webkit.FileSystem is accessed from a newly created native
+    // thread from FileSystemJava. The class is resolved at initialization time
+    // as in the JNI_OnLoad callback the classloader used to load the native
+    // library is also used to load the target class, which is by construction
+    // the right one
+    static jclass fileSystemClass = env->FindClass("com/sun/webkit/FileSystem");
+
+    ASSERT(fileSystemClass);
+
+    static JGClass fileSystemRef(fileSystemClass);
+    WTF::comSunWebkitFileSystem = fileSystemRef;
+
     return JNI_VERSION_1_2;
 }
 

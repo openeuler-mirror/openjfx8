@@ -24,11 +24,10 @@
  */
 
 #include "config.h"
-#include "Language.h"
+#include <wtf/Language.h>
 
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
-#include <wtf/RetainPtr.h>
 #include <wtf/text/WTFString.h>
 
 #if USE(CF) && !PLATFORM(WIN)
@@ -59,9 +58,10 @@ void removeLanguageChangeObserver(void* context)
 
 void languageDidChange()
 {
-    ObserverMap::iterator end = observerMap().end();
-    for (ObserverMap::iterator iter = observerMap().begin(); iter != end; ++iter)
-        iter->value(iter->key);
+    for (auto& observer : copyToVector(observerMap())) {
+        if (observerMap().contains(observer.key))
+            observer.value(observer.key);
+    }
 }
 
 String defaultLanguage()
@@ -102,7 +102,7 @@ static Vector<String> isolatedCopy(const Vector<String>& strings)
 Vector<String> userPreferredLanguages()
 {
     {
-        std::lock_guard<Lock> lock(userPreferredLanguagesMutex);
+        auto locker = holdLock(userPreferredLanguagesMutex);
         Vector<String>& override = preferredLanguagesOverride();
         if (!override.isEmpty())
             return isolatedCopy(override);

@@ -94,11 +94,7 @@ output_file.write("""
 
 #include "CSSParserSelector.h"
 
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunknown-pragmas"
-#pragma clang diagnostic ignored "-Wimplicit-fallthrough"
-#endif
+IGNORE_WARNINGS_BEGIN("implicit-fallthrough")
 
 // Older versions of gperf like to use the `register` keyword.
 #define register
@@ -178,7 +174,7 @@ static inline const SelectorPseudoClassOrCompatibilityPseudoElementEntry* parseP
 
     for (unsigned i = 0; i < length; ++i) {
         UChar character = characters[i];
-        if (character & ~0xff)
+        if (!isLatin1(character))
             return nullptr;
 
         buffer[i] = static_cast<LChar>(character);
@@ -188,7 +184,7 @@ static inline const SelectorPseudoClassOrCompatibilityPseudoElementEntry* parseP
 """ % longest_keyword)
 
 output_file.write("""
-PseudoClassOrCompatibilityPseudoElement parsePseudoClassAndCompatibilityElementString(const StringView& pseudoTypeString)
+PseudoClassOrCompatibilityPseudoElement parsePseudoClassAndCompatibilityElementString(StringView pseudoTypeString)
 {
     const SelectorPseudoClassOrCompatibilityPseudoElementEntry* entry;
     if (pseudoTypeString.is8Bit())
@@ -203,9 +199,7 @@ PseudoClassOrCompatibilityPseudoElement parsePseudoClassAndCompatibilityElementS
 
 } // namespace WebCore
 
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#endif
+IGNORE_WARNINGS_END
 
 """)
 output_file.close()

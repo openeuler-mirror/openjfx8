@@ -21,18 +21,18 @@
  */
 /**
  * SECTION:element-mpegaudioparse
+ * @title: mpegaudioparse
  * @short_description: MPEG audio parser
  * @see_also: #GstAmrParse, #GstAACParse
  *
  * Parses and frames mpeg1 audio streams. Provides seeking.
  *
- * <refsect2>
- * <title>Example launch line</title>
+ * ## Example launch line
  * |[
  * gst-launch-1.0 filesrc location=test.mp3 ! mpegaudioparse ! mpg123audiodec
  *  ! audioconvert ! audioresample ! autoaudiosink
  * ]|
- * </refsect2>
+ *
  */
 
 /* FIXME: we should make the base class (GstBaseParse) aware of the
@@ -199,6 +199,7 @@ gst_mpeg_audio_parse_reset (GstMpegAudioParse * mp3parse)
   mp3parse->freerate = 0;
 
   mp3parse->hdr_bitrate = 0;
+  mp3parse->bitrate_is_constant = TRUE;
 
   mp3parse->xing_flags = 0;
   mp3parse->xing_bitrate = 0;
@@ -471,6 +472,17 @@ gst_mpeg_audio_parse_head_check (GstMpegAudioParse * mp3parse,
     return FALSE;
   }
   /* if it's an invalid bitrate */
+#ifdef GSTREAMER_LITE
+  // Lets disable free format, since it is not supported by dshowwrapper.
+  // It was enabled with JDK-8199527 (GStreamer 1.14), we disabling it in same
+  // way as before 1.14. This required to fix issue with some MP3 files.
+  // See JDK-8213510.
+  if (((head >> 12) & 0xf) == 0x0) {
+    GST_WARNING_OBJECT (mp3parse, "invalid bitrate: 0x%lx."
+        "Free format files are not supported yet", (head >> 12) & 0xf);
+    return FALSE;
+  }
+#endif // GSTREAMER_LITE
   if (((head >> 12) & 0xf) == 0xf) {
     GST_WARNING_OBJECT (mp3parse, "invalid bitrate: 0x%lx", (head >> 12) & 0xf);
     return FALSE;
@@ -755,6 +767,9 @@ gst_mpeg_audio_parse_handle_frame (GstBaseParse * parse,
         (version == 1) ? 10 : 30, 2);
   }
 
+  if (mp3parse->hdr_bitrate && mp3parse->hdr_bitrate != bitrate) {
+    mp3parse->bitrate_is_constant = FALSE;
+  }
   mp3parse->hdr_bitrate = bitrate;
 
   /* For first frame; check for seek tables and output a codec tag */
@@ -1227,6 +1242,14 @@ gst_mpeg_audio_parse_time_to_bytepos (GstMpegAudioParse * mp3parse,
     return TRUE;
   }
 
+  /* If we have had a constant bit rate (so far), use it directly, as it
+   * may give slightly more accurate results than the base class. */
+  if (mp3parse->bitrate_is_constant && mp3parse->hdr_bitrate) {
+    *bytepos = gst_util_uint64_scale (ts, mp3parse->hdr_bitrate,
+        8 * GST_SECOND);
+    return TRUE;
+  }
+
   return FALSE;
 }
 
@@ -1289,6 +1312,14 @@ gst_mpeg_audio_parse_bytepos_to_time (GstMpegAudioParse * mp3parse,
 
     *ts = gst_gdouble_to_guint64 (fa + ((fb - fa) / (b - a)) * (bytepos - a));
 
+    return TRUE;
+  }
+
+  /* If we have had a constant bit rate (so far), use it directly, as it
+   * may give slightly more accurate results than the base class. */
+  if (mp3parse->bitrate_is_constant && mp3parse->hdr_bitrate) {
+    *ts = gst_util_uint64_scale (bytepos, 8 * GST_SECOND,
+        mp3parse->hdr_bitrate);
     return TRUE;
   }
 

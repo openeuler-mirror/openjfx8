@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,8 +39,10 @@ struct ApplePayPaymentMethod {
 
     String displayName;
     String network;
-    std::optional<Type> type;
-    std::optional<ApplePayPaymentPass> paymentPass;
+    Optional<Type> type;
+    Optional<ApplePayPaymentPass> paymentPass;
+    Optional<ApplePayPaymentContact> billingContact;
+    String bindToken;
 };
 
 }

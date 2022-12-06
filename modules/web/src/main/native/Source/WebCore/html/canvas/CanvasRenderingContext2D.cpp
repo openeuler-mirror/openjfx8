@@ -36,16 +36,20 @@
 #include "CSSFontSelector.h"
 #include "CSSParser.h"
 #include "CSSPropertyNames.h"
+#include "Gradient.h"
 #include "ImageBuffer.h"
 #include "ImageData.h"
 #include "InspectorInstrumentation.h"
 #include "Path2D.h"
 #include "RenderTheme.h"
+#include "ResourceLoadObserver.h"
+#include "RuntimeEnabledFeatures.h"
+#include "StyleBuilder.h"
 #include "StyleProperties.h"
-#include "StyleResolver.h"
 #include "TextMetrics.h"
 #include "TextRun.h"
 #include <wtf/CheckedArithmetic.h>
+#include <wtf/IsoMallocInlines.h>
 #include <wtf/MathExtras.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -53,17 +57,19 @@ namespace WebCore {
 
 using namespace HTMLNames;
 
-std::unique_ptr<CanvasRenderingContext2D> CanvasRenderingContext2D::create(CanvasBase& canvas, bool usesCSSCompatibilityParseMode, bool usesDashboardCompatibilityMode)
+WTF_MAKE_ISO_ALLOCATED_IMPL(CanvasRenderingContext2D);
+
+std::unique_ptr<CanvasRenderingContext2D> CanvasRenderingContext2D::create(CanvasBase& canvas, bool usesCSSCompatibilityParseMode)
 {
-    auto renderingContext = std::unique_ptr<CanvasRenderingContext2D>(new CanvasRenderingContext2D(canvas, usesCSSCompatibilityParseMode, usesDashboardCompatibilityMode));
+    auto renderingContext = std::unique_ptr<CanvasRenderingContext2D>(new CanvasRenderingContext2D(canvas, usesCSSCompatibilityParseMode));
 
     InspectorInstrumentation::didCreateCanvasRenderingContext(*renderingContext);
 
     return renderingContext;
 }
 
-CanvasRenderingContext2D::CanvasRenderingContext2D(CanvasBase& canvas, bool usesCSSCompatibilityParseMode, bool usesDashboardCompatibilityMode)
-    : CanvasRenderingContext2DBase(canvas, usesCSSCompatibilityParseMode, usesDashboardCompatibilityMode)
+CanvasRenderingContext2D::CanvasRenderingContext2D(CanvasBase& canvas, bool usesCSSCompatibilityParseMode)
+    : CanvasRenderingContext2DBase(canvas, usesCSSCompatibilityParseMode)
 {
 }
 
@@ -84,7 +90,7 @@ void CanvasRenderingContext2D::drawFocusIfNeededInternal(const Path& path, Eleme
     auto* context = drawingContext();
     if (!element.focused() || !state().hasInvertibleTransform || path.isEmpty() || !element.isDescendantOf(canvas()) || !context)
         return;
-    context->drawFocusRing(path, 1, 1, RenderTheme::focusRingColor(element.document().styleColorOptions()));
+    context->drawFocusRing(path, 1, 1, RenderTheme::singleton().focusRingColor(element.document().styleColorOptions(canvas().computedStyle())));
 }
 
 String CanvasRenderingContext2D::font() const
@@ -106,6 +112,7 @@ String CanvasRenderingContext2D::font() const
     for (unsigned i = 0; i < fontDescription.familyCount(); ++i) {
         if (i)
             serializedFont.append(',');
+
         // FIXME: We should append family directly to serializedFont rather than building a temporary string.
         String family = fontDescription.familyAt(i);
         if (family.startsWith("-webkit-"))
@@ -113,8 +120,7 @@ String CanvasRenderingContext2D::font() const
         if (family.contains(' '))
             family = makeString('"', family, '"');
 
-        serializedFont.append(' ');
-        serializedFont.append(family);
+        serializedFont.append(' ', family);
     }
 
     return serializedFont.toString();
@@ -122,6 +128,9 @@ String CanvasRenderingContext2D::font() const
 
 void CanvasRenderingContext2D::setFont(const String& newFont)
 {
+    if (newFont.isEmpty())
+        return;
+
     if (newFont == state().unparsedFont && state().font.realized())
         return;
 
@@ -163,21 +172,19 @@ void CanvasRenderingContext2D::setFont(const String& newFont)
     newStyle->fontCascade().update(&document.fontSelector());
 
     // Now map the font property longhands into the style.
-    StyleResolver& styleResolver = canvas().styleResolver();
-    styleResolver.applyPropertyToStyle(CSSPropertyFontFamily, parsedStyle->getPropertyCSSValue(CSSPropertyFontFamily).get(), WTFMove(newStyle));
-    styleResolver.applyPropertyToCurrentStyle(CSSPropertyFontStyle, parsedStyle->getPropertyCSSValue(CSSPropertyFontStyle).get());
-    styleResolver.applyPropertyToCurrentStyle(CSSPropertyFontVariantCaps, parsedStyle->getPropertyCSSValue(CSSPropertyFontVariantCaps).get());
-    styleResolver.applyPropertyToCurrentStyle(CSSPropertyFontWeight, parsedStyle->getPropertyCSSValue(CSSPropertyFontWeight).get());
 
-    // As described in BUG66291, setting font-size and line-height on a font may entail a CSSPrimitiveValue::computeLengthDouble call,
-    // which assumes the fontMetrics are available for the affected font, otherwise a crash occurs (see http://trac.webkit.org/changeset/96122).
-    // The updateFont() calls below update the fontMetrics and ensure the proper setting of font-size and line-height.
-    styleResolver.updateFont();
-    styleResolver.applyPropertyToCurrentStyle(CSSPropertyFontSize, parsedStyle->getPropertyCSSValue(CSSPropertyFontSize).get());
-    styleResolver.updateFont();
-    styleResolver.applyPropertyToCurrentStyle(CSSPropertyLineHeight, parsedStyle->getPropertyCSSValue(CSSPropertyLineHeight).get());
+    Style::MatchResult matchResult;
+    auto parentStyle = RenderStyle::clone(*newStyle);
+    Style::Builder styleBuilder(*newStyle, { document, parentStyle }, matchResult, { });
 
-    modifiableState().font.initialize(document.fontSelector(), *styleResolver.style());
+    styleBuilder.applyPropertyValue(CSSPropertyFontFamily, parsedStyle->getPropertyCSSValue(CSSPropertyFontFamily).get());
+    styleBuilder.applyPropertyValue(CSSPropertyFontStyle, parsedStyle->getPropertyCSSValue(CSSPropertyFontStyle).get());
+    styleBuilder.applyPropertyValue(CSSPropertyFontVariantCaps, parsedStyle->getPropertyCSSValue(CSSPropertyFontVariantCaps).get());
+    styleBuilder.applyPropertyValue(CSSPropertyFontWeight, parsedStyle->getPropertyCSSValue(CSSPropertyFontWeight).get());
+    styleBuilder.applyPropertyValue(CSSPropertyFontSize, parsedStyle->getPropertyCSSValue(CSSPropertyFontSize).get());
+    styleBuilder.applyPropertyValue(CSSPropertyLineHeight, parsedStyle->getPropertyCSSValue(CSSPropertyLineHeight).get());
+
+    modifiableState().font.initialize(document.fontSelector(), *newStyle);
 }
 
 static CanvasTextAlign toCanvasTextAlign(TextAlign textAlign)
@@ -321,12 +328,12 @@ void CanvasRenderingContext2D::setDirection(CanvasDirection direction)
     modifiableState().direction = direction;
 }
 
-void CanvasRenderingContext2D::fillText(const String& text, float x, float y, std::optional<float> maxWidth)
+void CanvasRenderingContext2D::fillText(const String& text, float x, float y, Optional<float> maxWidth)
 {
     drawTextInternal(text, x, y, true, maxWidth);
 }
 
-void CanvasRenderingContext2D::strokeText(const String& text, float x, float y, std::optional<float> maxWidth)
+void CanvasRenderingContext2D::strokeText(const String& text, float x, float y, Optional<float> maxWidth)
 {
     drawTextInternal(text, x, y, false, maxWidth);
 }
@@ -363,6 +370,12 @@ static void normalizeSpaces(String& text)
 
 Ref<TextMetrics> CanvasRenderingContext2D::measureText(const String& text)
 {
+    if (RuntimeEnabledFeatures::sharedFeatures().webAPIStatisticsEnabled()) {
+        auto& canvas = this->canvas();
+        ResourceLoadObserver::shared().logCanvasWriteOrMeasure(canvas.document(), text);
+        ResourceLoadObserver::shared().logCanvasRead(canvas.document());
+    }
+
     Ref<TextMetrics> metrics = TextMetrics::create();
 
     String normalizedText = text;
@@ -372,7 +385,7 @@ Ref<TextMetrics> CanvasRenderingContext2D::measureText(const String& text)
     auto direction = toTextDirection(state().direction, &computedStyle);
     bool override = computedStyle ? isOverride(computedStyle->unicodeBidi()) : false;
 
-    TextRun textRun(normalizedText, 0, 0, AllowTrailingExpansion, direction, override, true);
+    TextRun textRun(normalizedText, 0, 0, AllowRightExpansion, direction, override, true);
     auto& font = fontProxy();
     auto& fontMetrics = font.fontMetrics();
 
@@ -449,8 +462,11 @@ FloatPoint CanvasRenderingContext2D::textOffset(float width, TextDirection direc
     return offset;
 }
 
-void CanvasRenderingContext2D::drawTextInternal(const String& text, float x, float y, bool fill, std::optional<float> maxWidth)
+void CanvasRenderingContext2D::drawTextInternal(const String& text, float x, float y, bool fill, Optional<float> maxWidth)
 {
+    if (RuntimeEnabledFeatures::sharedFeatures().webAPIStatisticsEnabled())
+        ResourceLoadObserver::shared().logCanvasWriteOrMeasure(this->canvas().document(), text);
+
     auto& fontProxy = this->fontProxy();
     const auto& fontMetrics = fontProxy.fontMetrics();
 
@@ -482,7 +498,7 @@ void CanvasRenderingContext2D::drawTextInternal(const String& text, float x, flo
     auto direction = toTextDirection(state().direction, &computedStyle);
     bool override = computedStyle ? isOverride(computedStyle->unicodeBidi()) : false;
 
-    TextRun textRun(normalizedText, 0, 0, AllowTrailingExpansion, direction, override, true);
+    TextRun textRun(normalizedText, 0, 0, AllowRightExpansion, direction, override, true);
     float fontWidth = fontProxy.width(textRun);
     bool useMaxWidth = maxWidth && maxWidth.value() < fontWidth;
     float width = useMaxWidth ? maxWidth.value() : fontWidth;
@@ -530,7 +546,7 @@ void CanvasRenderingContext2D::drawTextInternal(const String& text, float x, flo
             fontProxy.drawBidiText(*c, textRun, location + offset, FontCascade::UseFallbackIfFontNotReady);
         }
 
-        auto maskImage = ImageBuffer::createCompatibleBuffer(maskRect.size(), ColorSpaceSRGB, *c);
+        auto maskImage = ImageBuffer::createCompatibleBuffer(maskRect.size(), ColorSpace::SRGB, *c);
         if (!maskImage)
             return;
 
@@ -543,7 +559,7 @@ void CanvasRenderingContext2D::drawTextInternal(const String& text, float x, flo
             maskImageContext.setStrokeThickness(c->strokeThickness());
         }
 
-        maskImageContext.setTextDrawingMode(fill ? TextModeFill : TextModeStroke);
+        maskImageContext.setTextDrawingMode(fill ? TextDrawingMode::Fill : TextDrawingMode::Stroke);
 
         if (useMaxWidth) {
             maskImageContext.translate(location - maskRect.location());
@@ -563,7 +579,7 @@ void CanvasRenderingContext2D::drawTextInternal(const String& text, float x, flo
     }
 #endif
 
-    c->setTextDrawingMode(fill ? TextModeFill : TextModeStroke);
+    c->setTextDrawingMode(fill ? TextDrawingMode::Fill : TextDrawingMode::Stroke);
 
     GraphicsContextStateSaver stateSaver(*c);
     if (useMaxWidth) {
@@ -578,7 +594,7 @@ void CanvasRenderingContext2D::drawTextInternal(const String& text, float x, flo
         fontProxy.drawBidiText(*c, textRun, location, FontCascade::UseFallbackIfFontNotReady);
         endCompositeLayer();
         didDrawEntireCanvas();
-    } else if (state().globalComposite == CompositeCopy) {
+    } else if (state().globalComposite == CompositeOperator::Copy) {
         clearCanvas();
         fontProxy.drawBidiText(*c, textRun, location, FontCascade::UseFallbackIfFontNotReady);
         didDrawEntireCanvas();

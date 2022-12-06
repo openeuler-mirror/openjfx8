@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,6 +25,8 @@
 
 #include "BInline.h"
 #include "Cache.h"
+#include "DebugHeap.h"
+#include "Environment.h"
 #include "Heap.h"
 #include "PerProcess.h"
 
@@ -46,30 +48,57 @@ Cache::Cache(HeapKind heapKind)
     : m_deallocator(PerProcess<PerHeapKind<Heap>>::get()->at(heapKind))
     , m_allocator(PerProcess<PerHeapKind<Heap>>::get()->at(heapKind), m_deallocator)
 {
+    BASSERT(!Environment::get()->isDebugHeapEnabled());
 }
 
 BNO_INLINE void* Cache::tryAllocateSlowCaseNullCache(HeapKind heapKind, size_t size)
 {
+    if (auto* debugHeap = DebugHeap::tryGet())
+        return debugHeap->malloc(size, FailureAction::ReturnNull);
     return PerThread<PerHeapKind<Cache>>::getSlowCase()->at(mapToActiveHeapKind(heapKind)).allocator().tryAllocate(size);
 }
 
 BNO_INLINE void* Cache::allocateSlowCaseNullCache(HeapKind heapKind, size_t size)
 {
+    if (auto* debugHeap = DebugHeap::tryGet())
+        return debugHeap->malloc(size, FailureAction::Crash);
     return PerThread<PerHeapKind<Cache>>::getSlowCase()->at(mapToActiveHeapKind(heapKind)).allocator().allocate(size);
+}
+
+BNO_INLINE void* Cache::tryAllocateSlowCaseNullCache(HeapKind heapKind, size_t alignment, size_t size)
+{
+    if (auto* debugHeap = DebugHeap::tryGet())
+        return debugHeap->memalign(alignment, size, FailureAction::ReturnNull);
+    return PerThread<PerHeapKind<Cache>>::getSlowCase()->at(mapToActiveHeapKind(heapKind)).allocator().tryAllocate(alignment, size);
 }
 
 BNO_INLINE void* Cache::allocateSlowCaseNullCache(HeapKind heapKind, size_t alignment, size_t size)
 {
+    if (auto* debugHeap = DebugHeap::tryGet())
+        return debugHeap->memalign(alignment, size, FailureAction::Crash);
     return PerThread<PerHeapKind<Cache>>::getSlowCase()->at(mapToActiveHeapKind(heapKind)).allocator().allocate(alignment, size);
 }
 
 BNO_INLINE void Cache::deallocateSlowCaseNullCache(HeapKind heapKind, void* object)
 {
+    if (auto* debugHeap = DebugHeap::tryGet()) {
+        debugHeap->free(object);
+        return;
+    }
     PerThread<PerHeapKind<Cache>>::getSlowCase()->at(mapToActiveHeapKind(heapKind)).deallocator().deallocate(object);
+}
+
+BNO_INLINE void* Cache::tryReallocateSlowCaseNullCache(HeapKind heapKind, void* object, size_t newSize)
+{
+    if (auto* debugHeap = DebugHeap::tryGet())
+        return debugHeap->realloc(object, newSize, FailureAction::ReturnNull);
+    return PerThread<PerHeapKind<Cache>>::getSlowCase()->at(mapToActiveHeapKind(heapKind)).allocator().tryReallocate(object, newSize);
 }
 
 BNO_INLINE void* Cache::reallocateSlowCaseNullCache(HeapKind heapKind, void* object, size_t newSize)
 {
+    if (auto* debugHeap = DebugHeap::tryGet())
+        return debugHeap->realloc(object, newSize, FailureAction::Crash);
     return PerThread<PerHeapKind<Cache>>::getSlowCase()->at(mapToActiveHeapKind(heapKind)).allocator().reallocate(object, newSize);
 }
 

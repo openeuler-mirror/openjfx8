@@ -27,6 +27,7 @@
 #pragma once
 
 #include "FloatPoint.h"
+#include "LengthBox.h"
 
 #if USE(CG)
 typedef struct CGRect CGRect;
@@ -45,6 +46,7 @@ typedef struct _cairo_rectangle cairo_rectangle_t;
 #endif
 
 #if PLATFORM(WIN)
+typedef struct tagRECT RECT;
 struct D2D_RECT_F;
 typedef D2D_RECT_F D2D1_RECT_F;
 #endif
@@ -89,6 +91,8 @@ public:
     float width() const { return m_size.width(); }
     float height() const { return m_size.height(); }
 
+    float area() const { return m_size.area(); }
+
     void setX(float x) { m_location.setX(x); }
     void setY(float y) { m_location.setY(y); }
     void setWidth(float width) { m_size.setWidth(width); }
@@ -105,6 +109,11 @@ public:
     void move(float dx, float dy) { m_location.move(dx, dy); }
 
     void expand(const FloatSize& size) { m_size += size; }
+    void expand(const FloatBoxExtent& box)
+    {
+        m_location.move(-box.left(), -box.top());
+        m_size.expand(box.left() + box.right(), box.top() + box.bottom());
+    }
     void expand(float dw, float dh) { m_size.expand(dw, dh); }
     void contract(const FloatSize& size) { m_size -= size; }
     void contract(float dw, float dh) { m_size.expand(-dw, -dh); }
@@ -115,21 +124,36 @@ public:
         setX(edge);
         setWidth(std::max(0.0f, width() - delta));
     }
+
     void shiftMaxXEdgeTo(float edge)
     {
         float delta = edge - maxX();
         setWidth(std::max(0.0f, width() + delta));
     }
+
     void shiftYEdgeTo(float edge)
     {
         float delta = edge - y();
         setY(edge);
         setHeight(std::max(0.0f, height() - delta));
     }
+
     void shiftMaxYEdgeTo(float edge)
     {
         float delta = edge - maxY();
         setHeight(std::max(0.0f, height() + delta));
+    }
+
+    void shiftXEdgeBy(float delta)
+    {
+        move(delta, 0);
+        setWidth(std::max(0.0f, width() - delta));
+    }
+
+    void shiftYEdgeBy(float delta)
+    {
+        move(0, delta);
+        setHeight(std::max(0.0f, height() - delta));
     }
 
     FloatPoint minXMinYCorner() const { return m_location; } // typically topLeft
@@ -138,10 +162,12 @@ public:
     FloatPoint maxXMaxYCorner() const { return FloatPoint(m_location.x() + m_size.width(), m_location.y() + m_size.height()); } // typically bottomRight
 
     WEBCORE_EXPORT bool intersects(const FloatRect&) const;
+    WEBCORE_EXPORT bool inclusivelyIntersects(const FloatRect&) const;
     WEBCORE_EXPORT bool contains(const FloatRect&) const;
     WEBCORE_EXPORT bool contains(const FloatPoint&, ContainsMode = InsideOrOnStroke) const;
 
     WEBCORE_EXPORT void intersect(const FloatRect&);
+    bool edgeInclusiveIntersect(const FloatRect&);
     WEBCORE_EXPORT void unite(const FloatRect&);
     void uniteEvenIfEmpty(const FloatRect&);
     void uniteIfNonZero(const FloatRect&);
@@ -193,6 +219,7 @@ public:
 #endif
 
 #if PLATFORM(WIN)
+    WEBCORE_EXPORT FloatRect(const RECT&);
     WEBCORE_EXPORT FloatRect(const D2D1_RECT_F&);
     WEBCORE_EXPORT operator D2D1_RECT_F() const;
 #endif
@@ -268,5 +295,8 @@ WEBCORE_EXPORT IntRect roundedIntRect(const FloatRect&);
 
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, const FloatRect&);
 
-}
+#ifdef __OBJC__
+WEBCORE_EXPORT id makeNSArrayElement(const FloatRect&);
+#endif
 
+}

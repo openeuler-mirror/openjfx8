@@ -23,6 +23,7 @@
 #include "Animation.h"
 
 #include <wtf/NeverDestroyed.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 
@@ -32,10 +33,6 @@ Animation::Animation()
     , m_delay(initialDelay())
     , m_duration(initialDuration())
     , m_timingFunction(initialTimingFunction())
-#if ENABLE(CSS_ANIMATIONS_LEVEL_2)
-    , m_trigger(initialTrigger())
-#endif
-    , m_mode(AnimateAll)
     , m_direction(initialDirection())
     , m_fillMode(static_cast<unsigned>(initialFillMode()))
     , m_playState(static_cast<unsigned>(initialPlayState()))
@@ -48,9 +45,6 @@ Animation::Animation()
     , m_playStateSet(false)
     , m_propertySet(false)
     , m_timingFunctionSet(false)
-#if ENABLE(CSS_ANIMATIONS_LEVEL_2)
-    , m_triggerSet(false)
-#endif
     , m_isNone(false)
 {
 }
@@ -63,11 +57,7 @@ Animation::Animation(const Animation& o)
     , m_delay(o.m_delay)
     , m_duration(o.m_duration)
     , m_timingFunction(o.m_timingFunction)
-#if ENABLE(CSS_ANIMATIONS_LEVEL_2)
-    , m_trigger(o.m_trigger)
-#endif
     , m_nameStyleScopeOrdinal(o.m_nameStyleScopeOrdinal)
-    , m_mode(o.m_mode)
     , m_direction(o.m_direction)
     , m_fillMode(o.m_fillMode)
     , m_playState(o.m_playState)
@@ -80,9 +70,6 @@ Animation::Animation(const Animation& o)
     , m_playStateSet(o.m_playStateSet)
     , m_propertySet(o.m_propertySet)
     , m_timingFunctionSet(o.m_timingFunctionSet)
-#if ENABLE(CSS_ANIMATIONS_LEVEL_2)
-    , m_triggerSet(o.m_triggerSet)
-#endif
     , m_isNone(o.m_isNone)
 {
 }
@@ -94,18 +81,11 @@ Animation& Animation::operator=(const Animation& o)
     m_delay = o.m_delay;
     m_duration = o.m_duration;
     m_timingFunction = o.m_timingFunction;
-#if ENABLE(CSS_ANIMATIONS_LEVEL_2)
-    m_trigger = o.m_trigger;
-#endif
     m_nameStyleScopeOrdinal = o.m_nameStyleScopeOrdinal;
     m_property = o.m_property;
-    m_mode = o.m_mode;
     m_direction = o.m_direction;
     m_fillMode = o.m_fillMode;
     m_playState = o.m_playState;
-#if ENABLE(CSS_ANIMATIONS_LEVEL_2)
-    m_trigger = o.m_trigger;
-#endif
 
     m_delaySet = o.m_delaySet;
     m_directionSet = o.m_directionSet;
@@ -116,9 +96,6 @@ Animation& Animation::operator=(const Animation& o)
     m_playStateSet = o.m_playStateSet;
     m_propertySet = o.m_propertySet;
     m_timingFunctionSet = o.m_timingFunctionSet;
-#if ENABLE(CSS_ANIMATIONS_LEVEL_2)
-    m_triggerSet = o.m_triggerSet;
-#endif
     m_isNone = o.m_isNone;
 
     return *this;
@@ -135,9 +112,6 @@ bool Animation::animationsMatch(const Animation& other, bool matchProperties) co
         && m_delay == other.m_delay
         && m_duration == other.m_duration
         && *(m_timingFunction.get()) == *(other.m_timingFunction.get())
-#if ENABLE(CSS_ANIMATIONS_LEVEL_2)
-        && *(m_trigger.get()) == *(other.m_trigger.get())
-#endif
         && m_nameStyleScopeOrdinal == other.m_nameStyleScopeOrdinal
         && m_direction == other.m_direction
         && m_fillMode == other.m_fillMode
@@ -148,21 +122,56 @@ bool Animation::animationsMatch(const Animation& other, bool matchProperties) co
         && m_iterationCountSet == other.m_iterationCountSet
         && m_nameSet == other.m_nameSet
         && m_timingFunctionSet == other.m_timingFunctionSet
-#if ENABLE(CSS_ANIMATIONS_LEVEL_2)
-        && m_triggerSet == other.m_triggerSet
-#endif
         && m_isNone == other.m_isNone;
 
     if (!result)
         return false;
 
-    return !matchProperties || (m_mode == other.m_mode && m_property == other.m_property && m_propertySet == other.m_propertySet);
+    return !matchProperties || (m_property.mode == other.m_property.mode && m_property.id == other.m_property.id && m_propertySet == other.m_propertySet);
 }
 
 const String& Animation::initialName()
 {
     static NeverDestroyed<String> initialValue(MAKE_STATIC_STRING_IMPL("none"));
     return initialValue;
+}
+
+TextStream& operator<<(TextStream& ts, Animation::TransitionProperty transitionProperty)
+{
+    switch (transitionProperty.mode) {
+    case Animation::TransitionMode::All: ts << "all"; break;
+    case Animation::TransitionMode::None: ts << "none"; break;
+    case Animation::TransitionMode::SingleProperty: ts << getPropertyName(transitionProperty.id); break;
+    case Animation::TransitionMode::UnknownProperty: ts << "unknown property"; break;
+    }
+    return ts;
+}
+
+TextStream& operator<<(TextStream& ts, Animation::AnimationDirection direction)
+{
+    switch (direction) {
+    case Animation::AnimationDirectionNormal: ts << "normal"; break;
+    case Animation::AnimationDirectionAlternate: ts << "alternate"; break;
+    case Animation::AnimationDirectionReverse: ts << "reverse"; break;
+    case Animation::AnimationDirectionAlternateReverse: ts << "alternate-reverse"; break;
+    }
+    return ts;
+}
+
+TextStream& operator<<(TextStream& ts, const Animation& animation)
+{
+    ts.dumpProperty("property", animation.property());
+    ts.dumpProperty("name", animation.name());
+    ts.dumpProperty("iteration count", animation.iterationCount());
+    ts.dumpProperty("delay", animation.iterationCount());
+    ts.dumpProperty("duration", animation.duration());
+    if (animation.timingFunction())
+        ts.dumpProperty("timing function", *animation.timingFunction());
+    ts.dumpProperty("direction", animation.direction());
+    ts.dumpProperty("fill-mode", animation.fillMode());
+    ts.dumpProperty("play-state", animation.playState());
+
+    return ts;
 }
 
 } // namespace WebCore

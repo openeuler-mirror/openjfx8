@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,17 +28,32 @@
 
 #if ENABLE(WEB_AUTHN)
 
+#include "AuthenticatorResponseData.h"
+
 namespace WebCore {
 
-AuthenticatorAttestationResponse::AuthenticatorAttestationResponse(RefPtr<ArrayBuffer>&& clientDataJSON, RefPtr<ArrayBuffer>&& attestationObject)
-    : AuthenticatorResponse(WTFMove(clientDataJSON))
+Ref<AuthenticatorAttestationResponse> AuthenticatorAttestationResponse::create(Ref<ArrayBuffer>&& rawId, Ref<ArrayBuffer>&& attestationObject)
+{
+    return adoptRef(*new AuthenticatorAttestationResponse(WTFMove(rawId), WTFMove(attestationObject)));
+}
+
+Ref<AuthenticatorAttestationResponse> AuthenticatorAttestationResponse::create(const Vector<uint8_t>& rawId, const Vector<uint8_t>& attestationObject)
+{
+    return create(ArrayBuffer::create(rawId.data(), rawId.size()), ArrayBuffer::create(attestationObject.data(), attestationObject.size()));
+}
+
+AuthenticatorAttestationResponse::AuthenticatorAttestationResponse(Ref<ArrayBuffer>&& rawId, Ref<ArrayBuffer>&& attestationObject)
+    : AuthenticatorResponse(WTFMove(rawId))
     , m_attestationObject(WTFMove(attestationObject))
 {
 }
 
-ArrayBuffer* AuthenticatorAttestationResponse::attestationObject() const
+AuthenticatorResponseData AuthenticatorAttestationResponse::data() const
 {
-    return m_attestationObject.get();
+    auto data = AuthenticatorResponse::data();
+    data.isAuthenticatorAttestationResponse = true;
+    data.attestationObject = m_attestationObject.copyRef();
+    return data;
 }
 
 } // namespace WebCore

@@ -29,9 +29,10 @@
 [
     Conditional=ENCRYPTED_MEDIA,
     EnabledAtRuntime=EncryptedMediaAPI,
+    DisabledByQuirk=hasBrokenEncryptedMediaAPISupport,
     ImplementationLacksVTable,
 ] interface MediaKeySystemAccess {
     readonly attribute DOMString keySystem;
     MediaKeySystemConfiguration getConfiguration();
-    Promise<MediaKeys> createMediaKeys();
+    [CallWith=Document] Promise<MediaKeys> createMediaKeys();
 };

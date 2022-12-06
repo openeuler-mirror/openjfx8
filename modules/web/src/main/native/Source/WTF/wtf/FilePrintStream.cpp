@@ -24,7 +24,7 @@
  */
 
 #include "config.h"
-#include "FilePrintStream.h"
+#include <wtf/FilePrintStream.h>
 
 namespace WTF {
 
@@ -47,7 +47,7 @@ std::unique_ptr<FilePrintStream> FilePrintStream::open(const char* filename, con
     if (!file)
         return nullptr;
 
-    return std::make_unique<FilePrintStream>(file);
+    return makeUnique<FilePrintStream>(file);
 }
 
 void FilePrintStream::vprintf(const char* format, va_list argList)

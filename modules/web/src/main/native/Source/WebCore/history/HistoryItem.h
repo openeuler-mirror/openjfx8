@@ -41,7 +41,7 @@
 #include <wtf/java/JavaRef.h>
 #endif
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
 #include "ViewportArguments.h"
 #endif
 
@@ -58,13 +58,12 @@ class FormData;
 class HistoryItem;
 class Image;
 class ResourceRequest;
-class URL;
 enum class PruningReason;
 
-WEBCORE_EXPORT extern void (*notifyHistoryItemChanged)(HistoryItem*);
+WEBCORE_EXPORT extern void (*notifyHistoryItemChanged)(HistoryItem&);
 
 class HistoryItem : public RefCounted<HistoryItem> {
-    friend class PageCache;
+    friend class BackForwardCache;
 
 public:
     static Ref<HistoryItem> create()
@@ -100,7 +99,7 @@ public:
     WEBCORE_EXPORT const String& urlString() const;
     WEBCORE_EXPORT const String& title() const;
 
-    bool isInPageCache() const { return m_cachedPage.get(); }
+    bool isInBackForwardCache() const { return m_cachedPage.get(); }
     WEBCORE_EXPORT bool hasCachedPageExpired() const;
 
     WEBCORE_EXPORT void setAlternateTitle(const String&);
@@ -173,11 +172,6 @@ public:
 #if PLATFORM(COCOA)
     WEBCORE_EXPORT id viewState() const;
     WEBCORE_EXPORT void setViewState(id);
-
-    // Transient properties may be of any ObjC type.  They are intended to be used to store state per back/forward list entry.
-    // The properties will not be persisted; when the history item is removed, the properties will be lost.
-    WEBCORE_EXPORT id getTransientProperty(const String&) const;
-    WEBCORE_EXPORT void setTransientProperty(const String&, id);
 #endif
 #if PLATFORM(JAVA)
     JLObject hostObject();
@@ -189,7 +183,7 @@ public:
     int showTreeWithIndent(unsigned indentLevel) const;
 #endif
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     FloatRect exposedContentRect() const { return m_exposedContentRect; }
     void setExposedContentRect(FloatRect exposedContentRect) { m_exposedContentRect = exposedContentRect; }
 
@@ -232,6 +226,9 @@ private:
     WEBCORE_EXPORT HistoryItem(const String& urlString, const String& title);
     WEBCORE_EXPORT HistoryItem(const String& urlString, const String& title, const String& alternateTitle);
     WEBCORE_EXPORT HistoryItem(const String& urlString, const String& title, const String& alternateTitle, BackForwardItemIdentifier);
+
+    void setCachedPage(std::unique_ptr<CachedPage>&&);
+    std::unique_ptr<CachedPage> takeCachedPage();
 
     HistoryItem(const HistoryItem&);
 
@@ -277,11 +274,11 @@ private:
     RefPtr<FormData> m_formData;
     String m_formContentType;
 
-    // PageCache controls these fields.
+    // BackForwardCache controls these fields.
     std::unique_ptr<CachedPage> m_cachedPage;
     PruningReason m_pruningReason;
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     FloatRect m_exposedContentRect;
     IntRect m_unobscuredContentRect;
     FloatSize m_minimumLayoutSizeInScrollViewCoordinates;
@@ -298,7 +295,6 @@ private:
 
 #if PLATFORM(COCOA)
     RetainPtr<id> m_viewState;
-    std::unique_ptr<HashMap<String, RetainPtr<id>>> m_transientProperties;
 #endif
 
     BackForwardItemIdentifier m_identifier;

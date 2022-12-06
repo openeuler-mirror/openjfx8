@@ -64,7 +64,7 @@ AudioBus::AudioBus(unsigned numberOfChannels, size_t length, bool allocate)
     m_channels.reserveInitialCapacity(numberOfChannels);
 
     for (unsigned i = 0; i < numberOfChannels; ++i) {
-        auto channel = allocate ? std::make_unique<AudioChannel>(length) : std::make_unique<AudioChannel>(nullptr, length);
+        auto channel = allocate ? makeUnique<AudioChannel>(length) : makeUnique<AudioChannel>(nullptr, length);
         m_channels.uncheckedAppend(WTFMove(channel));
     }
 
@@ -253,10 +253,10 @@ void AudioBus::copyFrom(const AudioBus& sourceBus, ChannelInterpretation channel
             channel(i)->copyFrom(sourceBus.channel(i));
     } else {
         switch (channelInterpretation) {
-        case Speakers:
+        case ChannelInterpretation::Speakers:
             speakersCopyFrom(sourceBus);
             break;
-        case Discrete:
+        case ChannelInterpretation::Discrete:
             discreteCopyFrom(sourceBus);
             break;
         default:
@@ -278,10 +278,10 @@ void AudioBus::sumFrom(const AudioBus& sourceBus, ChannelInterpretation channelI
             channel(i)->sumFrom(sourceBus.channel(i));
     } else {
         switch (channelInterpretation) {
-        case Speakers:
+        case ChannelInterpretation::Speakers:
             speakersSumFrom(sourceBus);
             break;
-        case Discrete:
+        case ChannelInterpretation::Discrete:
             discreteSumFrom(sourceBus);
             break;
         default:
@@ -489,7 +489,7 @@ void AudioBus::copyWithGainFrom(const AudioBus &sourceBus, float* lastMixGain, f
 
     if (framesToDezipper) {
         if (!m_dezipperGainValues.get() || m_dezipperGainValues->size() < framesToDezipper)
-            m_dezipperGainValues = std::make_unique<AudioFloatArray>(framesToDezipper);
+            m_dezipperGainValues = makeUnique<AudioFloatArray>(framesToDezipper);
 
         float* gainValues = m_dezipperGainValues->data();
         for (unsigned i = 0; i < framesToDezipper; ++i) {

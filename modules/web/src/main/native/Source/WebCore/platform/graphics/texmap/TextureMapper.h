@@ -37,6 +37,7 @@ class BitmapTexturePool;
 class GraphicsLayer;
 class TextureMapper;
 class FilterOperations;
+class FloatRoundedRect;
 
 class TextureMapper {
     WTF_MAKE_FAST_ALLOCATED;
@@ -70,12 +71,12 @@ public:
     virtual void drawNumber(int number, const Color&, const FloatPoint&, const TransformationMatrix&) = 0;
 
     virtual void drawTexture(const BitmapTexture&, const FloatRect& target, const TransformationMatrix& modelViewMatrix = TransformationMatrix(), float opacity = 1.0f, unsigned exposedEdges = AllEdges) = 0;
-    virtual void drawSolidColor(const FloatRect&, const TransformationMatrix&, const Color&) = 0;
+    virtual void drawSolidColor(const FloatRect&, const TransformationMatrix&, const Color&, bool) = 0;
     virtual void clearColor(const Color&) = 0;
 
     // makes a surface the target for the following drawTexture calls.
     virtual void bindSurface(BitmapTexture* surface) = 0;
-    virtual void beginClip(const TransformationMatrix&, const FloatRect&) = 0;
+    virtual void beginClip(const TransformationMatrix&, const FloatRoundedRect&) = 0;
     virtual void endClip() = 0;
     virtual IntRect clipBounds() = 0;
     virtual Ref<BitmapTexture> createTexture() = 0;

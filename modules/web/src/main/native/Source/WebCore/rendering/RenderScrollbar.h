@@ -48,25 +48,27 @@ public:
 
     void paintPart(GraphicsContext&, ScrollbarPart, const IntRect&);
 
-    IntRect buttonRect(ScrollbarPart);
-    IntRect trackRect(int startLength, int endLength);
-    IntRect trackPieceRectWithMargins(ScrollbarPart, const IntRect&);
+    IntRect buttonRect(ScrollbarPart) const;
+    IntRect trackRect(int startLength, int endLength) const;
+    IntRect trackPieceRectWithMargins(ScrollbarPart, const IntRect&) const;
 
-    int minimumThumbLength();
+    int minimumThumbLength() const;
 
-    bool isOverlayScrollbar() const override { return false; }
+    float opacity() const;
 
-    float opacity();
+    bool isHiddenByStyle() const final;
 
-    std::unique_ptr<RenderStyle> getScrollbarPseudoStyle(ScrollbarPart, PseudoId);
+    std::unique_ptr<RenderStyle> getScrollbarPseudoStyle(ScrollbarPart, PseudoId) const;
 
 private:
     RenderScrollbar(ScrollableArea&, ScrollbarOrientation, Element*, Frame*);
 
+    bool isOverlayScrollbar() const override { return false; }
+
     void setParent(ScrollView*) override;
     void setEnabled(bool) override;
 
-    void paint(GraphicsContext&, const IntRect& damageRect, Widget::SecurityOriginPaintPolicy) override;
+    void paint(GraphicsContext&, const IntRect& damageRect, Widget::SecurityOriginPaintPolicy, EventRegionContext*) override;
 
     void setHoveredPart(ScrollbarPart) override;
     void setPressedPart(ScrollbarPart) override;

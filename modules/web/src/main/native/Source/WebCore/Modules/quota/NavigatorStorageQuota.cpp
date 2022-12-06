@@ -39,8 +39,8 @@
 
 namespace WebCore {
 
-NavigatorStorageQuota::NavigatorStorageQuota(Frame* frame)
-    : DOMWindowProperty(frame)
+NavigatorStorageQuota::NavigatorStorageQuota(DOMWindow* window)
+    : DOMWindowProperty(window)
 {
 }
 
@@ -55,7 +55,7 @@ NavigatorStorageQuota* NavigatorStorageQuota::from(Navigator* navigator)
 {
     NavigatorStorageQuota* supplement = static_cast<NavigatorStorageQuota*>(Supplement<Navigator>::from(navigator, supplementName()));
     if (!supplement) {
-        auto newSupplement = std::make_unique<NavigatorStorageQuota>(window);
+        auto newSupplement = makeUnique<NavigatorStorageQuota>(window);
         supplement = newSupplement.get();
         provideTo(navigator, supplementName(), WTFMove(newSupplement));
     }

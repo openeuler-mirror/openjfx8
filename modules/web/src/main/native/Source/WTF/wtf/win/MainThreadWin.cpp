@@ -28,49 +28,27 @@
  */
 
 #include "config.h"
-#include "MainThread.h"
+#include <wtf/MainThread.h>
 
-#include "Assertions.h"
-#include "Threading.h"
-#include "WindowsExtras.h"
+#include <wtf/Assertions.h>
+#include <wtf/RunLoop.h>
+#include <wtf/Threading.h>
+#include <wtf/WindowsExtras.h>
 
 namespace WTF {
 
-static HWND threadingWindowHandle;
-static UINT threadingFiredMessage;
-const LPCWSTR kThreadingWindowClassName = L"ThreadingWindowClass";
-
-LRESULT CALLBACK ThreadingWindowWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
-{
-    if (message == threadingFiredMessage)
-        dispatchFunctionsFromMainThread();
-    else
-        return DefWindowProc(hWnd, message, wParam, lParam);
-    return 0;
-}
+static ThreadIdentifier mainThread { 0 };
 
 void initializeMainThreadPlatform()
 {
-    if (threadingWindowHandle)
-        return;
-
-    WNDCLASSW wcex;
-    memset(&wcex, 0, sizeof(WNDCLASSW));
-    wcex.lpfnWndProc    = ThreadingWindowWndProc;
-    wcex.lpszClassName  = kThreadingWindowClassName;
-    RegisterClassW(&wcex);
-
-    threadingWindowHandle = CreateWindowW(kThreadingWindowClassName, 0, 0,
-        CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, HWND_MESSAGE, 0, 0, 0);
-    threadingFiredMessage = RegisterWindowMessageW(L"com.apple.WebKit.MainThreadFired");
-
+    mainThread = Thread::currentID();
     Thread::initializeCurrentThreadInternal("Main Thread");
+    RunLoop::registerRunLoopMessageWindowClass();
 }
 
-void scheduleDispatchFunctionsOnMainThread()
+bool isMainThread()
 {
-    ASSERT(threadingWindowHandle);
-    PostMessage(threadingWindowHandle, threadingFiredMessage, 0, 0);
+    return mainThread == Thread::currentID();
 }
 
 } // namespace WTF

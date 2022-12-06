@@ -261,6 +261,9 @@ arm64: MultiplyNeg32 U:G:32, U:G:32, ZD:G:32
 arm64: MultiplyNeg64 U:G:64, U:G:64, ZD:G:64
     Tmp, Tmp, Tmp
 
+arm64: MultiplySignExtend32 U:G:32, U:G:32, ZD:G:64
+    Tmp, Tmp, Tmp
+
 arm64: Div32 U:G:32, U:G:32, ZD:G:32
     Tmp, Tmp, Tmp
 
@@ -325,6 +328,9 @@ x86_64: X86Div64 UZD:G:64, UZD:G:64, U:G:64
 x86_64: X86UDiv64 UZD:G:64, UZD:G:64, U:G:64
     Tmp*, Tmp*, Tmp
 
+# If we add other things like Lea that are UA, we may need to lower
+# them on arm64 similarly to how we do for Lea. In lowerStackArgs,
+# we lower Lea to add on arm64.
 Lea32 UA:G:32, D:G:32
     Addr, Tmp
     x86: Index, Tmp as x86Lea32
@@ -636,12 +642,12 @@ x86_64: Swap64 UD:G:64, UD:G:64
     Tmp, Addr
 
 Move32 U:G:32, ZD:G:32
-    Tmp, Tmp as zeroExtend32ToPtr
+    Tmp, Tmp as zeroExtend32ToWord
     Addr, Tmp as load32
     Index, Tmp as load32
     Tmp, Addr as store32
     Tmp, Index as store32
-    x86: Imm, Tmp as zeroExtend32ToPtr
+    x86: Imm, Tmp as zeroExtend32ToWord
     x86: Imm, Addr as store32
     x86: Imm, Index as store32
 
@@ -1154,6 +1160,16 @@ BranchTest32 U:G:32, U:G:32, U:G:32 /branch
     x86: ResCond, Addr, BitImm
     x86: ResCond, Addr, Tmp
     x86: ResCond, Index, BitImm
+
+x86_64: BranchTestBit64 U:G:32, U:G:64, U:G:8 /branch
+    ResCond, Tmp, Imm
+    ResCond, Addr, Imm
+    ResCond, Tmp, Tmp
+
+x86: BranchTestBit32 U:G:32, U:G:32, U:G:8 /branch
+    ResCond, Tmp, Imm
+    ResCond, Addr, Imm
+    ResCond, Tmp, Tmp
 
 BranchDouble U:G:32, U:F:64, U:F:64 /branch
     DoubleCond, Tmp, Tmp

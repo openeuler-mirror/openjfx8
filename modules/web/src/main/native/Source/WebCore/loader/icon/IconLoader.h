@@ -27,9 +27,9 @@
 
 #include "CachedRawResourceClient.h"
 #include "CachedResourceHandle.h"
-#include "URL.h"
 #include <wtf/Forward.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/URL.h>
 
 namespace WebCore {
 
@@ -47,7 +47,7 @@ public:
     void stopLoading();
 
 private:
-    void notifyFinished(CachedResource&) final;
+    void notifyFinished(CachedResource&, const NetworkLoadMetrics&) final;
 
     DocumentLoader& m_documentLoader;
     URL m_url;

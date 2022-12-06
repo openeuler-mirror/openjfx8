@@ -23,8 +23,7 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef TinyLRUCache_h
-#define TinyLRUCache_h
+#pragma once
 
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Vector.h>
@@ -40,6 +39,7 @@ struct TinyLRUCachePolicy {
 
 template<typename KeyType, typename ValueType, size_t capacity = 4, typename Policy = TinyLRUCachePolicy<KeyType, ValueType>>
 class TinyLRUCache {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     const ValueType& get(const KeyType& key)
     {
@@ -80,5 +80,3 @@ private:
 
 using WTF::TinyLRUCache;
 using WTF::TinyLRUCachePolicy;
-
-#endif // TinyLRUCache_h

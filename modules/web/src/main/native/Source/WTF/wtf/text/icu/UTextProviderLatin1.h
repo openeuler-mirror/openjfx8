@@ -23,8 +23,7 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef UTextProviderLatin1_h
-#define UTextProviderLatin1_h
+#pragma once
 
 #include <unicode/utext.h>
 #include <wtf/text/LChar.h>
@@ -34,13 +33,12 @@ namespace WTF {
 const int UTextWithBufferInlineCapacity = 16;
 
 struct UTextWithBuffer {
+    WTF_MAKE_STRUCT_FAST_ALLOCATED;
     UText text;
     UChar buffer[UTextWithBufferInlineCapacity];
 };
 
-WTF_EXPORT UText* openLatin1UTextProvider(UTextWithBuffer* utWithBuffer, const LChar* string, unsigned length, UErrorCode* status);
+WTF_EXPORT_PRIVATE UText* openLatin1UTextProvider(UTextWithBuffer* utWithBuffer, const LChar* string, unsigned length, UErrorCode* status);
 UText* openLatin1ContextAwareUTextProvider(UTextWithBuffer* utWithBuffer, const LChar* string, unsigned length, const UChar* priorContext, int priorContextLength, UErrorCode* status);
 
 } // namespace WTF
-
-#endif // UTextProviderLatin1_h

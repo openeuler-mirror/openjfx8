@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,7 +40,7 @@ class LazyProperty {
 public:
     struct Initializer {
         Initializer(OwnerType* owner, LazyProperty& property)
-            : vm(*Heap::heap(owner)->vm())
+            : vm(Heap::heap(owner)->vm())
             , owner(owner)
             , property(property)
         {
@@ -79,11 +79,7 @@ public:
     ElementType* get(const OwnerType* owner) const
     {
         ASSERT(!isCompilationThread());
-        if (UNLIKELY(m_pointer & lazyTag)) {
-            FuncType func = *bitwise_cast<FuncType*>(m_pointer & ~(lazyTag | initializingTag));
-            return func(Initializer(const_cast<OwnerType*>(owner), *const_cast<LazyProperty*>(this)));
-        }
-        return bitwise_cast<ElementType*>(m_pointer);
+        return getInitializedOnMainThread(owner);
     }
 
     ElementType* getConcurrently() const
@@ -92,6 +88,16 @@ public:
         if (pointer & lazyTag)
             return nullptr;
         return bitwise_cast<ElementType*>(pointer);
+    }
+
+    ElementType* getInitializedOnMainThread(const OwnerType* owner) const
+    {
+        if (UNLIKELY(m_pointer & lazyTag)) {
+            ASSERT(!isCompilationThread());
+            FuncType func = *bitwise_cast<FuncType*>(m_pointer & ~(lazyTag | initializingTag));
+            return func(Initializer(const_cast<OwnerType*>(owner), *const_cast<LazyProperty*>(this)));
+        }
+        return bitwise_cast<ElementType*>(m_pointer);
     }
 
     void setMayBeNull(VM&, const OwnerType* owner, ElementType*);

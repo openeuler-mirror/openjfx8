@@ -43,6 +43,10 @@
 
 namespace JSC {
 
+namespace Wasm {
+enum class CompilationMode : uint8_t;
+}
+
 class CodeBlock;
 
 // LinkBuffer:
@@ -86,24 +90,25 @@ public:
         , m_completed(false)
 #endif
     {
-        linkCode(macroAssembler, ownerUID, effort);
+        UNUSED_PARAM(ownerUID);
+        linkCode(macroAssembler, effort);
     }
 
     template<PtrTag tag>
     LinkBuffer(MacroAssembler& macroAssembler, MacroAssemblerCodePtr<tag> code, size_t size, JITCompilationEffort effort = JITCompilationMustSucceed, bool shouldPerformBranchCompaction = true)
         : m_size(size)
         , m_didAllocate(false)
-        , m_code(code.template retagged<LinkBufferPtrTag>())
 #ifndef NDEBUG
         , m_completed(false)
 #endif
+        , m_code(code.template retagged<LinkBufferPtrTag>())
     {
 #if ENABLE(BRANCH_COMPACTION)
         m_shouldPerformBranchCompaction = shouldPerformBranchCompaction;
 #else
         UNUSED_PARAM(shouldPerformBranchCompaction);
 #endif
-        linkCode(macroAssembler, 0, effort);
+        linkCode(macroAssembler, effort);
     }
 
     ~LinkBuffer()
@@ -118,6 +123,13 @@ public:
     bool isValid() const
     {
         return !didFailToAllocate();
+    }
+
+    void setIsJumpIsland()
+    {
+#if ASSERT_ENABLED
+        m_isJumpIsland = true;
+#endif
     }
 
     // These methods are used to link or set values at code generation time.
@@ -261,17 +273,13 @@ public:
     }
 
     template<PtrTag tag, typename... Args>
-    CodeRef<tag> finalizeCodeWithDisassembly(const char* format, Args... args)
+    CodeRef<tag> finalizeCodeWithDisassembly(bool dumpDisassembly, const char* format, Args... args)
     {
-#if COMPILER(GCC_OR_CLANG)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wformat-nonliteral"
-#pragma GCC diagnostic ignored "-Wformat-security"
-#endif
-        return finalizeCodeWithDisassemblyImpl(format, args...).template retagged<tag>();
-#if COMPILER(GCC_OR_CLANG)
-#pragma GCC diagnostic pop
-#endif
+        ALLOW_NONLITERAL_FORMAT_BEGIN
+        IGNORE_WARNINGS_BEGIN("format-security")
+        return finalizeCodeWithDisassemblyImpl(dumpDisassembly, format, args...).template retagged<tag>();
+        IGNORE_WARNINGS_END
+        ALLOW_NONLITERAL_FORMAT_END
     }
 
     template<PtrTag tag>
@@ -292,7 +300,7 @@ public:
 
 private:
     JS_EXPORT_PRIVATE CodeRef<LinkBufferPtrTag> finalizeCodeWithoutDisassemblyImpl();
-    JS_EXPORT_PRIVATE CodeRef<LinkBufferPtrTag> finalizeCodeWithDisassemblyImpl(const char* format, ...) WTF_ATTRIBUTE_PRINTF(2, 3);
+    JS_EXPORT_PRIVATE CodeRef<LinkBufferPtrTag> finalizeCodeWithDisassemblyImpl(bool dumpDisassembly, const char* format, ...) WTF_ATTRIBUTE_PRINTF(3, 4);
 
 #if ENABLE(BRANCH_COMPACTION)
     int executableOffsetFor(int location)
@@ -321,12 +329,12 @@ private:
         return m_code.dataLocation();
     }
 
-    void allocate(MacroAssembler&, void* ownerUID, JITCompilationEffort);
+    void allocate(MacroAssembler&, JITCompilationEffort);
 
-    JS_EXPORT_PRIVATE void linkCode(MacroAssembler&, void* ownerUID, JITCompilationEffort);
+    JS_EXPORT_PRIVATE void linkCode(MacroAssembler&, JITCompilationEffort);
 #if ENABLE(BRANCH_COMPACTION)
     template <typename InstructionType>
-    void copyCompactAndLinkCode(MacroAssembler&, void* ownerUID, JITCompilationEffort);
+    void copyCompactAndLinkCode(MacroAssembler&, JITCompilationEffort);
 #endif
 
     void performFinalization();
@@ -346,18 +354,30 @@ private:
     bool m_shouldPerformBranchCompaction { true };
 #endif
     bool m_didAllocate;
-    MacroAssemblerCodePtr<LinkBufferPtrTag> m_code;
 #ifndef NDEBUG
     bool m_completed;
 #endif
+#if ASSERT_ENABLED
+    bool m_isJumpIsland { false };
+#endif
     bool m_alreadyDisassembled { false };
+    MacroAssemblerCodePtr<LinkBufferPtrTag> m_code;
     Vector<RefPtr<SharedTask<void(LinkBuffer&)>>> m_linkTasks;
 };
 
+#if OS(LINUX)
 #define FINALIZE_CODE_IF(condition, linkBufferReference, resultPtrTag, ...)  \
     (UNLIKELY((condition))                                              \
-        ? (linkBufferReference).finalizeCodeWithDisassembly<resultPtrTag>(__VA_ARGS__) \
+        ? (linkBufferReference).finalizeCodeWithDisassembly<resultPtrTag>(true, __VA_ARGS__) \
+        : (UNLIKELY(JSC::Options::logJITCodeForPerf()) \
+            ? (linkBufferReference).finalizeCodeWithDisassembly<resultPtrTag>(false, __VA_ARGS__) \
+            : (linkBufferReference).finalizeCodeWithoutDisassembly<resultPtrTag>()))
+#else
+#define FINALIZE_CODE_IF(condition, linkBufferReference, resultPtrTag, ...)  \
+    (UNLIKELY((condition))                                              \
+        ? (linkBufferReference).finalizeCodeWithDisassembly<resultPtrTag>(true, __VA_ARGS__) \
         : (linkBufferReference).finalizeCodeWithoutDisassembly<resultPtrTag>())
+#endif
 
 bool shouldDumpDisassemblyFor(CodeBlock*);
 
@@ -388,6 +408,16 @@ bool shouldDumpDisassemblyFor(CodeBlock*);
 
 #define FINALIZE_REGEXP_CODE(linkBufferReference, resultPtrTag, dataLogFArgumentsForHeading)  \
     FINALIZE_CODE_IF(JSC::Options::asyncDisassembly() || JSC::Options::dumpDisassembly() || Options::dumpRegExpDisassembly(), linkBufferReference, resultPtrTag, dataLogFArgumentsForHeading)
+
+bool shouldDumpDisassemblyFor(Wasm::CompilationMode);
+
+#define FINALIZE_WASM_CODE(linkBufferReference, resultPtrTag, ...)  \
+    FINALIZE_CODE_IF((JSC::Options::asyncDisassembly() || JSC::Options::dumpDisassembly() || Options::dumpWasmDisassembly()), linkBufferReference, resultPtrTag, __VA_ARGS__)
+
+#define FINALIZE_WASM_CODE_FOR_MODE(mode, linkBufferReference, resultPtrTag, ...)  \
+    FINALIZE_CODE_IF(shouldDumpDisassemblyFor(mode), linkBufferReference, resultPtrTag, __VA_ARGS__)
+
+
 
 } // namespace JSC
 

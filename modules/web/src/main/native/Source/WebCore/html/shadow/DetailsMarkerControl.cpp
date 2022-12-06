@@ -49,7 +49,8 @@ Ref<DetailsMarkerControl> DetailsMarkerControl::create(Document& document)
 DetailsMarkerControl::DetailsMarkerControl(Document& document)
     : HTMLDivElement(HTMLNames::divTag, document)
 {
-    setPseudo(AtomicString("-webkit-details-marker", AtomicString::ConstructFromLiteral));
+    static MainThreadNeverDestroyed<const AtomString> webkitDetailsMarkerName("-webkit-details-marker", AtomString::ConstructFromLiteral);
+    setPseudo(webkitDetailsMarkerName);
 }
 
 RenderPtr<RenderElement> DetailsMarkerControl::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)

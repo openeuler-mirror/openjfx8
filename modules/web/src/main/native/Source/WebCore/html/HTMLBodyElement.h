@@ -34,16 +34,14 @@ public:
     static Ref<HTMLBodyElement> create(const QualifiedName&, Document&);
     virtual ~HTMLBodyElement();
 
-    static const AtomicString& eventNameForWindowEventHandlerAttribute(const QualifiedName& attributeName);
+    static const AtomString& eventNameForWindowEventHandlerAttribute(const QualifiedName& attributeName);
 
 private:
     HTMLBodyElement(const QualifiedName&, Document&);
 
-    bool isFirstBodyElementOfDocument() const;
-
-    void parseAttribute(const QualifiedName&, const AtomicString&) final;
+    void parseAttribute(const QualifiedName&, const AtomString&) final;
     bool isPresentationAttribute(const QualifiedName&) const final;
-    void collectStyleForPresentationAttribute(const QualifiedName&, const AtomicString&, MutableStyleProperties&) final;
+    void collectStyleForPresentationAttribute(const QualifiedName&, const AtomString&, MutableStyleProperties&) final;
 
     InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) final;
     void didFinishInsertingNode() final;
@@ -51,17 +49,6 @@ private:
     bool isURLAttribute(const Attribute&) const final;
 
     bool supportsFocus() const final;
-
-    int scrollLeft() final;
-    void setScrollLeft(int) final;
-
-    int scrollTop() final;
-    void setScrollTop(int) final;
-
-    void scrollTo(const ScrollToOptions&, ScrollClamping) final;
-
-    int scrollHeight() final;
-    int scrollWidth() final;
 
     void addSubresourceAttributeURLs(ListHashSet<URL>&) const final;
 

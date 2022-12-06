@@ -24,13 +24,9 @@
 
 #include "ConservativeRoots.h"
 #include "MachineContext.h"
-#include <setjmp.h>
-#include <stdlib.h>
 #include <wtf/BitVector.h>
 #include <wtf/PageBlock.h>
 #include <wtf/StdLibExtras.h>
-
-using namespace WTF;
 
 namespace JSC {
 
@@ -87,13 +83,13 @@ static void copyMemory(void* dst, const void* src, size_t size)
 {
     size_t dstAsSize = reinterpret_cast<size_t>(dst);
     size_t srcAsSize = reinterpret_cast<size_t>(src);
-    RELEASE_ASSERT(dstAsSize == WTF::roundUpToMultipleOf<sizeof(intptr_t)>(dstAsSize));
-    RELEASE_ASSERT(srcAsSize == WTF::roundUpToMultipleOf<sizeof(intptr_t)>(srcAsSize));
-    RELEASE_ASSERT(size == WTF::roundUpToMultipleOf<sizeof(intptr_t)>(size));
+    RELEASE_ASSERT(dstAsSize == WTF::roundUpToMultipleOf<sizeof(CPURegister)>(dstAsSize));
+    RELEASE_ASSERT(srcAsSize == WTF::roundUpToMultipleOf<sizeof(CPURegister)>(srcAsSize));
+    RELEASE_ASSERT(size == WTF::roundUpToMultipleOf<sizeof(CPURegister)>(size));
 
-    intptr_t* dstPtr = reinterpret_cast<intptr_t*>(dst);
-    const intptr_t* srcPtr = reinterpret_cast<const intptr_t*>(src);
-    size /= sizeof(intptr_t);
+    CPURegister* dstPtr = reinterpret_cast<CPURegister*>(dst);
+    const CPURegister* srcPtr = reinterpret_cast<const CPURegister*>(src);
+    size /= sizeof(CPURegister);
     while (size--)
         *dstPtr++ = *srcPtr++;
 }
@@ -104,7 +100,7 @@ static void copyMemory(void* dst, const void* src, size_t size)
 // acquire a lock. Since 'thread' is suspended, trying to acquire a lock
 // will deadlock if 'thread' holds that lock.
 // This function, specifically the memory copying, was causing problems with Address Sanitizer in
-// apps. Since we cannot blacklist the system memcpy we must use our own naive implementation,
+// apps. Since we cannot disallow the system memcpy we must use our own naive implementation,
 // copyMemory, for ASan to work on either instrumented or non-instrumented builds. This is not a
 // significant performance loss as tryCopyOtherThreadStack is only called as part of an O(heapsize)
 // operation. As the heap is generally much larger than the stack the performance hit is minimal.
@@ -139,8 +135,8 @@ bool MachineThreads::tryCopyOtherThreadStacks(const AbstractLocker& locker, void
 {
     // Prevent two VMs from suspending each other's threads at the same time,
     // which can cause deadlock: <rdar://problem/20300842>.
-    static Lock mutex;
-    std::lock_guard<Lock> lock(mutex);
+    static Lock suspendLock;
+    auto suspendLocker = holdLock(suspendLock);
 
     *size = 0;
 

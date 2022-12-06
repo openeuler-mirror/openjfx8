@@ -34,14 +34,12 @@
 namespace JSC {
 
 struct SourceProviderCacheItemCreationParameters {
-    unsigned functionNameStart;
     unsigned lastTokenLine;
     unsigned lastTokenStartOffset;
     unsigned lastTokenEndOffset;
     unsigned lastTokenLineStartOffset;
     unsigned endFunctionOffset;
     unsigned parameterCount;
-    unsigned functionLength;
     bool needsFullActivation;
     bool usesEval;
     bool strictMode;
@@ -59,8 +57,9 @@ struct SourceProviderCacheItemCreationParameters {
 #pragma warning(disable: 4200) // Disable "zero-sized array in struct/union" warning
 #endif
 
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(SourceProviderCacheItem);
 class SourceProviderCacheItem {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_STRUCT_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(SourceProviderCacheItem);
 public:
     static std::unique_ptr<SourceProviderCacheItem> create(const SourceProviderCacheItemCreationParameters&);
     ~SourceProviderCacheItem();
@@ -68,7 +67,7 @@ public:
     JSToken endFunctionToken() const
     {
         JSToken token;
-        token.m_type = isBodyArrowExpression ? tokenType : CLOSEBRACE;
+        token.m_type = isBodyArrowExpression ? static_cast<JSTokenType>(tokenType) : CLOSEBRACE;
         token.m_data.offset = lastTokenStartOffset;
         token.m_location.startOffset = lastTokenStartOffset;
         token.m_location.endOffset = lastTokenEndOffset;
@@ -79,31 +78,29 @@ public:
         return token;
     }
 
-    unsigned functionNameStart : 31;
     bool needsFullActivation : 1;
     unsigned endFunctionOffset : 31;
     bool usesEval : 1;
     unsigned lastTokenLine : 31;
     bool strictMode : 1;
     unsigned lastTokenStartOffset : 31;
-    unsigned lastTokenEndOffset: 31;
-    unsigned constructorKind : 2; // ConstructorKind
-    unsigned parameterCount : 31;
     unsigned expectedSuperBinding : 1; // SuperBinding
+    unsigned lastTokenEndOffset: 31;
     bool needsSuperBinding: 1;
-    unsigned functionLength;
-    unsigned lastTokenLineStartOffset;
+    unsigned parameterCount : 31;
+    unsigned lastTokenLineStartOffset : 31;
+    bool isBodyArrowExpression : 1;
     unsigned usedVariablesCount;
-    InnerArrowFunctionCodeFeatures innerArrowFunctionFeatures;
-    bool isBodyArrowExpression;
-    JSTokenType tokenType;
+    unsigned tokenType : 24; // JSTokenType
+    unsigned innerArrowFunctionFeatures : 6; // InnerArrowFunctionCodeFeatures
+    unsigned constructorKind : 2; // ConstructorKind
 
-    UniquedStringImpl** usedVariables() const { return const_cast<UniquedStringImpl**>(m_variables); }
+    PackedPtr<UniquedStringImpl>* usedVariables() const { return const_cast<PackedPtr<UniquedStringImpl>*>(m_variables); }
 
 private:
     SourceProviderCacheItem(const SourceProviderCacheItemCreationParameters&);
 
-    UniquedStringImpl* m_variables[0];
+    PackedPtr<UniquedStringImpl> m_variables[0];
 };
 
 inline SourceProviderCacheItem::~SourceProviderCacheItem()
@@ -116,33 +113,36 @@ inline std::unique_ptr<SourceProviderCacheItem> SourceProviderCacheItem::create(
 {
     size_t variableCount = parameters.usedVariables.size();
     size_t objectSize = sizeof(SourceProviderCacheItem) + sizeof(UniquedStringImpl*) * variableCount;
-    void* slot = fastMalloc(objectSize);
+    void* slot = SourceProviderCacheItemMalloc::malloc(objectSize);
     return std::unique_ptr<SourceProviderCacheItem>(new (slot) SourceProviderCacheItem(parameters));
 }
 
 inline SourceProviderCacheItem::SourceProviderCacheItem(const SourceProviderCacheItemCreationParameters& parameters)
-    : functionNameStart(parameters.functionNameStart)
-    , needsFullActivation(parameters.needsFullActivation)
+    : needsFullActivation(parameters.needsFullActivation)
     , endFunctionOffset(parameters.endFunctionOffset)
     , usesEval(parameters.usesEval)
     , lastTokenLine(parameters.lastTokenLine)
     , strictMode(parameters.strictMode)
     , lastTokenStartOffset(parameters.lastTokenStartOffset)
-    , lastTokenEndOffset(parameters.lastTokenEndOffset)
-    , constructorKind(static_cast<unsigned>(parameters.constructorKind))
-    , parameterCount(parameters.parameterCount)
     , expectedSuperBinding(static_cast<unsigned>(parameters.expectedSuperBinding))
+    , lastTokenEndOffset(parameters.lastTokenEndOffset)
     , needsSuperBinding(parameters.needsSuperBinding)
-    , functionLength(parameters.functionLength)
+    , parameterCount(parameters.parameterCount)
     , lastTokenLineStartOffset(parameters.lastTokenLineStartOffset)
-    , usedVariablesCount(parameters.usedVariables.size())
-    , innerArrowFunctionFeatures(parameters.innerArrowFunctionFeatures)
     , isBodyArrowExpression(parameters.isBodyArrowExpression)
-    , tokenType(parameters.tokenType)
+    , usedVariablesCount(parameters.usedVariables.size())
+    , tokenType(static_cast<unsigned>(parameters.tokenType))
+    , innerArrowFunctionFeatures(static_cast<unsigned>(parameters.innerArrowFunctionFeatures))
+    , constructorKind(static_cast<unsigned>(parameters.constructorKind))
 {
+    ASSERT(tokenType == static_cast<unsigned>(parameters.tokenType));
+    ASSERT(innerArrowFunctionFeatures == static_cast<unsigned>(parameters.innerArrowFunctionFeatures));
+    ASSERT(constructorKind == static_cast<unsigned>(parameters.constructorKind));
+    ASSERT(expectedSuperBinding == static_cast<unsigned>(parameters.expectedSuperBinding));
     for (unsigned i = 0; i < usedVariablesCount; ++i) {
-        m_variables[i] = parameters.usedVariables[i];
-        m_variables[i]->ref();
+        auto* pointer = parameters.usedVariables[i];
+        pointer->ref();
+        m_variables[i] = pointer;
     }
 }
 

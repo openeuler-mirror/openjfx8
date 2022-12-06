@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2008-2019 Apple Inc. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,6 +26,7 @@
 #pragma once
 
 #include "Blob.h"
+#include <wtf/IsoMalloc.h>
 #include <wtf/Optional.h>
 #include <wtf/Ref.h>
 #include <wtf/TypeCasts.h>
@@ -33,18 +34,15 @@
 
 namespace WebCore {
 
-class URL;
-
 class File final : public Blob {
+    WTF_MAKE_ISO_ALLOCATED_EXPORT(File, WEBCORE_EXPORT);
 public:
     struct PropertyBag : BlobPropertyBag {
-        std::optional<int64_t> lastModified;
+        Optional<int64_t> lastModified;
     };
 
-    static Ref<File> create(const String& path)
-    {
-        return adoptRef(*new File(path));
-    }
+    // Create a file with an optional name exposed to the author (via File.name and associated DOM properties) that differs from the one provided in the path.
+    WEBCORE_EXPORT static Ref<File> create(const String& path, const String& replacementPath = { }, const String& nameOverride = { });
 
     // Create a File using the 'new File' constructor.
     static Ref<File> create(Vector<BlobPartVariant>&& blobPartVariants, const String& filename, const PropertyBag& propertyBag)
@@ -52,17 +50,9 @@ public:
         return adoptRef(*new File(WTFMove(blobPartVariants), filename, propertyBag));
     }
 
-    static Ref<File> deserialize(const String& path, const URL& srcURL, const String& type, const String& name, const std::optional<int64_t>& lastModified = std::nullopt)
+    static Ref<File> deserialize(const String& path, const URL& srcURL, const String& type, const String& name, const Optional<int64_t>& lastModified = WTF::nullopt)
     {
         return adoptRef(*new File(deserializationContructor, path, srcURL, type, name, lastModified));
-    }
-
-    // Create a file with a name exposed to the author (via File.name and associated DOM properties) that differs from the one provided in the path.
-    static Ref<File> createWithName(const String& path, const String& nameOverride)
-    {
-        if (nameOverride.isEmpty())
-            return adoptRef(*new File(path));
-        return adoptRef(*new File(path, nameOverride));
     }
 
     static Ref<File> create(const Blob& blob, const String& name)
@@ -84,7 +74,7 @@ public:
     void setRelativePath(const String& relativePath) { m_relativePath = relativePath; }
     const String& name() const { return m_name; }
     WEBCORE_EXPORT int64_t lastModified() const; // Number of milliseconds since Epoch.
-    const std::optional<int64_t>& lastModifiedOverride() const { return m_lastModifiedDateOverride; } // Number of milliseconds since Epoch.
+    const Optional<int64_t>& lastModifiedOverride() const { return m_lastModifiedDateOverride; } // Number of milliseconds since Epoch.
 
     static String contentTypeForFile(const String& path);
 
@@ -96,12 +86,12 @@ public:
 
 private:
     WEBCORE_EXPORT explicit File(const String& path);
-    File(const String& path, const String& nameOverride);
+    File(URL&&, String&& type, String&& path, String&& name);
     File(Vector<BlobPartVariant>&& blobPartVariants, const String& filename, const PropertyBag&);
     File(const Blob&, const String& name);
     File(const File&, const String& name);
 
-    File(DeserializationContructor, const String& path, const URL& srcURL, const String& type, const String& name, const std::optional<int64_t>& lastModified);
+    File(DeserializationContructor, const String& path, const URL& srcURL, const String& type, const String& name, const Optional<int64_t>& lastModified);
 
     static void computeNameAndContentType(const String& path, const String& nameOverride, String& effectiveName, String& effectiveContentType);
 #if ENABLE(FILE_REPLACEMENT)
@@ -112,8 +102,8 @@ private:
     String m_relativePath;
     String m_name;
 
-    std::optional<int64_t> m_lastModifiedDateOverride;
-    mutable std::optional<bool> m_isDirectory;
+    Optional<int64_t> m_lastModifiedDateOverride;
+    mutable Optional<bool> m_isDirectory;
 };
 
 } // namespace WebCore

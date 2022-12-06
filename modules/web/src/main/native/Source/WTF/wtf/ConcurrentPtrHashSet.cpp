@@ -24,9 +24,7 @@
  */
 
 #include "config.h"
-#include "ConcurrentPtrHashSet.h"
-
-#include <wtf/DataLog.h>
+#include <wtf/ConcurrentPtrHashSet.h>
 
 namespace WTF {
 

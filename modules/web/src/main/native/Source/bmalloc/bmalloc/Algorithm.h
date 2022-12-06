@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,6 +28,7 @@
 
 #include "BAssert.h"
 #include <algorithm>
+#include <climits>
 #include <cstdint>
 #include <cstddef>
 #include <limits>
@@ -38,17 +39,17 @@
 namespace bmalloc {
 
 // Versions of min and max that are compatible with compile-time constants.
-template<typename T> inline constexpr T max(T a, T b)
+template<typename T> constexpr T max(T a, T b)
 {
     return a > b ? a : b;
 }
 
-template<typename T> inline constexpr T min(T a, T b)
+template<typename T> constexpr T min(T a, T b)
 {
     return a < b ? a : b;
 }
 
-template<typename T> inline constexpr T mask(T value, uintptr_t mask)
+template<typename T> constexpr T mask(T value, uintptr_t mask)
 {
     static_assert(sizeof(T) == sizeof(uintptr_t), "sizeof(T) must be equal to sizeof(uintptr_t).");
     return static_cast<T>(static_cast<uintptr_t>(value) & mask);
@@ -59,29 +60,34 @@ template<typename T> inline T* mask(T* value, uintptr_t mask)
     return reinterpret_cast<T*>(reinterpret_cast<uintptr_t>(value) & mask);
 }
 
-template<typename T> inline constexpr bool test(T value, uintptr_t mask)
+template<typename T> constexpr bool test(T value, uintptr_t mask)
 {
     return !!(reinterpret_cast<uintptr_t>(value) & mask);
 }
 
 template <typename T>
-inline constexpr bool isPowerOfTwo(T size)
+constexpr bool isPowerOfTwo(T size)
 {
     static_assert(std::is_integral<T>::value, "");
     return size && !(size & (size - 1));
 }
 
-template<typename T> inline T roundUpToMultipleOf(size_t divisor, T x)
+template<typename T> constexpr T roundUpToMultipleOfImpl(size_t divisor, T x)
 {
-    BASSERT(isPowerOfTwo(divisor));
     static_assert(sizeof(T) == sizeof(uintptr_t), "sizeof(T) must be equal to sizeof(uintptr_t).");
     return static_cast<T>((static_cast<uintptr_t>(x) + (divisor - 1)) & ~(divisor - 1));
 }
 
-template<size_t divisor, typename T> inline T roundUpToMultipleOf(T x)
+template<typename T> inline T roundUpToMultipleOf(size_t divisor, T x)
+{
+    BASSERT(isPowerOfTwo(divisor));
+    return roundUpToMultipleOfImpl(divisor, x);
+}
+
+template<size_t divisor, typename T> constexpr T roundUpToMultipleOf(T x)
 {
     static_assert(isPowerOfTwo(divisor), "'divisor' must be a power of two.");
-    return roundUpToMultipleOf(divisor, x);
+    return roundUpToMultipleOfImpl(divisor, x);
 }
 
 template<typename T> inline T* roundUpToMultipleOf(size_t divisor, T* x)
@@ -99,10 +105,17 @@ template<size_t divisor, typename T> inline T* roundUpToMultipleOf(T* x)
 template<typename T> inline T roundDownToMultipleOf(size_t divisor, T x)
 {
     BASSERT(isPowerOfTwo(divisor));
-    return reinterpret_cast<T>(mask(reinterpret_cast<uintptr_t>(x), ~(divisor - 1ul)));
+    static_assert(sizeof(T) == sizeof(uintptr_t), "sizeof(T) must be equal to sizeof(uintptr_t).");
+    return static_cast<T>(mask(static_cast<uintptr_t>(x), ~(divisor - 1ul)));
 }
 
-template<size_t divisor, typename T> inline constexpr T roundDownToMultipleOf(T x)
+template<typename T> inline T* roundDownToMultipleOf(size_t divisor, T* x)
+{
+    BASSERT(isPowerOfTwo(divisor));
+    return reinterpret_cast<T*>(mask(reinterpret_cast<uintptr_t>(x), ~(divisor - 1ul)));
+}
+
+template<size_t divisor, typename T> constexpr T roundDownToMultipleOf(T x)
 {
     static_assert(isPowerOfTwo(divisor), "'divisor' must be a power of two.");
     return roundDownToMultipleOf(divisor, x);
@@ -117,7 +130,7 @@ template<typename T> inline void divideRoundingUp(T numerator, T denominator, T&
         quotient += 1;
 }
 
-template<typename T> inline T divideRoundingUp(T numerator, T denominator)
+template<typename T> constexpr T divideRoundingUp(T numerator, T denominator)
 {
     return (numerator + denominator - 1) / denominator;
 }
@@ -129,12 +142,12 @@ template<typename T> inline T roundUpToMultipleOfNonPowerOfTwo(size_t divisor, T
 
 // Version of sizeof that returns 0 for empty classes.
 
-template<typename T> inline constexpr size_t sizeOf()
+template<typename T> constexpr size_t sizeOf()
 {
     return std::is_empty<T>::value ? 0 : sizeof(T);
 }
 
-template<typename T> inline constexpr size_t bitCount()
+template<typename T> constexpr size_t bitCount()
 {
     return sizeof(T) * 8;
 }
@@ -156,29 +169,110 @@ __forceinline constexpr unsigned long __builtin_clzl(unsigned long value)
 }
 #endif
 
-inline constexpr unsigned long log2(unsigned long value)
+constexpr unsigned long log2(unsigned long value)
 {
     return bitCount<unsigned long>() - 1 - __builtin_clzl(value);
 }
 
 #define BOFFSETOF(class, field) (reinterpret_cast<ptrdiff_t>(&(reinterpret_cast<class*>(0x4000)->field)) - 0x4000)
 
+template <typename T>
+constexpr unsigned ctzConstexpr(T value)
+{
+    constexpr unsigned bitSize = sizeof(T) * CHAR_BIT;
+
+    using UT = typename std::make_unsigned<T>::type;
+    UT uValue = value;
+
+    unsigned zeroCount = 0;
+    for (unsigned i = 0; i < bitSize; i++) {
+        if (uValue & 1)
+            break;
+
+        zeroCount++;
+        uValue >>= 1;
+    }
+    return zeroCount;
+}
+
 template<typename T>
-bool findBitInWord(T word, size_t& index, size_t endIndex, bool value)
+inline unsigned ctz(T value)
+{
+    constexpr unsigned bitSize = sizeof(T) * CHAR_BIT;
+
+    using UT = typename std::make_unsigned<T>::type;
+    UT uValue = value;
+
+#if BCOMPILER(GCC_COMPATIBLE)
+    if (uValue)
+        return __builtin_ctzll(uValue);
+    return bitSize;
+#elif BCOMPILER(MSVC) && !BCPU(X86)
+    unsigned long ret = 0;
+    if (_BitScanForward64(&ret, uValue))
+        return ret;
+    return bitSize;
+#else
+    UNUSED_PARAM(bitSize);
+    UNUSED_PARAM(uValue);
+    return ctzConstexpr(value);
+#endif
+}
+
+template<typename T>
+bool findBitInWord(T word, size_t& startOrResultIndex, size_t endIndex, bool value)
 {
     static_assert(std::is_unsigned<T>::value, "Type used in findBitInWord must be unsigned");
+    constexpr size_t bitsInWord = sizeof(word) * 8;
+    BASSERT(startOrResultIndex <= bitsInWord && endIndex <= bitsInWord);
+    BUNUSED(bitsInWord);
 
+    size_t index = startOrResultIndex;
     word >>= index;
 
+#if BCOMPILER(GCC_COMPATIBLE) && (BCPU(X86_64) || BCPU(ARM64))
+    // We should only use ctz() when we know that ctz() is implementated using
+    // a fast hardware instruction. Otherwise, this will actually result in
+    // worse performance.
+
+    word ^= (static_cast<T>(value) - 1);
+    index += ctz(word);
+    if (index < endIndex) {
+        startOrResultIndex = index;
+        return true;
+    }
+#else
     while (index < endIndex) {
-        if ((word & 1) == static_cast<T>(value))
+        if ((word & 1) == static_cast<T>(value)) {
+            startOrResultIndex = index;
             return true;
+        }
         index++;
         word >>= 1;
     }
+#endif
 
-    index = endIndex;
+    startOrResultIndex = endIndex;
     return false;
+}
+
+template<typename T>
+constexpr unsigned getLSBSetNonZeroConstexpr(T t)
+{
+    return ctzConstexpr(t);
+}
+
+// From http://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
+constexpr uint32_t roundUpToPowerOfTwo(uint32_t v)
+{
+    v--;
+    v |= v >> 1;
+    v |= v >> 2;
+    v |= v >> 4;
+    v |= v >> 8;
+    v |= v >> 16;
+    v++;
+    return v;
 }
 
 } // namespace bmalloc

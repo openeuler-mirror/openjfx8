@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2018 Apple Inc. All rights reserved.
  * Copyright (C) 2006 Michael Emmel mike.emmel@gmail.com
  * Copyright (C) 2007 Holger Hans Peter Freyther
  * Copyright (C) 2007 Pioneer Research Center USA, Inc.
@@ -40,12 +40,13 @@
 
 #if USE(FREETYPE)
 #include "FcUniquePtr.h"
-#include "HarfBuzzFace.h"
+#include "HbUniquePtr.h"
+#include "RefPtrFontconfig.h"
 #include <memory>
 #endif
 
 #if PLATFORM(JAVA)
-#include <wtf/java/JavaEnv.h>
+#include "PlatformJavaClasses.h"
 #include "RQRef.h"
 #endif
 
@@ -68,6 +69,10 @@ interface IDWriteFont;
 interface IDWriteFontFace;
 #endif
 
+#if USE(DIRECT2D)
+#include <dwrite_3.h>
+#endif
+
 namespace WebCore {
 
 class FontDescription;
@@ -80,7 +85,6 @@ public:
     FontPlatformData(WTF::HashTableDeletedValueType);
     FontPlatformData();
 
-    FontPlatformData(const FontDescription&, const AtomicString& family);
     FontPlatformData(float size, bool syntheticBold, bool syntheticOblique, FontOrientation = FontOrientation::Horizontal, FontWidthVariant = FontWidthVariant::RegularWidth, TextRenderingMode = TextRenderingMode::AutoTextRendering);
 
 #if PLATFORM(COCOA)
@@ -104,7 +108,7 @@ public:
 #endif
 
 #if PLATFORM(WIN) && USE(DIRECT2D)
-    FontPlatformData(GDIObject<HFONT>, IDWriteFont*, float size, bool syntheticBold, bool syntheticOblique, bool useGDI);
+    FontPlatformData(GDIObject<HFONT>&&, COMPtr<IDWriteFont>&&, float size, bool syntheticBold, bool syntheticOblique, bool useGDI);
 #endif
 
 #if PLATFORM(WIN) && USE(CAIRO)
@@ -112,18 +116,12 @@ public:
 #endif
 
 #if USE(FREETYPE)
-    FontPlatformData(FcPattern*, const FontDescription&);
-    FontPlatformData(cairo_font_face_t*, const FontDescription&, bool syntheticBold, bool syntheticOblique);
-    FontPlatformData(const FontPlatformData&);
-    FontPlatformData(FontPlatformData&&) = default;
-    FontPlatformData& operator=(const FontPlatformData&);
-    FontPlatformData& operator=(FontPlatformData&&) = default;
-    ~FontPlatformData();
+    FontPlatformData(cairo_font_face_t*, RefPtr<FcPattern>&&, float size, bool fixedWidth, bool syntheticBold, bool syntheticOblique, FontOrientation);
 #endif
 
 #if PLATFORM(JAVA)
     FontPlatformData(RefPtr<RQRef> font, float size);
-    static std::unique_ptr<FontPlatformData> create(const FontDescription& fontDescription, const AtomicString& family);
+    static std::unique_ptr<FontPlatformData> create(const FontDescription& fontDescription, const AtomString& family);
     std::unique_ptr<FontPlatformData> derive(float scaleFactor) const;
 #endif
 
@@ -168,13 +166,19 @@ public:
     TextRenderingMode textRenderingMode() const { return m_textRenderingMode; }
     bool isForTextCombine() const { return widthVariant() != FontWidthVariant::RegularWidth; } // Keep in sync with callers of FontDescription::setWidthVariant().
 
+    String familyName() const;
+
 #if USE(CAIRO)
     cairo_scaled_font_t* scaledFont() const { return m_scaledFont.get(); }
 #endif
 
 #if USE(FREETYPE)
-    HarfBuzzFace& harfBuzzFace() const;
+#if USE(HARFBUZZ) && !ENABLE(OPENTYPE_MATH)
+    HbUniquePtr<hb_font_t> createOpenTypeMathHarfBuzzFont() const;
+#endif
     bool hasCompatibleCharmap() const;
+    FcPattern* fcPattern() const;
+    bool isFixedWidth() const { return m_fixedWidth; }
 #endif
 
 #if PLATFORM(JAVA)
@@ -203,7 +207,7 @@ public:
 
     bool isEmoji() const
     {
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
         return m_isEmoji;
 #else
         return false;
@@ -256,7 +260,6 @@ private:
 
 #if USE(FREETYPE)
     RefPtr<FcPattern> m_pattern;
-    mutable std::unique_ptr<HarfBuzzFace> m_harfBuzzFace;
 #endif
 
 #if PLATFORM(JAVA)
@@ -279,7 +282,7 @@ private:
     bool m_hasVariations { false };
     // The values above are common to all ports
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     bool m_isEmoji { false };
 #endif
 

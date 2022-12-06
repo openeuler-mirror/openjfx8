@@ -35,8 +35,9 @@ class AudioProcessor;
 
 // AudioBasicProcessorNode is an AudioNode with one input and one output where the input and output have the same number of channels.
 class AudioBasicProcessorNode : public AudioNode {
+    WTF_MAKE_ISO_ALLOCATED(AudioBasicProcessorNode);
 public:
-    AudioBasicProcessorNode(AudioContext&, float sampleRate);
+    explicit AudioBasicProcessorNode(BaseAudioContext&);
 
     // AudioNode
     void process(size_t framesToProcess) override;

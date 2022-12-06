@@ -29,6 +29,7 @@
 
 #include "MediaPlayer.h"
 #include "MediaProducer.h"
+#include "MediaUsageInfo.h"
 #include "PlatformMediaSession.h"
 #include "SuccessOr.h"
 #include "Timer.h"
@@ -57,7 +58,7 @@ class MediaElementSession final : public PlatformMediaSession
     WTF_MAKE_FAST_ALLOCATED;
 public:
     explicit MediaElementSession(HTMLMediaElement&);
-    virtual ~MediaElementSession() = default;
+    virtual ~MediaElementSession();
 
     void registerWithDocument(Document&);
     void unregisterWithDocument(Document&);
@@ -73,7 +74,7 @@ public:
     SuccessOr<MediaPlaybackDenialReason> playbackPermitted() const;
     bool autoplayPermitted() const;
     bool dataLoadingPermitted() const;
-    bool dataBufferingPermitted() const;
+    MediaPlayer::BufferingPolicy preferredBufferingPolicy() const;
     bool fullscreenPermitted() const;
     bool pageAllowsDataLoading() const;
     bool pageAllowsPlaybackAfterResuming() const;
@@ -87,7 +88,6 @@ public:
 
     void setHasPlaybackTargetAvailabilityListeners(bool);
 
-    bool canPlayToWirelessPlaybackTarget() const override;
     bool isPlayingToWirelessPlaybackTarget() const override;
 
     void mediaStateDidChange(MediaProducer::MediaStateFlags);
@@ -102,6 +102,11 @@ public:
 
     void resetPlaybackSessionState() override;
 
+    void suspendBuffering() override;
+    void resumeBuffering() override;
+    bool bufferingSuspended() const;
+    void updateBufferingPolicy() { scheduleClientDataBufferingCheck(); }
+
     // Restrictions to modify default behaviors.
     enum BehaviorRestrictionFlags : unsigned {
         NoRestrictions = 0,
@@ -114,7 +119,6 @@ public:
         RequireUserGestureToShowPlaybackTargetPicker = 1 << 6,
         WirelessVideoPlaybackDisabled =  1 << 7,
         RequireUserGestureToAutoplayToExternalDevice = 1 << 8,
-        MetadataPreloadingNotPermitted = 1 << 9,
         AutoPreloadingNotPermitted = 1 << 10,
         InvisibleAutoplayNotPermitted = 1 << 11,
         OverrideUserGestureRequirementForMainContent = 1 << 12,
@@ -142,17 +146,22 @@ public:
     enum class PlaybackControlsPurpose { ControlsManager, NowPlaying };
     bool canShowControlsManager(PlaybackControlsPurpose) const;
     bool isLargeEnoughForMainContent(MediaSessionMainContentPurpose) const;
+    bool isMainContentForPurposesOfAutoplayEvents() const;
     MonotonicTime mostRecentUserInteractionTime() const;
 
     bool allowsPlaybackControlsForAutoplayingAudio() const;
-    bool allowsNowPlayingControlsVisibility() const override;
 
     static bool isMediaElementSessionMediaType(MediaType type)
     {
-        return type == Video
-            || type == Audio
-            || type == VideoAudio;
+        return type == MediaType::Video
+            || type == MediaType::Audio
+            || type == MediaType::VideoAudio;
     }
+
+    Optional<NowPlayingInfo> nowPlayingInfo() const final;
+
+    WEBCORE_EXPORT void updateMediaUsageIfChanged() final;
+    Optional<MediaUsageInfo> mediaUsageInfo() const { return m_mediaUsageInfo; }
 
 #if !RELEASE_LOG_DISABLED
     const void* logIdentifier() const final { return m_logIdentifier; }
@@ -168,8 +177,9 @@ private:
     void setPlaybackTarget(Ref<MediaPlaybackTarget>&&) override;
     void externalOutputDeviceAvailableDidChange(bool) override;
     void setShouldPlayToPlaybackTarget(bool) override;
+    void playbackTargetPickerWasDismissed() override;
 #endif
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     bool requiresPlaybackTargetRouteMonitoring() const override;
 #endif
     bool updateIsMainContent() const;
@@ -179,8 +189,12 @@ private:
     void clientDataBufferingTimerFired();
     void updateClientDataBuffering();
 
+    void addedMediaUsageManagerSessionIfNecessary();
+
     HTMLMediaElement& m_element;
     BehaviorRestrictions m_restrictions;
+
+    Optional<MediaUsageInfo> m_mediaUsageInfo;
 
     bool m_elementIsHiddenUntilVisibleInViewport { false };
     bool m_elementIsHiddenBecauseItWasRemovedFromDOM { false };
@@ -191,7 +205,7 @@ private:
     bool m_shouldPlayToPlaybackTarget { false };
     mutable bool m_hasPlaybackTargets { false };
 #endif
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     bool m_hasPlaybackTargetAvailabilityListeners { false };
 #endif
 
@@ -204,9 +218,31 @@ private:
 #if !RELEASE_LOG_DISABLED
     const void* m_logIdentifier;
 #endif
+
+#if ENABLE(MEDIA_USAGE)
+    bool m_haveAddedMediaUsageManagerSession { false };
+#endif
 };
 
+String convertEnumerationToString(const MediaPlaybackDenialReason);
+
 } // namespace WebCore
+
+namespace WTF {
+
+template<typename Type>
+struct LogArgument;
+
+template <>
+struct LogArgument<WebCore::MediaPlaybackDenialReason> {
+    static String toString(const WebCore::MediaPlaybackDenialReason reason)
+    {
+        return convertEnumerationToString(reason);
+    }
+};
+
+}; // namespace WTF
+
 
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::MediaElementSession)
 static bool isType(const WebCore::PlatformMediaSession& session) { return WebCore::MediaElementSession::isMediaElementSessionMediaType(session.mediaType()); }

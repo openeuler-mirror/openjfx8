@@ -30,28 +30,20 @@
 #include "B3Type.h"
 #include <wtf/PrintStream.h>
 
-#if COMPILER(GCC) && ASSERT_DISABLED
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wreturn-type"
-#endif // COMPILER(GCC) && ASSERT_DISABLED
+#if !ASSERT_ENABLED
+IGNORE_RETURN_TYPE_WARNINGS_BEGIN
+#endif
 
 namespace JSC { namespace B3 {
 
 template<typename T>
 class TypeMap {
 public:
-    TypeMap()
-        : m_void()
-        , m_int32()
-        , m_int64()
-        , m_float()
-        , m_double()
-    {
-    }
+    TypeMap() = default;
 
     T& at(Type type)
     {
-        switch (type) {
+        switch (type.kind()) {
         case Void:
             return m_void;
         case Int32:
@@ -62,6 +54,8 @@ public:
             return m_float;
         case Double:
             return m_double;
+        case Tuple:
+            return m_tuple;
         }
         ASSERT_NOT_REACHED();
     }
@@ -92,17 +86,18 @@ public:
     }
 
 private:
-    T m_void;
-    T m_int32;
-    T m_int64;
-    T m_float;
-    T m_double;
+    T m_void { };
+    T m_int32 { };
+    T m_int64 { };
+    T m_float { };
+    T m_double { };
+    T m_tuple { };
 };
 
 } } // namespace JSC::B3
 
-#if COMPILER(GCC) && ASSERT_DISABLED
-#pragma GCC diagnostic pop
-#endif // COMPILER(GCC) && ASSERT_DISABLED
+#if !ASSERT_ENABLED
+IGNORE_RETURN_TYPE_WARNINGS_END
+#endif
 
 #endif // ENABLE(B3_JIT)

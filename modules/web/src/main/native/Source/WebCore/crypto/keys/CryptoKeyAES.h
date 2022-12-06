@@ -31,7 +31,7 @@
 #include <wtf/Function.h>
 #include <wtf/Vector.h>
 
-#if ENABLE(SUBTLE_CRYPTO)
+#if ENABLE(WEB_CRYPTO)
 
 namespace WebCore {
 
@@ -54,7 +54,7 @@ public:
     static bool isValidAESAlgorithm(CryptoAlgorithmIdentifier);
 
     static RefPtr<CryptoKeyAES> generate(CryptoAlgorithmIdentifier, size_t lengthBits, bool extractable, CryptoKeyUsageBitmap);
-    static RefPtr<CryptoKeyAES> importRaw(CryptoAlgorithmIdentifier, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap);
+    WEBCORE_EXPORT static RefPtr<CryptoKeyAES> importRaw(CryptoAlgorithmIdentifier, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap);
     using CheckAlgCallback = Function<bool(size_t, const String&)>;
     static RefPtr<CryptoKeyAES> importJwk(CryptoAlgorithmIdentifier, JsonWebKey&&, bool extractable, CryptoKeyUsageBitmap, CheckAlgCallback&&);
 
@@ -78,4 +78,4 @@ private:
 
 SPECIALIZE_TYPE_TRAITS_CRYPTO_KEY(CryptoKeyAES, CryptoKeyClass::AES)
 
-#endif // ENABLE(SUBTLE_CRYPTO)
+#endif // ENABLE(WEB_CRYPTO)

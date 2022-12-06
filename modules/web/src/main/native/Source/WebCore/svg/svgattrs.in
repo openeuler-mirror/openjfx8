@@ -58,7 +58,6 @@ fill
 fill-opacity
 fill-rule
 filter
-filterRes
 filterUnits
 flood-color
 flood-opacity
@@ -160,6 +159,7 @@ r
 radius
 refX
 refY
+rel
 rendering-intent
 repeatCount
 repeatDur

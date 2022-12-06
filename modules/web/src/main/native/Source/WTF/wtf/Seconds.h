@@ -23,8 +23,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef WTF_Seconds_h
-#define WTF_Seconds_h
+#pragma once
 
 #include <wtf/MathExtras.h>
 #include <wtf/Optional.h>
@@ -33,10 +32,12 @@ namespace WTF {
 
 class MonotonicTime;
 class PrintStream;
+class TextStream;
 class TimeWithDynamicClockType;
 class WallTime;
 
-class Seconds {
+class Seconds final {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     constexpr Seconds() { }
 
@@ -227,17 +228,17 @@ public:
     }
 
     template<class Decoder>
-    static std::optional<Seconds> decode(Decoder& decoder)
+    static Optional<Seconds> decode(Decoder& decoder)
     {
-        std::optional<double> seconds;
+        Optional<double> seconds;
         decoder >> seconds;
         if (!seconds)
-            return std::nullopt;
+            return WTF::nullopt;
         return Seconds(*seconds);
     }
 
     template<class Decoder>
-    static bool decode(Decoder& decoder, Seconds& seconds)
+    static WARN_UNUSED_RETURN bool decode(Decoder& decoder, Seconds& seconds)
     {
         double value;
         if (!decoder.decode(value))
@@ -247,11 +248,25 @@ public:
         return true;
     }
 
+    struct MarkableTraits;
+
 private:
     double m_value { 0 };
 };
 
 WTF_EXPORT_PRIVATE void sleep(Seconds);
+
+struct Seconds::MarkableTraits {
+    static bool isEmptyValue(Seconds seconds)
+    {
+        return std::isnan(seconds.value());
+    }
+
+    static constexpr Seconds emptyValue()
+    {
+        return Seconds::nan();
+    }
+};
 
 inline namespace seconds_literals {
 
@@ -317,6 +332,18 @@ constexpr Seconds operator"" _ns(unsigned long long nanoseconds)
 
 } // inline seconds_literals
 
+inline Seconds operator*(double scalar, Seconds seconds)
+{
+    return Seconds(scalar * seconds.value());
+}
+
+inline Seconds operator/(double scalar, Seconds seconds)
+{
+    return Seconds(scalar / seconds.value());
+}
+
+WTF_EXPORT_PRIVATE TextStream& operator<<(TextStream&, Seconds);
+
 } // namespace WTF
 
 using WTF::sleep;
@@ -342,5 +369,3 @@ inline bool isfinite(WTF::Seconds seconds)
 
 using namespace WTF::seconds_literals;
 using WTF::Seconds;
-
-#endif // WTF_Seconds_h

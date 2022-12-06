@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011, 2015 Apple Inc. All rights reserved.
+ * Copyright (C) 2011-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,6 +26,8 @@
 #include "config.h"
 #include "VirtualRegister.h"
 
+#include "RegisterID.h"
+
 namespace JSC {
 
 void VirtualRegister::dump(PrintStream& out) const
@@ -36,7 +38,21 @@ void VirtualRegister::dump(PrintStream& out) const
     }
 
     if (isHeader()) {
-        out.print("head", m_virtualRegister);
+        if (m_virtualRegister == CallFrameSlot::codeBlock)
+            out.print("codeBlock");
+        else if (m_virtualRegister == CallFrameSlot::callee)
+            out.print("callee");
+        else if (m_virtualRegister == CallFrameSlot::argumentCountIncludingThis)
+            out.print("argumentCountIncludingThis");
+#if CPU(ADDRESS64)
+        else if (!m_virtualRegister)
+            out.print("callerFrame");
+        else if (m_virtualRegister == 1)
+            out.print("returnPC");
+#else
+        else if (!m_virtualRegister)
+            out.print("callerFrameAndReturnPC");
+#endif
         return;
     }
 
@@ -61,5 +77,15 @@ void VirtualRegister::dump(PrintStream& out) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-} // namespace JSC
 
+VirtualRegister::VirtualRegister(RegisterID* reg)
+    : VirtualRegister(reg->m_virtualRegister.m_virtualRegister)
+{
+}
+
+VirtualRegister::VirtualRegister(RefPtr<RegisterID> reg)
+    : VirtualRegister(reg.get())
+{
+}
+
+} // namespace JSC

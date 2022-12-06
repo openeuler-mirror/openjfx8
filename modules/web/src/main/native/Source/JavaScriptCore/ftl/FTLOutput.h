@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,6 +39,7 @@
 #include "FTLAbbreviatedTypes.h"
 #include "FTLAbstractHeapRepository.h"
 #include "FTLCommonValues.h"
+#include "FTLSelectPredictability.h"
 #include "FTLState.h"
 #include "FTLSwitchCase.h"
 #include "FTLTypedPointer.h"
@@ -50,11 +51,8 @@
 #include <wtf/StringPrintStream.h>
 
 // FIXME: remove this once everything can be generated through B3.
-#if COMPILER(GCC_OR_CLANG)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmissing-noreturn"
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-#endif // COMPILER(GCC_OR_CLANG)
+IGNORE_WARNINGS_BEGIN("missing-noreturn")
+ALLOW_UNUSED_PARAMETERS_BEGIN
 
 namespace JSC {
 
@@ -107,22 +105,14 @@ public:
     LValue constBool(bool value);
     LValue constInt32(int32_t value);
 
-    LValue weakPointer(DFG::Graph& graph, JSCell* cell)
+    LValue alreadyRegisteredWeakPointer(DFG::Graph& graph, JSCell* cell)
     {
         ASSERT(graph.m_plan.weakReferences().contains(cell));
 
         return constIntPtr(bitwise_cast<intptr_t>(cell));
     }
 
-    template<typename Key>
-    LValue weakPoisonedPointer(DFG::Graph& graph, JSCell* cell)
-    {
-        ASSERT(graph.m_plan.weakReferences().contains(cell));
-
-        return constIntPtr(bitwise_cast<intptr_t>(cell) ^ Key::key());
-    }
-
-    LValue weakPointer(DFG::FrozenValue* value)
+    LValue alreadyRegisteredFrozenPointer(DFG::FrozenValue* value)
     {
         RELEASE_ASSERT(value->value().isCell());
 
@@ -199,6 +189,7 @@ public:
     LValue doubleLog(LValue);
 
     LValue doubleToInt(LValue);
+    LValue doubleToInt64(LValue);
     LValue doubleToUInt(LValue);
 
     LValue signExt32To64(LValue);
@@ -375,7 +366,7 @@ public:
     LValue testIsZeroPtr(LValue value, LValue mask) { return isNull(bitAnd(value, mask)); }
     LValue testNonZeroPtr(LValue value, LValue mask) { return notNull(bitAnd(value, mask)); }
 
-    LValue select(LValue value, LValue taken, LValue notTaken);
+    LValue select(LValue value, LValue taken, LValue notTaken, SelectPredictability = SelectPredictability::NotPredictable);
 
     // These are relaxed atomics by default. Use AbstractHeapRepository::decorateFencedAccess() with a
     // non-null heap to make them seq_cst fenced.
@@ -391,7 +382,7 @@ public:
     LValue call(LType type, LValue function, const VectorType& vector)
     {
         B3::CCallValue* result = m_block->appendNew<B3::CCallValue>(m_proc, type, origin(), function);
-        result->children().appendVector(vector);
+        result->appendArgs(vector);
         return result;
     }
     LValue call(LType type, LValue function) { return m_block->appendNew<B3::CCallValue>(m_proc, type, origin(), function); }
@@ -402,6 +393,7 @@ public:
     template<typename Function, typename... Args>
     LValue callWithoutSideEffects(B3::Type type, Function function, LValue arg1, Args... args)
     {
+        static_assert(!std::is_same<Function, LValue>::value);
         return m_block->appendNew<B3::CCallValue>(m_proc, type, origin(), B3::Effects::none(),
             constIntPtr(tagCFunctionPtr<void*>(function, B3CCallPtrTag)), arg1, args...);
     }
@@ -500,9 +492,8 @@ inline void Output::addIncomingToPhi(LValue phi, ValueFromBlock value, Params...
     addIncomingToPhi(phi, theRest...);
 }
 
-#if COMPILER(GCC_OR_CLANG)
-#pragma GCC diagnostic pop
-#endif // COMPILER(GCC_OR_CLANG)
+ALLOW_UNUSED_PARAMETERS_END
+IGNORE_WARNINGS_END
 
 } } // namespace JSC::FTL
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2015-2020 Apple Inc. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "ECMAMode.h"
 #include <wtf/text/UniquedStringImpl.h>
 
 namespace JSC {
@@ -38,7 +39,7 @@ enum ResolveMode {
     DoNotThrowIfNotFound
 };
 
-enum ResolveType {
+enum ResolveType : unsigned {
     // Lexical scope guaranteed a certain type of variable access.
     GlobalProperty,
     GlobalVar,
@@ -202,16 +203,20 @@ class GetPutInfo {
     typedef unsigned Operand;
 public:
     // Give each field 10 bits for simplicity.
-    static_assert(sizeof(Operand) * 8 > 30, "Not enough bits for GetPutInfo");
-    static const unsigned modeShift = 20;
-    static const unsigned initializationShift = 10;
-    static const unsigned typeBits = (1 << initializationShift) - 1;
-    static const unsigned initializationBits = ((1 << modeShift) - 1) & ~typeBits;
-    static const unsigned modeBits = ((1 << 30) - 1) & ~initializationBits & ~typeBits;
-    static_assert((modeBits & initializationBits & typeBits) == 0x0, "There should be no intersection between ResolveMode ResolveType and InitializationMode");
+    static_assert(sizeof(Operand) * 8 > 31, "Not enough bits for GetPutInfo");
+    static constexpr unsigned isStrictShift = 30;
+    static constexpr unsigned modeShift = 20;
+    static constexpr unsigned initializationShift = 10;
+    static constexpr unsigned typeBits = (1 << initializationShift) - 1;
+    static constexpr unsigned initializationBits = ((1 << modeShift) - 1) & ~typeBits;
+    static constexpr unsigned modeBits = ((1 << 30) - 1) & ~initializationBits & ~typeBits;
+    static constexpr unsigned isStrictBit = 1 << 30;
+    static_assert((modeBits & initializationBits & typeBits & isStrictBit) == 0x0, "There should be no intersection between ResolveMode ResolveType and InitializationMode");
 
-    GetPutInfo(ResolveMode resolveMode, ResolveType resolveType, InitializationMode initializationMode)
-        : m_operand((resolveMode << modeShift) | (static_cast<unsigned>(initializationMode) << initializationShift) | resolveType)
+    GetPutInfo() = default;
+
+    GetPutInfo(ResolveMode resolveMode, ResolveType resolveType, InitializationMode initializationMode, ECMAMode ecmaMode)
+        : m_operand((ecmaMode.isStrict() << isStrictShift) | (resolveMode << modeShift) | (static_cast<unsigned>(initializationMode) << initializationShift) | resolveType)
     {
     }
 
@@ -223,12 +228,27 @@ public:
     ResolveType resolveType() const { return static_cast<ResolveType>(m_operand & typeBits); }
     InitializationMode initializationMode() const { return static_cast<InitializationMode>((m_operand & initializationBits) >> initializationShift); }
     ResolveMode resolveMode() const { return static_cast<ResolveMode>((m_operand & modeBits) >> modeShift); }
-    unsigned operand() { return m_operand; }
+    ECMAMode ecmaMode() const { return m_operand & isStrictBit ? ECMAMode::strict() : ECMAMode::sloppy(); }
+    unsigned operand() const { return m_operand; }
+
+    void dump(PrintStream&) const;
 
 private:
-    Operand m_operand;
+    Operand m_operand { 0 };
+
+    friend class JSC::LLIntOffsetsExtractor;
 };
 
 enum GetOrPut { Get, Put };
 
 } // namespace JSC
+
+namespace WTF {
+
+class PrintStream;
+
+void printInternal(PrintStream&, JSC::ResolveMode);
+void printInternal(PrintStream&, JSC::ResolveType);
+void printInternal(PrintStream&, JSC::InitializationMode);
+
+} // namespace WTF

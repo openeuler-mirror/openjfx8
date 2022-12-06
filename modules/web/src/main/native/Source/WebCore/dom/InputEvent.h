@@ -34,21 +34,19 @@ class DataTransfer;
 class WindowProxy;
 
 class InputEvent final : public UIEvent {
+    WTF_MAKE_ISO_ALLOCATED(InputEvent);
 public:
     struct Init : UIEventInit {
         String data;
     };
 
-    static Ref<InputEvent> create(const AtomicString& eventType, const String& inputType, CanBubble, IsCancelable, RefPtr<WindowProxy>&& view,
+    static Ref<InputEvent> create(const AtomString& eventType, const String& inputType, IsCancelable, RefPtr<WindowProxy>&& view,
         const String& data, RefPtr<DataTransfer>&&, const Vector<RefPtr<StaticRange>>& targetRanges, int detail);
 
-    static Ref<InputEvent> create(const AtomicString& type, const Init& initializer, IsTrusted isTrusted = IsTrusted::No)
+    static Ref<InputEvent> create(const AtomString& type, const Init& initializer)
     {
-        return adoptRef(*new InputEvent(type, initializer, isTrusted));
+        return adoptRef(*new InputEvent(type, initializer));
     }
-
-    InputEvent(const AtomicString& eventType, const String& inputType, CanBubble, IsCancelable, RefPtr<WindowProxy>&&, const String& data, RefPtr<DataTransfer>&&, const Vector<RefPtr<StaticRange>>& targetRanges, int detail);
-    InputEvent(const AtomicString& eventType, const Init&, IsTrusted);
 
     bool isInputEvent() const override { return true; }
     EventInterface eventInterface() const final { return InputEventInterfaceType; }
@@ -58,6 +56,9 @@ public:
     const Vector<RefPtr<StaticRange>>& getTargetRanges() { return m_targetRanges; }
 
 private:
+    InputEvent(const AtomString& eventType, const String& inputType, IsCancelable, RefPtr<WindowProxy>&&, const String& data, RefPtr<DataTransfer>&&, const Vector<RefPtr<StaticRange>>& targetRanges, int detail);
+    InputEvent(const AtomString& eventType, const Init&);
+
     String m_inputType;
     String m_data;
     RefPtr<DataTransfer> m_dataTransfer;

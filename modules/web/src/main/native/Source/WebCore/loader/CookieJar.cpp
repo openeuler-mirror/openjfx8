@@ -27,108 +27,70 @@
 #include "CookieJar.h"
 
 #include "CookieRequestHeaderFieldProxy.h"
-#include "CookiesStrategy.h"
 #include "Document.h"
 #include "DocumentLoader.h"
 #include "Frame.h"
 #include "FrameLoader.h"
-#include "FrameLoaderClient.h"
+#include "HTTPCookieAcceptPolicy.h"
 #include "NetworkStorageSession.h"
 #include "NetworkingContext.h"
+#include "Page.h"
 #include "PlatformStrategies.h"
 #include "SameSiteInfo.h"
+#include "StorageSessionProvider.h"
 #include <wtf/SystemTracing.h>
 
 namespace WebCore {
 
-static NetworkingContext* networkingContext(const Document& document)
+static ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking(const Document& document)
 {
-    // FIXME: Returning 0 means falling back to default context. That's not a choice that is appropriate to do at runtime
-    Frame* frame = document.frame();
-    if (!frame)
-        return nullptr;
-
-    return frame->loader().networkingContext();
+    if (auto* page = document.page())
+        return page->shouldRelaxThirdPartyCookieBlocking();
+    return ShouldRelaxThirdPartyCookieBlocking::No;
 }
 
-inline NetworkStorageSession& storageSession(const Document& document)
+Ref<CookieJar> CookieJar::create(Ref<StorageSessionProvider>&& storageSessionProvider)
 {
-    NetworkingContext* context = networkingContext(document);
-    return context ? context->storageSession() : NetworkStorageSession::defaultStorageSession();
+    return adoptRef(*new CookieJar(WTFMove(storageSessionProvider)));
 }
 
-static IncludeSecureCookies shouldIncludeSecureCookies(const Document& document, const URL& url)
+IncludeSecureCookies CookieJar::shouldIncludeSecureCookies(const Document& document, const URL& url)
 {
     return (url.protocolIs("https") && !document.foundMixedContent().contains(SecurityContext::MixedContentType::Active)) ? IncludeSecureCookies::Yes : IncludeSecureCookies::No;
 }
 
-static inline SameSiteInfo sameSiteInfo(const Document& document)
+SameSiteInfo CookieJar::sameSiteInfo(const Document& document)
 {
     if (auto* loader = document.loader())
         return SameSiteInfo::create(loader->request());
     return { };
 }
 
-String cookies(Document& document, const URL& url)
+CookieJar::CookieJar(Ref<StorageSessionProvider>&& storageSessionProvider)
+    : m_storageSessionProvider(WTFMove(storageSessionProvider))
+{
+}
+
+CookieJar::~CookieJar() = default;
+
+String CookieJar::cookies(Document& document, const URL& url) const
 {
     TraceScope scope(FetchCookiesStart, FetchCookiesEnd);
 
     auto includeSecureCookies = shouldIncludeSecureCookies(document, url);
 
-    std::pair<String, bool> result;
-    auto frame = document.frame();
-    if (frame)
-        result = platformStrategies()->cookiesStrategy()->cookiesForDOM(storageSession(document), document.firstPartyForCookies(), sameSiteInfo(document), url, frame->loader().client().frameID(), frame->loader().client().pageID(), includeSecureCookies);
-    else
-        result = platformStrategies()->cookiesStrategy()->cookiesForDOM(storageSession(document), document.firstPartyForCookies(), sameSiteInfo(document), url, std::nullopt, std::nullopt, includeSecureCookies);
-
-    if (result.second)
-        document.setSecureCookiesAccessed();
-
-    return result.first;
-}
-
-CookieRequestHeaderFieldProxy cookieRequestHeaderFieldProxy(const Document& document, const URL& url)
-{
-    TraceScope scope(FetchCookiesStart, FetchCookiesEnd);
-
-    CookieRequestHeaderFieldProxy proxy;
-    proxy.sessionID = storageSession(document).sessionID();
-    proxy.firstParty = document.firstPartyForCookies();
-    proxy.sameSiteInfo = sameSiteInfo(document);
-    proxy.url = url;
-    proxy.includeSecureCookies = shouldIncludeSecureCookies(document, url);
+    Optional<FrameIdentifier> frameID;
+    Optional<PageIdentifier> pageID;
     if (auto* frame = document.frame()) {
-        proxy.frameID = frame->loader().client().frameID();
-        proxy.pageID = frame->loader().client().pageID();
+        frameID = frame->loader().frameID();
+        pageID = frame->loader().pageID();
     }
-    return proxy;
-}
-
-void setCookies(Document& document, const URL& url, const String& cookieString)
-{
-    auto frame = document.frame();
-    if (frame)
-        platformStrategies()->cookiesStrategy()->setCookiesFromDOM(storageSession(document), document.firstPartyForCookies(), sameSiteInfo(document), url, frame->loader().client().frameID(), frame->loader().client().pageID(), cookieString);
-    else
-        platformStrategies()->cookiesStrategy()->setCookiesFromDOM(storageSession(document), document.firstPartyForCookies(), sameSiteInfo(document), url, std::nullopt, std::nullopt, cookieString);
-}
-
-bool cookiesEnabled(const Document& document)
-{
-    return platformStrategies()->cookiesStrategy()->cookiesEnabled(storageSession(document));
-}
-
-String cookieRequestHeaderFieldValue(Document& document, const URL& url)
-{
-    auto includeSecureCookies = shouldIncludeSecureCookies(document, url);
 
     std::pair<String, bool> result;
-    auto frame = document.frame();
-    if (frame)
-        result = platformStrategies()->cookiesStrategy()->cookieRequestHeaderFieldValue(storageSession(document), document.firstPartyForCookies(), sameSiteInfo(document), url, frame->loader().client().frameID(), frame->loader().client().pageID(), includeSecureCookies);
+    if (auto* session = m_storageSessionProvider->storageSession())
+        result = session->cookiesForDOM(document.firstPartyForCookies(), sameSiteInfo(document), url, frameID, pageID, includeSecureCookies, ShouldAskITP::Yes, shouldRelaxThirdPartyCookieBlocking(document));
     else
-        result = platformStrategies()->cookiesStrategy()->cookieRequestHeaderFieldValue(storageSession(document), document.firstPartyForCookies(), sameSiteInfo(document), url, std::nullopt, std::nullopt, includeSecureCookies);
+        ASSERT_NOT_REACHED();
 
     if (result.second)
         document.setSecureCookiesAccessed();
@@ -136,18 +98,100 @@ String cookieRequestHeaderFieldValue(Document& document, const URL& url)
     return result.first;
 }
 
-bool getRawCookies(const Document& document, const URL& url, Vector<Cookie>& cookies)
+CookieRequestHeaderFieldProxy CookieJar::cookieRequestHeaderFieldProxy(const Document& document, const URL& url)
 {
-    auto frame = document.frame();
-    if (frame)
-        return platformStrategies()->cookiesStrategy()->getRawCookies(storageSession(document), document.firstPartyForCookies(), sameSiteInfo(document), url, frame->loader().client().frameID(), frame->loader().client().pageID(), cookies);
+    TraceScope scope(FetchCookiesStart, FetchCookiesEnd);
 
-    return platformStrategies()->cookiesStrategy()->getRawCookies(storageSession(document), document.firstPartyForCookies(), sameSiteInfo(document), url, std::nullopt, std::nullopt, cookies);
+    Optional<FrameIdentifier> frameID;
+    Optional<PageIdentifier> pageID;
+    if (auto* frame = document.frame()) {
+        frameID = frame->loader().frameID();
+        pageID = frame->loader().pageID();
+    }
+
+    return { document.firstPartyForCookies(), sameSiteInfo(document), url, frameID, pageID, shouldIncludeSecureCookies(document, url) };
 }
 
-void deleteCookie(const Document& document, const URL& url, const String& cookieName)
+void CookieJar::setCookies(Document& document, const URL& url, const String& cookieString)
 {
-    platformStrategies()->cookiesStrategy()->deleteCookie(storageSession(document), url, cookieName);
+    Optional<FrameIdentifier> frameID;
+    Optional<PageIdentifier> pageID;
+    if (auto* frame = document.frame()) {
+        frameID = frame->loader().frameID();
+        pageID = frame->loader().pageID();
+    }
+
+    if (auto* session = m_storageSessionProvider->storageSession())
+        session->setCookiesFromDOM(document.firstPartyForCookies(), sameSiteInfo(document), url, frameID, pageID, ShouldAskITP::Yes, cookieString, shouldRelaxThirdPartyCookieBlocking(document));
+    else
+        ASSERT_NOT_REACHED();
+}
+
+bool CookieJar::cookiesEnabled(const Document&) const
+{
+    if (auto* session = m_storageSessionProvider->storageSession())
+        return session->cookieAcceptPolicy() != HTTPCookieAcceptPolicy::Never;
+
+    ASSERT_NOT_REACHED();
+    return false;
+}
+
+std::pair<String, SecureCookiesAccessed> CookieJar::cookieRequestHeaderFieldValue(const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, Optional<FrameIdentifier> frameID, Optional<PageIdentifier> pageID, IncludeSecureCookies includeSecureCookies) const
+{
+    if (auto* session = m_storageSessionProvider->storageSession()) {
+        std::pair<String, bool> result = session->cookieRequestHeaderFieldValue(firstParty, sameSiteInfo, url, frameID, pageID, includeSecureCookies, ShouldAskITP::Yes, ShouldRelaxThirdPartyCookieBlocking::No);
+        return { result.first, result.second ? SecureCookiesAccessed::Yes : SecureCookiesAccessed::No };
+    }
+
+    ASSERT_NOT_REACHED();
+    return { };
+}
+
+String CookieJar::cookieRequestHeaderFieldValue(Document& document, const URL& url) const
+{
+    Optional<FrameIdentifier> frameID;
+    Optional<PageIdentifier> pageID;
+    if (auto* frame = document.frame()) {
+        frameID = frame->loader().frameID();
+        pageID = frame->loader().pageID();
+    }
+
+    auto result = cookieRequestHeaderFieldValue(document.firstPartyForCookies(), sameSiteInfo(document), url, frameID, pageID, shouldIncludeSecureCookies(document, url));
+    if (result.second == SecureCookiesAccessed::Yes)
+        document.setSecureCookiesAccessed();
+    return result.first;
+}
+
+bool CookieJar::getRawCookies(const Document& document, const URL& url, Vector<Cookie>& cookies) const
+{
+    Optional<FrameIdentifier> frameID;
+    Optional<PageIdentifier> pageID;
+    if (auto* frame = document.frame()) {
+        frameID = frame->loader().frameID();
+        pageID = frame->loader().pageID();
+    }
+
+    if (auto* session = m_storageSessionProvider->storageSession())
+        return session->getRawCookies(document.firstPartyForCookies(), sameSiteInfo(document), url, frameID, pageID, ShouldAskITP::Yes, shouldRelaxThirdPartyCookieBlocking(document), cookies);
+
+    ASSERT_NOT_REACHED();
+    return false;
+}
+
+void CookieJar::setRawCookie(const Document&, const Cookie& cookie)
+{
+    if (auto* session = m_storageSessionProvider->storageSession())
+        session->setCookie(cookie);
+    else
+        ASSERT_NOT_REACHED();
+}
+
+void CookieJar::deleteCookie(const Document&, const URL& url, const String& cookieName)
+{
+    if (auto* session = m_storageSessionProvider->storageSession())
+        session->deleteCookie(url, cookieName);
+    else
+        ASSERT_NOT_REACHED();
 }
 
 }

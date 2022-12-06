@@ -28,11 +28,13 @@
 #define  _SILENCE_STDEXT_HASH_DEPRECATION_WARNINGS
 #include <hash_map>
 #include <hash_set>
+
 // The following is derived from _HASH_SEED, which is an internal constant from
 // include/xhash; since this is an internal constant we define our own rather
 // than relying on something that Microsoft could remove (and apparently has in
 // newer versions of Visual C++)
 #define GLASS_HASH_SEED (size_t)0xdeadbeef
+
 #include "GlassApplication.h"
 #include "GlassClipboard.h"
 #include "GlassDnD.h"
@@ -1300,7 +1302,10 @@ JNIEXPORT jobjectArray JNICALL Java_com_sun_glass_ui_win_WinSystemClipboard_popM
                         //LPFILEGROUPDESCRIPTORW for MS_FILE_DESCRIPTOR_UNICODE
                         //LPFILEGROUPDESCRIPTORA for MS_FILE_DESCRIPTOR
                         LPFILEGROUPDESCRIPTORW pdata = reinterpret_cast<LPFILEGROUPDESCRIPTORW>(me.getMem());
-                        if (pdata->cItems > 0) {
+                        jlong bufferSize = me.size() - sizeof(UINT);
+                        if ((pdata->cItems > 0) &&
+                            (bufferSize == (jlong)pdata->cItems * itemSize))
+                        {
                             mimes.erase(MS_FILE_CONTENT);
                             mimes.erase(MS_FILE_DESCRIPTOR_UNICODE);
                             mimes.erase(MS_FILE_DESCRIPTOR);

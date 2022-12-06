@@ -26,7 +26,7 @@
 
 #include "config.h"
 
-#if USE(UDIS86)
+#if ENABLE(UDIS86)
 
 #include "udis86_types.h"
 #include "udis86_decode.h"
@@ -37,7 +37,7 @@
  * Register Table - Order Matters (types.h)!
  *
  */
-const char* ud_reg_tab[] =
+const char* const ud_reg_tab[] =
 {
   "al",   "cl",   "dl",   "bl",
   "ah",   "ch",   "dh",   "bh",
@@ -212,7 +212,7 @@ ud_syn_print_mem_disp(struct ud* u, const struct ud_operand *op, int sign)
   }
 }
 
-#endif // USE(UDIS86)
+#endif // ENABLE(UDIS86)
 
 /*
 vim: set ts=2 sw=2 expandtab

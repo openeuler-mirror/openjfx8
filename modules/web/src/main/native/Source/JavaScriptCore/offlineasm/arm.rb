@@ -1,4 +1,4 @@
-# Copyright (C) 2011-2018 Apple Inc. All rights reserved.
+# Copyright (C) 2011-2020 Apple Inc. All rights reserved.
 # Copyright (C) 2013 University of Szeged. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -34,11 +34,11 @@ require "risc"
 #  x2 => t2, a2, r2
 #  x3 => t3, a3, r3
 #  x6 =>            (callee-save scratch)
-#  x7 => cfr        (ARMv7 only)
+#  x7 => cfr
 #  x8 => t4         (callee-save)
 #  x9 => t5         (callee-save)
-# x10 =>            (callee-save scratch)
-# x11 => cfr        (ARM and ARMv7 traditional)
+# x10 => csr1       (callee-save, PB)
+# x11 => cfr, csr0  (callee-save, metadataTable)
 # x12 =>            (callee-save scratch)
 #  lr => lr
 #  sp => sp
@@ -55,28 +55,6 @@ require "risc"
 # d6 =>              (scratch)
 # d7 =>              (scratch)
 
-def isARMv7
-    case $activeBackend
-    when "ARMv7"
-        true
-    when "ARMv7_TRADITIONAL", "ARM"
-        false
-    else
-        raise "bad value for $activeBackend: #{$activeBackend}"
-    end
-end
-
-def isARMv7Traditional
-    case $activeBackend
-    when "ARMv7_TRADITIONAL"
-        true
-    when "ARMv7", "ARM"
-        false
-    else
-        raise "bad value for $activeBackend: #{$activeBackend}"
-    end
-end
-
 class Node
     def armSingle
         doubleOperand = armOperand
@@ -91,7 +69,7 @@ class SpecialRegister
     end
 end
 
-ARM_EXTRA_GPRS = [SpecialRegister.new("r6"), SpecialRegister.new("r10"), SpecialRegister.new("r12")]
+ARM_EXTRA_GPRS = [SpecialRegister.new("r6"), SpecialRegister.new("r4"), SpecialRegister.new("r12")]
 ARM_EXTRA_FPRS = [SpecialRegister.new("d7")]
 ARM_SCRATCH_FPR = SpecialRegister.new("d6")
 OS_DARWIN = ((RUBY_PLATFORM =~ /darwin/i) != nil)
@@ -104,13 +82,11 @@ def armMoveImmediate(value, register)
         $asm.puts "mov #{register.armOperand}, \##{value}"
     elsif (~value) >= 0 && (~value) < 256
         $asm.puts "mvn #{register.armOperand}, \##{~value}"
-    elsif isARMv7 or isARMv7Traditional
+    else
         $asm.puts "movw #{register.armOperand}, \##{value & 0xffff}"
         if (value & 0xffff0000) != 0
             $asm.puts "movt #{register.armOperand}, \##{(value >> 16) & 0xffff}"
         end
-    else
-        $asm.puts "ldr #{register.armOperand}, =#{value}"
     end
 end
 
@@ -126,13 +102,17 @@ class RegisterID
         when "a3"
             "r3"
         when "t3"
-            "r4"
+            "r3"
         when "t4"
             "r8"
         when "t5"
             "r9"
         when "cfr"
-            isARMv7 ?  "r7" : "r11"
+            "r7"
+        when "csr0"
+            "r11"
+        when "csr1"
+            "r10"
         when "lr"
             "lr"
         when "sp"
@@ -273,19 +253,34 @@ def armLowerStackPointerInComparison(list)
     newList
 end
 
-class Sequence
-    def getModifiedListARM
-        raise unless $activeBackend == "ARM"
-        getModifiedListARMCommon
-    end
+def armLowerLabelReferences(list)
+    newList = []
+    list.each {
+        | node |
+        if node.is_a? Instruction
+            case node.opcode
+            when "leai", "leap", "leaq"
+                labelRef = node.operands[0]
+                if labelRef.is_a? LabelReference
+                    raise unless labelRef.offset == 0
+                    tmp = Tmp.new(node.codeOrigin, :gpr)
+                    newList << Instruction.new(codeOrigin, "globaladdr", [LabelReference.new(node.codeOrigin, labelRef.label), node.operands[1], tmp])
+                else
+                    newList << node
+                end
+            else
+                newList << node
+            end
+        else
+            newList << node
+        end
+    }
+    newList
+end
 
+class Sequence
     def getModifiedListARMv7
         raise unless $activeBackend == "ARMv7"
-        getModifiedListARMCommon
-    end
-
-    def getModifiedListARMv7_TRADITIONAL
-        raise unless $activeBackend == "ARMv7_TRADITIONAL"
         getModifiedListARMCommon
     end
 
@@ -294,6 +289,7 @@ class Sequence
         result = riscLowerSimpleBranchOps(result)
         result = riscLowerHardBranchOps(result)
         result = riscLowerShiftOps(result)
+        result = armLowerLabelReferences(result)
         result = riscLowerMalformedAddresses(result) {
             | node, address |
             if address.is_a? BaseIndex
@@ -305,8 +301,8 @@ class Sequence
             end
         }
         result = riscLowerMalformedAddressesDouble(result)
-        result = riscLowerMisplacedImmediates(result, ["storeb", "storei", "storep", "storeq"])
-        result = riscLowerMalformedImmediates(result, 0..0xff)
+        result = riscLowerMisplacedImmediates(result, ["storeb", "storeh", "storei", "storep", "storeq"])
+        result = riscLowerMalformedImmediates(result, 0..0xff, 0..0x0ff)
         result = riscLowerMisplacedAddresses(result)
         result = riscLowerRegisterReuse(result)
         result = assignRegistersToTemporaries(result, :gpr, ARM_EXTRA_GPRS)
@@ -386,18 +382,8 @@ def emitArmTestSet(operands, code)
 end
 
 class Instruction
-    def lowerARM
-        raise unless $activeBackend == "ARM"
-        lowerARMCommon
-    end
-
     def lowerARMv7
         raise unless $activeBackend == "ARMv7"
-        lowerARMCommon
-    end
-
-    def lowerARMv7_TRADITIONAL
-        raise unless $activeBackend == "ARMv7_TRADITIONAL"
         lowerARMCommon
     end
 
@@ -434,7 +420,7 @@ class Instruction
             end
         when "andi", "andp"
             emitArmCompact("ands", "and", operands)
-        when "ori", "orp"
+        when "ori", "orp", "orh"
             emitArmCompact("orrs", "orr", operands)
         when "oris"
             emitArmCompact("orrs", "orrs", operands)
@@ -460,13 +446,13 @@ class Instruction
             $asm.puts "str #{armOperands(operands)}"
         when "loadb"
             $asm.puts "ldrb #{armFlippedOperands(operands)}"
-        when "loadbs"
+        when "loadbsi"
             $asm.puts "ldrsb.w #{armFlippedOperands(operands)}"
         when "storeb"
             $asm.puts "strb #{armOperands(operands)}"
         when "loadh"
             $asm.puts "ldrh #{armFlippedOperands(operands)}"
-        when "loadhs"
+        when "loadhsi"
             $asm.puts "ldrsh.w #{armFlippedOperands(operands)}"
         when "storeh"
             $asm.puts "strh #{armOperands(operands)}"
@@ -484,7 +470,7 @@ class Instruction
             emitArm("vmul.f64", operands)
         when "sqrtd"
             $asm.puts "vsqrt.f64 #{armFlippedOperands(operands)}"
-        when "ci2d"
+        when "ci2ds"
             $asm.puts "vmov #{operands[1].armSingle}, #{operands[0].armOperand}"
             $asm.puts "vcvt.f64.s32 #{operands[1].armOperand}, #{operands[1].armSingle}"
         when "bdeq"
@@ -614,9 +600,6 @@ class Instruction
             else
                 $asm.puts "mov pc, #{operands[0].armOperand}"
             end
-            if not isARMv7 and not isARMv7Traditional
-                $asm.puts ".ltorg"
-            end
         when "call"
             if operands[0].label?
                 if OS_DARWIN
@@ -682,6 +665,57 @@ class Instruction
             $asm.puts "dmb sy"
         when "clrbp"
             $asm.puts "bic #{operands[2].armOperand}, #{operands[0].armOperand}, #{operands[1].armOperand}"
+        when "globaladdr"
+            labelRef = operands[0]
+            dest = operands[1]
+            temp = operands[2]
+
+            uid = $asm.newUID
+
+            $asm.putStr("#if OS(DARWIN)")
+            $asm.puts "movw #{operands[1].armOperand}, :lower16:(L#{operands[0].asmLabel}_#{uid}$non_lazy_ptr-(L_offlineasm_#{uid}+4))"
+            $asm.puts "movt #{operands[1].armOperand}, :upper16:(L#{operands[0].asmLabel}_#{uid}$non_lazy_ptr-(L_offlineasm_#{uid}+4))"
+            $asm.puts "L_offlineasm_#{uid}:"
+            $asm.puts "add #{operands[1].armOperand}, pc"
+            $asm.puts "ldr #{operands[1].armOperand}, [#{operands[1].armOperand}]"
+
+            # On Linux, use ELF GOT relocation specifiers.
+            $asm.putStr("#elif OS(LINUX)")
+            gotLabel = Assembler.localLabelReference("offlineasm_arm_got_#{uid}")
+            offsetLabel = Assembler.localLabelReference("offlineasm_arm_got_offset_#{uid}")
+
+            $asm.puts "ldr #{dest.armOperand}, #{gotLabel}"
+            $asm.puts "ldr #{temp.armOperand}, #{gotLabel}+4"
+            $asm.puts "#{offsetLabel}:"
+            $asm.puts "add #{dest.armOperand}, pc, #{dest.armOperand}"
+            $asm.puts "ldr #{dest.armOperand}, [#{dest.armOperand}, #{temp.armOperand}]"
+
+            # Throw a compiler error everywhere else.
+            $asm.putStr("#else")
+            $asm.putStr("#error Missing globaladdr implementation")
+            $asm.putStr("#endif")
+
+            offset = 4
+
+            $asm.deferNextLabelAction {
+                $asm.putStr("#if OS(DARWIN)")
+                $asm.puts ".section __DATA,__nl_symbol_ptr,non_lazy_symbol_pointers"
+                $asm.puts ".p2align 2"
+
+                $asm.puts "L#{operands[0].asmLabel}_#{uid}$non_lazy_ptr:"
+                $asm.puts ".indirect_symbol #{operands[0].asmLabel}"
+                $asm.puts ".long 0"
+
+                $asm.puts ".text"
+                $asm.puts ".align 4"
+
+                $asm.putStr("#elif OS(LINUX)")
+                $asm.puts "#{gotLabel}:"
+                $asm.puts ".word _GLOBAL_OFFSET_TABLE_-(#{offsetLabel}+#{offset})"
+                $asm.puts ".word #{labelRef.asmLabel}(GOT)"
+
+                $asm.putStr("#endif")
+            }
         else
             lowerDefault
         end

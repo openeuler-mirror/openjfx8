@@ -42,21 +42,6 @@ static inline Ref<Blob> blobFromData(const unsigned char* data, unsigned length,
     return Blob::create(WTFMove(value), contentType);
 }
 
-static inline bool shouldPrependBOM(const unsigned char* data, unsigned length)
-{
-    if (length < 3)
-        return true;
-    return data[0] != 0xef || data[1] != 0xbb || data[2] != 0xbf;
-}
-
-static String textFromUTF8(const unsigned char* data, unsigned length)
-{
-    auto decoder = TextResourceDecoder::create("text/plain", "UTF-8");
-    if (shouldPrependBOM(data, length))
-        decoder->decode("\xef\xbb\xbf", 3);
-    return decoder->decodeAndFlush(reinterpret_cast<const char*>(data), length);
-}
-
 static void resolveWithTypeAndData(Ref<DeferredPromise>&& promise, FetchBodyConsumer::Type type, const String& contentType, const unsigned char* data, unsigned length)
 {
     switch (type) {
@@ -64,13 +49,15 @@ static void resolveWithTypeAndData(Ref<DeferredPromise>&& promise, FetchBodyCons
         fulfillPromiseWithArrayBuffer(WTFMove(promise), data, length);
         return;
     case FetchBodyConsumer::Type::Blob:
-        promise->resolveWithNewlyCreated<IDLInterface<Blob>>(blobFromData(data, length, contentType).get());
+        promise->resolveCallbackValueWithNewlyCreated<IDLInterface<Blob>>([&data, &length, &contentType](auto&) {
+            return blobFromData(data, length, contentType);
+        });
         return;
     case FetchBodyConsumer::Type::JSON:
-        fulfillPromiseWithJSON(WTFMove(promise), textFromUTF8(data, length));
+        fulfillPromiseWithJSON(WTFMove(promise), TextResourceDecoder::textFromUTF8(data, length));
         return;
     case FetchBodyConsumer::Type::Text:
-        promise->resolve<IDLDOMString>(textFromUTF8(data, length));
+        promise->resolve<IDLDOMString>(TextResourceDecoder::textFromUTF8(data, length));
         return;
     case FetchBodyConsumer::Type::None:
         ASSERT_NOT_REACHED();
@@ -81,7 +68,7 @@ static void resolveWithTypeAndData(Ref<DeferredPromise>&& promise, FetchBodyCons
 void FetchBodyConsumer::clean()
 {
     m_buffer = nullptr;
-    m_consumePromise = nullptr;
+    resetConsumePromise();
     if (m_sink) {
         m_sink->clearCallback();
         return;
@@ -120,7 +107,7 @@ void FetchBodyConsumer::resolve(Ref<DeferredPromise>&& promise, ReadableStream* 
     }
 
     if (m_isLoading) {
-        m_consumePromise = WTFMove(promise);
+        setConsumePromise(WTFMove(promise));
         return;
     }
 
@@ -130,7 +117,9 @@ void FetchBodyConsumer::resolve(Ref<DeferredPromise>&& promise, ReadableStream* 
         fulfillPromiseWithArrayBuffer(WTFMove(promise), takeAsArrayBuffer().get());
         return;
     case Type::Blob:
-        promise->resolveWithNewlyCreated<IDLInterface<Blob>>(takeAsBlob().get());
+        promise->resolveCallbackValueWithNewlyCreated<IDLInterface<Blob>>([this](auto&) {
+            return takeAsBlob();
+        });
         return;
     case Type::JSON:
         fulfillPromiseWithJSON(WTFMove(promise), takeAsText());
@@ -192,7 +181,7 @@ String FetchBodyConsumer::takeAsText()
     if (!m_buffer)
         return String();
 
-    auto text = textFromUTF8(reinterpret_cast<const unsigned char*>(m_buffer->data()), m_buffer->size());
+    auto text = TextResourceDecoder::textFromUTF8(reinterpret_cast<const unsigned char*>(m_buffer->data()), m_buffer->size());
     m_buffer = nullptr;
     return text;
 }
@@ -200,7 +189,14 @@ String FetchBodyConsumer::takeAsText()
 void FetchBodyConsumer::setConsumePromise(Ref<DeferredPromise>&& promise)
 {
     ASSERT(!m_consumePromise);
+    m_userGestureToken = UserGestureIndicator::currentUserGesture();
     m_consumePromise = WTFMove(promise);
+}
+
+void FetchBodyConsumer::resetConsumePromise()
+{
+    m_consumePromise = nullptr;
+    m_userGestureToken = nullptr;
 }
 
 void FetchBodyConsumer::setSource(Ref<FetchBodySource>&& source)
@@ -212,15 +208,15 @@ void FetchBodyConsumer::setSource(Ref<FetchBodySource>&& source)
     }
 }
 
-void FetchBodyConsumer::loadingFailed()
+void FetchBodyConsumer::loadingFailed(const Exception& exception)
 {
     m_isLoading = false;
     if (m_consumePromise) {
-        m_consumePromise->reject();
-        m_consumePromise = nullptr;
+        m_consumePromise->reject(exception);
+        resetConsumePromise();
     }
     if (m_source) {
-        m_source->error("Loading failed"_s);
+        m_source->error(exception);
         m_source = nullptr;
     }
 }
@@ -229,8 +225,14 @@ void FetchBodyConsumer::loadingSucceeded()
 {
     m_isLoading = false;
 
-    if (m_consumePromise)
-        resolve(m_consumePromise.releaseNonNull(), nullptr);
+    if (m_consumePromise) {
+        if (!m_userGestureToken || m_userGestureToken->hasExpired(UserGestureToken::maximumIntervalForUserGestureForwardingForFetch()) || !m_userGestureToken->processingUserGesture())
+            resolve(m_consumePromise.releaseNonNull(), nullptr);
+        else {
+            UserGestureIndicator gestureIndicator(m_userGestureToken, UserGestureToken::GestureScope::MediaOnly, UserGestureToken::IsPropagatedFromFetch::Yes);
+            resolve(m_consumePromise.releaseNonNull(), nullptr);
+        }
+    }
     if (m_source) {
         m_source->close();
         m_source = nullptr;

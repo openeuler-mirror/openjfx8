@@ -20,22 +20,20 @@
  */
 
 #include "config.h"
-#include "TextBreakIterator.h"
+#include <wtf/text/TextBreakIterator.h>
 
-#include "LineBreakIteratorPoolICU.h"
-#include "TextBreakIteratorInternalICU.h"
-#include "UTextProviderLatin1.h"
-#include "UTextProviderUTF16.h"
+#include <wtf/text/LineBreakIteratorPoolICU.h>
+#include <wtf/text/TextBreakIteratorInternalICU.h>
+#include <wtf/text/icu/UTextProviderLatin1.h>
+#include <wtf/text/icu/UTextProviderUTF16.h>
 #include <atomic>
-#include <mutex>
 #include <unicode/ubrk.h>
-#include <wtf/text/StringBuilder.h>
 
 namespace WTF {
 
-#if !PLATFORM(MAC) && !PLATFORM(IOS)
+#if !PLATFORM(MAC) && !PLATFORM(IOS_FAMILY)
 
-static Variant<TextBreakIteratorICU, TextBreakIteratorPlatform> mapModeToBackingIterator(StringView string, TextBreakIterator::Mode mode, const AtomicString& locale)
+static Variant<TextBreakIteratorICU, TextBreakIteratorPlatform> mapModeToBackingIterator(StringView string, TextBreakIterator::Mode mode, const AtomString& locale)
 {
     switch (mode) {
     case TextBreakIterator::Mode::Line:
@@ -50,7 +48,7 @@ static Variant<TextBreakIteratorICU, TextBreakIteratorPlatform> mapModeToBacking
     }
 }
 
-TextBreakIterator::TextBreakIterator(StringView string, Mode mode, const AtomicString& locale)
+TextBreakIterator::TextBreakIterator(StringView string, Mode mode, const AtomString& locale)
     : m_backing(mapModeToBackingIterator(string, mode, locale))
     , m_mode(mode)
     , m_locale(locale)
@@ -64,7 +62,7 @@ TextBreakIterator::TextBreakIterator(StringView string, Mode mode, const AtomicS
 static UBreakIterator* initializeIterator(UBreakIteratorType type, const char* locale = currentTextBreakLocaleID())
 {
     UErrorCode openStatus = U_ZERO_ERROR;
-    UBreakIterator* iterator = ubrk_open(type, locale, 0, 0, &openStatus);
+    UBreakIterator* iterator = ubrk_open(type, locale, nullptr, 0, &openStatus);
     ASSERT_WITH_MESSAGE(U_SUCCESS(openStatus), "ICU could not open a break iterator: %s (%d)", u_errorName(openStatus), openStatus);
     return iterator;
 }
@@ -134,7 +132,7 @@ static UBreakIterator* setContextAwareTextForIterator(UBreakIterator& iterator, 
         UText* text = openUTF16ContextAwareUTextProvider(&textLocal, string.characters16(), string.length(), priorContext, priorContextLength, &openStatus);
         if (U_FAILURE(openStatus)) {
             LOG_ERROR("openUTF16ContextAwareUTextProvider failed with status %d", openStatus);
-            return 0;
+            return nullptr;
         }
 
         UErrorCode setTextStatus = U_ZERO_ERROR;
@@ -171,7 +169,7 @@ UBreakIterator* sentenceBreakIterator(StringView string)
     return setTextForIterator(*staticSentenceBreakIterator, string);
 }
 
-UBreakIterator* acquireLineBreakIterator(StringView string, const AtomicString& locale, const UChar* priorContext, unsigned priorContextLength, LineBreakIteratorMode mode)
+UBreakIterator* acquireLineBreakIterator(StringView string, const AtomString& locale, const UChar* priorContext, unsigned priorContextLength, LineBreakIteratorMode mode)
 {
     UBreakIterator* iterator = LineBreakIteratorPool::sharedPool().take(locale, mode);
     if (!iterator)
@@ -187,16 +185,16 @@ void releaseLineBreakIterator(UBreakIterator* iterator)
     LineBreakIteratorPool::sharedPool().put(iterator);
 }
 
-UBreakIterator* openLineBreakIterator(const AtomicString& locale)
+UBreakIterator* openLineBreakIterator(const AtomString& locale)
 {
     bool localeIsEmpty = locale.isEmpty();
     UErrorCode openStatus = U_ZERO_ERROR;
-    UBreakIterator* ubrkIter = ubrk_open(UBRK_LINE, localeIsEmpty ? currentTextBreakLocaleID() : locale.string().utf8().data(), 0, 0, &openStatus);
+    UBreakIterator* ubrkIter = ubrk_open(UBRK_LINE, localeIsEmpty ? currentTextBreakLocaleID() : locale.string().utf8().data(), nullptr, 0, &openStatus);
     // locale comes from a web page and it can be invalid, leading ICU
     // to fail, in which case we fall back to the default locale.
     if (!localeIsEmpty && U_FAILURE(openStatus)) {
         openStatus = U_ZERO_ERROR;
-        ubrkIter = ubrk_open(UBRK_LINE, currentTextBreakLocaleID(), 0, 0, &openStatus);
+        ubrkIter = ubrk_open(UBRK_LINE, currentTextBreakLocaleID(), nullptr, 0, &openStatus);
     }
 
     if (U_FAILURE(openStatus)) {

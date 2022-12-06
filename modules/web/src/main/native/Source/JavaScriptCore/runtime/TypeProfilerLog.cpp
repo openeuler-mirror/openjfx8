@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,15 +29,13 @@
 #include "config.h"
 #include "TypeProfilerLog.h"
 
-#include "JSCInlines.h"
-#include "SlotVisitor.h"
+#include "JSCJSValueInlines.h"
 #include "TypeLocation.h"
-
 
 namespace JSC {
 
 namespace TypeProfilerLogInternal {
-static const bool verbose = false;
+static constexpr bool verbose = false;
 }
 
 TypeProfilerLog::TypeProfilerLog(VM& vm)
@@ -55,8 +53,15 @@ TypeProfilerLog::~TypeProfilerLog()
     delete[] m_logStartPtr;
 }
 
-void TypeProfilerLog::processLogEntries(const String& reason)
+void TypeProfilerLog::processLogEntries(VM& vm, const String& reason)
 {
+    // We need to do this because this code will call into calculatedDisplayName.
+    // calculatedDisplayName will clear any exception it sees (because it thinks
+    // it's a stack overflow). We may be called when an exception was already
+    // thrown, so we don't want calcualtedDisplayName to clear that exception that
+    // was thrown before we even got here.
+    VM::DeferExceptionScope deferExceptionScope(vm);
+
     MonotonicTime before { };
     if (TypeProfilerLogInternal::verbose) {
         dataLog("Process caller:'", reason, "'");

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2011-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,8 +23,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef RefCountedArray_h
-#define RefCountedArray_h
+#pragma once
 
 #include <wtf/DumbPtrTraits.h>
 #include <wtf/FastMalloc.h>
@@ -43,6 +42,8 @@
 //    defintion, such as JSC::Instruction.
 
 namespace WTF {
+
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(RefCountedArray);
 
 template<typename T, typename PtrTraits = DumbPtrTraits<T>>
 class RefCountedArray {
@@ -68,7 +69,7 @@ public:
             return;
         }
 
-        T* data = (static_cast<Header*>(fastMalloc(Header::size() + sizeof(T) * size)))->payload();
+        T* data = (static_cast<Header*>(RefCountedArrayMalloc::malloc(Header::size() + sizeof(T) * size)))->payload();
         m_data = data;
         Header::fromPayload(data)->refCount = 1;
         Header::fromPayload(data)->length = size;
@@ -95,7 +96,7 @@ public:
             return;
         }
 
-        T* data = (static_cast<Header*>(fastMalloc(Header::size() + sizeof(T) * other.size())))->payload();
+        T* data = (static_cast<Header*>(RefCountedArrayMalloc::malloc(Header::size() + sizeof(T) * other.size())))->payload();
         m_data = data;
         Header::fromPayload(data)->refCount = 1;
         Header::fromPayload(data)->length = other.size();
@@ -106,22 +107,37 @@ public:
     template<typename OtherTraits = PtrTraits>
     RefCountedArray& operator=(const RefCountedArray<T, OtherTraits>& other)
     {
-        T* oldData = data();
-        T* otherData = const_cast<T*>(other.data());
-        if (otherData)
-            Header::fromPayload(otherData)->refCount++;
-        m_data = otherData;
+        return assign<OtherTraits>(other);
+    }
 
+    RefCountedArray& operator=(const RefCountedArray& other)
+    {
+        return assign<PtrTraits>(other);
+    }
+
+    template<size_t inlineCapacity, typename OverflowHandler>
+    RefCountedArray& operator=(const Vector<T, inlineCapacity, OverflowHandler>& other)
+    {
+        T* oldData = data();
+        if (other.isEmpty())
+            PtrTraits::exchange(m_data, nullptr);
+        else {
+            T* data = (static_cast<Header*>(RefCountedArrayMalloc::malloc(Header::size() + sizeof(T) * other.size())))->payload();
+            m_data = data;
+            Header::fromPayload(data)->refCount = 1;
+            Header::fromPayload(data)->length = other.size();
+            ASSERT(Header::fromPayload(data)->length == other.size());
+            VectorTypeOperations<T>::uninitializedCopy(other.begin(), other.end(), data);
+        }
         if (!oldData)
             return *this;
         if (--Header::fromPayload(oldData)->refCount)
             return *this;
         VectorTypeOperations<T>::destruct(oldData, oldData + Header::fromPayload(oldData)->length);
-        fastFree(Header::fromPayload(oldData));
+
+        RefCountedArrayMalloc::free(Header::fromPayload(oldData));
         return *this;
     }
-
-    RefCountedArray& operator=(const RefCountedArray& other) { return this->operator=<PtrTraits>(other); }
 
     ~RefCountedArray()
     {
@@ -131,7 +147,7 @@ public:
         if (--Header::fromPayload(data)->refCount)
             return;
         VectorTypeOperations<T>::destruct(begin(), end());
-        fastFree(Header::fromPayload(data));
+        RefCountedArrayMalloc::free(Header::fromPayload(data));
     }
 
     unsigned refCount() const
@@ -147,6 +163,8 @@ public:
             return 0;
         return Header::fromPayload(data())->length;
     }
+
+    bool isEmpty() const { return size() == 0; }
 
     size_t byteSize() const { return size() * sizeof(T); }
 
@@ -179,6 +197,11 @@ public:
     T& operator[](size_t i) { return at(i); }
     const T& operator[](size_t i) const { return at(i); }
 
+    T& first() { return (*this)[0]; }
+    const T& first() const { return (*this)[0]; }
+    T& last() { return (*this)[size() - 1]; }
+    const T& last() const { return (*this)[size() - 1]; }
+
     template<typename OtherTraits = PtrTraits>
     bool operator==(const RefCountedArray<T, OtherTraits>& other) const
     {
@@ -201,6 +224,25 @@ public:
     bool operator==(const RefCountedArray& other) const { return this->operator==<PtrTraits>(other); }
 
 private:
+    template<typename OtherTraits = PtrTraits>
+    RefCountedArray& assign(const RefCountedArray<T, OtherTraits>& other)
+    {
+        T* oldData = data();
+        T* otherData = const_cast<T*>(other.data());
+        if (otherData)
+            Header::fromPayload(otherData)->refCount++;
+        m_data = otherData;
+
+        if (!oldData)
+            return *this;
+        if (--Header::fromPayload(oldData)->refCount)
+            return *this;
+        VectorTypeOperations<T>::destruct(oldData, oldData + Header::fromPayload(oldData)->length);
+
+        RefCountedArrayMalloc::free(Header::fromPayload(oldData));
+        return *this;
+    }
+
     struct Header {
         unsigned refCount;
         unsigned length;
@@ -236,18 +278,10 @@ private:
             Header::fromPayload(data())->refCount++;
     }
 
+    friend class JSC::LLIntOffsetsExtractor;
     typename PtrTraits::StorageType m_data { nullptr };
 };
 
-template<typename Poison, typename T> struct PoisonedPtrTraits;
-
-template<typename Poison, typename T>
-using PoisonedRefCountedArray = RefCountedArray<T, PoisonedPtrTraits<Poison, T>>;
-
 } // namespace WTF
 
-using WTF::PoisonedRefCountedArray;
 using WTF::RefCountedArray;
-
-#endif // RefCountedArray_h
-

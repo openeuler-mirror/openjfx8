@@ -44,13 +44,17 @@ class InsertionSet;
 typedef Vector<BasicBlock*, 2> PredecessorList;
 typedef Vector<Node*, 8> BlockNodeList;
 
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(BasicBlock);
+
 struct BasicBlock : RefCounted<BasicBlock> {
+    WTF_MAKE_STRUCT_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(BasicBlock);
     BasicBlock(
-        unsigned bytecodeBegin, unsigned numArguments, unsigned numLocals,
+        BytecodeIndex bytecodeBegin, unsigned numArguments, unsigned numLocals, unsigned numTmps,
         float executionCount);
     ~BasicBlock();
 
     void ensureLocals(unsigned newNumLocals);
+    void ensureTmps(unsigned newNumTmps);
 
     size_t size() const { return m_nodes.size(); }
     bool isEmpty() const { return !size(); }
@@ -64,6 +68,11 @@ struct BasicBlock : RefCounted<BasicBlock> {
     }
     Node*& operator[](size_t i) { return at(i); }
     Node* operator[](size_t i) const { return at(i); }
+    Node* last() const
+    {
+        RELEASE_ASSERT(!!size());
+        return at(size() - 1);
+    }
 
     // Use this to find both the index of the terminal and the terminal itself in one go. May
     // return a clear NodeAndIndex if the basic block currently lacks a terminal. That may happen
@@ -166,14 +175,14 @@ struct BasicBlock : RefCounted<BasicBlock> {
 
     void didLink()
     {
-#if !ASSERT_DISABLED
+#if ASSERT_ENABLED
         isLinked = true;
 #endif
     }
 
     // This value is used internally for block linking and OSR entry. It is mostly meaningless
     // for other purposes due to inlining.
-    unsigned bytecodeBegin;
+    BytecodeIndex bytecodeBegin;
 
     BlockIndex index;
 
@@ -182,13 +191,13 @@ struct BasicBlock : RefCounted<BasicBlock> {
     BranchDirection cfaBranchDirection;
     bool cfaHasVisited;
     bool cfaShouldRevisit;
-    bool cfaFoundConstants;
+    bool cfaThinksShouldTryConstantFolding { false };
     bool cfaDidFinish;
     bool intersectionOfCFAHasVisited;
     bool isOSRTarget;
     bool isCatchEntrypoint;
 
-#if !ASSERT_DISABLED
+#if ASSERT_ENABLED
     bool isLinked;
 #endif
     bool isReachable;
@@ -252,16 +261,16 @@ private:
     BlockNodeList m_nodes;
 };
 
-typedef Vector<BasicBlock*, 5> BlockList;
+typedef Vector<BasicBlock*> BlockList;
 
-static inline unsigned getBytecodeBeginForBlock(BasicBlock** basicBlock)
+static inline BytecodeIndex getBytecodeBeginForBlock(BasicBlock** basicBlock)
 {
     return (*basicBlock)->bytecodeBegin;
 }
 
-static inline BasicBlock* blockForBytecodeOffset(Vector<BasicBlock*>& linkingTargets, unsigned bytecodeBegin)
+static inline BasicBlock* blockForBytecodeIndex(Vector<BasicBlock*>& linkingTargets, BytecodeIndex bytecodeBegin)
 {
-    return *binarySearch<BasicBlock*, unsigned>(linkingTargets, linkingTargets.size(), bytecodeBegin, getBytecodeBeginForBlock);
+    return *binarySearch<BasicBlock*, BytecodeIndex>(linkingTargets, linkingTargets.size(), bytecodeBegin, getBytecodeBeginForBlock);
 }
 
 } } // namespace JSC::DFG

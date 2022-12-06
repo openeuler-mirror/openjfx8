@@ -26,8 +26,7 @@
 
 #pragma once
 
-#if ENABLE(STREAMS_API)
-
+#include "ActiveDOMObject.h"
 #include "ReadableStreamSource.h"
 
 namespace JSC {
@@ -44,7 +43,7 @@ public:
 
     bool enqueue(RefPtr<JSC::ArrayBuffer>&& chunk) { return controller().enqueue(WTFMove(chunk)); }
     void close();
-    void error(const String&);
+    void error(const Exception&);
 
     bool isCancelling() const { return m_isCancelling; }
 
@@ -60,11 +59,10 @@ private:
 
     FetchBodyOwner* m_bodyOwner;
     bool m_isCancelling { false };
-#ifndef NDEBUG
+#if ASSERT_ENABLED
     bool m_isClosed { false };
 #endif
+    RefPtr<ActiveDOMObject::PendingActivity<FetchBodyOwner>> m_pendingActivity;
 };
 
 } // namespace WebCore
-
-#endif // ENABLE(STREAMS_API)

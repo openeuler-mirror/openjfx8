@@ -35,12 +35,18 @@
 #if ENABLE(WEB_RTC)
 
 #include "EventNames.h"
+#include "JSDOMPromiseDeferred.h"
 #include "JSRTCSessionDescription.h"
+#include "LibWebRTCCertificateGenerator.h"
 #include "Logging.h"
+#include "Page.h"
 #include "RTCIceCandidate.h"
 #include "RTCPeerConnection.h"
 #include "RTCPeerConnectionIceEvent.h"
+#include "RTCRtpCapabilities.h"
+#include "RTCTrackEvent.h"
 #include "RuntimeEnabledFeatures.h"
+#include <wtf/UUID.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringConcatenateNumbers.h>
 
@@ -55,6 +61,18 @@ static std::unique_ptr<PeerConnectionBackend> createNoPeerConnectionBackend(RTCP
 }
 
 CreatePeerConnectionBackend PeerConnectionBackend::create = createNoPeerConnectionBackend;
+
+Optional<RTCRtpCapabilities> PeerConnectionBackend::receiverCapabilities(ScriptExecutionContext&, const String&)
+{
+    ASSERT_NOT_REACHED();
+    return { };
+}
+
+Optional<RTCRtpCapabilities> PeerConnectionBackend::senderCapabilities(ScriptExecutionContext&, const String&)
+{
+    ASSERT_NOT_REACHED();
+    return { };
+}
 #endif
 
 PeerConnectionBackend::PeerConnectionBackend(RTCPeerConnection& peerConnection)
@@ -66,12 +84,14 @@ PeerConnectionBackend::PeerConnectionBackend(RTCPeerConnection& peerConnection)
 {
 }
 
+PeerConnectionBackend::~PeerConnectionBackend() = default;
+
 void PeerConnectionBackend::createOffer(RTCOfferOptions&& options, PeerConnection::SessionDescriptionPromise&& promise)
 {
     ASSERT(!m_offerAnswerPromise);
     ASSERT(!m_peerConnection.isClosed());
 
-    m_offerAnswerPromise = WTFMove(promise);
+    m_offerAnswerPromise = WTF::makeUnique<PeerConnection::SessionDescriptionPromise>(WTFMove(promise));
     doCreateOffer(WTFMove(options));
 }
 
@@ -80,12 +100,13 @@ void PeerConnectionBackend::createOfferSucceeded(String&& sdp)
     ASSERT(isMainThread());
     ALWAYS_LOG(LOGIDENTIFIER, "Create offer succeeded:\n", sdp);
 
-    if (m_peerConnection.isClosed())
-        return;
-
     ASSERT(m_offerAnswerPromise);
-    m_offerAnswerPromise->resolve(RTCSessionDescription::Init { RTCSdpType::Offer, filterSDP(WTFMove(sdp)) });
-    m_offerAnswerPromise = std::nullopt;
+    m_peerConnection.doTask([this, promise = WTFMove(m_offerAnswerPromise), sdp = filterSDP(WTFMove(sdp))]() mutable {
+        if (m_peerConnection.isClosed())
+            return;
+
+        promise->resolve(RTCSessionDescription::Init { RTCSdpType::Offer, sdp });
+    });
 }
 
 void PeerConnectionBackend::createOfferFailed(Exception&& exception)
@@ -93,12 +114,13 @@ void PeerConnectionBackend::createOfferFailed(Exception&& exception)
     ASSERT(isMainThread());
     ALWAYS_LOG(LOGIDENTIFIER, "Create offer failed:", exception.message());
 
-    if (m_peerConnection.isClosed())
-        return;
-
     ASSERT(m_offerAnswerPromise);
-    m_offerAnswerPromise->reject(WTFMove(exception));
-    m_offerAnswerPromise = std::nullopt;
+    m_peerConnection.doTask([this, promise = WTFMove(m_offerAnswerPromise), exception = WTFMove(exception)]() mutable {
+        if (m_peerConnection.isClosed())
+            return;
+
+        promise->reject(WTFMove(exception));
+    });
 }
 
 void PeerConnectionBackend::createAnswer(RTCAnswerOptions&& options, PeerConnection::SessionDescriptionPromise&& promise)
@@ -106,7 +128,7 @@ void PeerConnectionBackend::createAnswer(RTCAnswerOptions&& options, PeerConnect
     ASSERT(!m_offerAnswerPromise);
     ASSERT(!m_peerConnection.isClosed());
 
-    m_offerAnswerPromise = WTFMove(promise);
+    m_offerAnswerPromise = WTF::makeUnique<PeerConnection::SessionDescriptionPromise>(WTFMove(promise));
     doCreateAnswer(WTFMove(options));
 }
 
@@ -115,12 +137,13 @@ void PeerConnectionBackend::createAnswerSucceeded(String&& sdp)
     ASSERT(isMainThread());
     ALWAYS_LOG(LOGIDENTIFIER, "Create answer succeeded:\n", sdp);
 
-    if (m_peerConnection.isClosed())
-        return;
-
     ASSERT(m_offerAnswerPromise);
-    m_offerAnswerPromise->resolve(RTCSessionDescription::Init { RTCSdpType::Answer, WTFMove(sdp) });
-    m_offerAnswerPromise = std::nullopt;
+    m_peerConnection.doTask([this, promise = WTFMove(m_offerAnswerPromise), sdp = WTFMove(sdp)]() mutable {
+        if (m_peerConnection.isClosed())
+            return;
+
+        promise->resolve(RTCSessionDescription::Init { RTCSdpType::Answer, sdp });
+    });
 }
 
 void PeerConnectionBackend::createAnswerFailed(Exception&& exception)
@@ -128,12 +151,13 @@ void PeerConnectionBackend::createAnswerFailed(Exception&& exception)
     ASSERT(isMainThread());
     ALWAYS_LOG(LOGIDENTIFIER, "Create answer failed:", exception.message());
 
-    if (m_peerConnection.isClosed())
-        return;
-
     ASSERT(m_offerAnswerPromise);
-    m_offerAnswerPromise->reject(WTFMove(exception));
-    m_offerAnswerPromise = std::nullopt;
+    m_peerConnection.doTask([this, promise = WTFMove(m_offerAnswerPromise), exception = WTFMove(exception)]() mutable {
+        if (m_peerConnection.isClosed())
+            return;
+
+        promise->reject(WTFMove(exception));
+    });
 }
 
 static inline bool isLocalDescriptionTypeValidForState(RTCSdpType type, RTCSignalingState state)
@@ -164,7 +188,7 @@ void PeerConnectionBackend::setLocalDescription(RTCSessionDescription& sessionDe
         return;
     }
 
-    m_setDescriptionPromise = WTFMove(promise);
+    m_setDescriptionPromise = WTF::makeUnique<DOMPromiseDeferred<void>>(WTFMove(promise));
     doSetLocalDescription(sessionDescription);
 }
 
@@ -173,13 +197,13 @@ void PeerConnectionBackend::setLocalDescriptionSucceeded()
     ASSERT(isMainThread());
     ALWAYS_LOG(LOGIDENTIFIER);
 
-    if (m_peerConnection.isClosed())
-        return;
-
     ASSERT(m_setDescriptionPromise);
+    m_peerConnection.doTask([this, promise = WTFMove(m_setDescriptionPromise)]() mutable {
+        if (m_peerConnection.isClosed())
+            return;
 
-    m_setDescriptionPromise->resolve();
-    m_setDescriptionPromise = std::nullopt;
+        promise->resolve();
+    });
 }
 
 void PeerConnectionBackend::setLocalDescriptionFailed(Exception&& exception)
@@ -187,13 +211,13 @@ void PeerConnectionBackend::setLocalDescriptionFailed(Exception&& exception)
     ASSERT(isMainThread());
     ALWAYS_LOG(LOGIDENTIFIER, "Set local description failed:", exception.message());
 
-    if (m_peerConnection.isClosed())
-        return;
-
     ASSERT(m_setDescriptionPromise);
+    m_peerConnection.doTask([this, promise = WTFMove(m_setDescriptionPromise), exception = WTFMove(exception)]() mutable {
+        if (m_peerConnection.isClosed())
+            return;
 
-    m_setDescriptionPromise->reject(WTFMove(exception));
-    m_setDescriptionPromise = std::nullopt;
+        promise->reject(WTFMove(exception));
+    });
 }
 
 static inline bool isRemoteDescriptionTypeValidForState(RTCSdpType type, RTCSignalingState state)
@@ -224,7 +248,7 @@ void PeerConnectionBackend::setRemoteDescription(RTCSessionDescription& sessionD
         return;
     }
 
-    m_setDescriptionPromise = WTFMove(promise);
+    m_setDescriptionPromise = WTF::makeUnique<DOMPromiseDeferred<void>>(WTFMove(promise));
     doSetRemoteDescription(sessionDescription);
 }
 
@@ -232,14 +256,28 @@ void PeerConnectionBackend::setRemoteDescriptionSucceeded()
 {
     ASSERT(isMainThread());
     ALWAYS_LOG(LOGIDENTIFIER, "Set remote description succeeded");
-
-    if (m_peerConnection.isClosed())
-        return;
-
     ASSERT(m_setDescriptionPromise);
 
-    m_setDescriptionPromise->resolve();
-    m_setDescriptionPromise = std::nullopt;
+    auto promise = WTFMove(m_setDescriptionPromise);
+    auto events = WTFMove(m_pendingTrackEvents);
+    for (auto& event : events) {
+        auto& track = event.track.get();
+
+        m_peerConnection.dispatchEventWhenFeasible(RTCTrackEvent::create(eventNames().trackEvent, Event::CanBubble::No, Event::IsCancelable::No, WTFMove(event.receiver), WTFMove(event.track), WTFMove(event.streams), WTFMove(event.transceiver)));
+
+        if (m_peerConnection.isClosed())
+            return;
+
+        // FIXME: As per spec, we should set muted to 'false' when starting to receive the content from network.
+        track.source().setMuted(false);
+    }
+
+    m_peerConnection.doTask([this, promise = WTFMove(promise)]() mutable {
+        if (m_peerConnection.isClosed())
+            return;
+
+        promise->resolve();
+    });
 }
 
 void PeerConnectionBackend::setRemoteDescriptionFailed(Exception&& exception)
@@ -247,18 +285,26 @@ void PeerConnectionBackend::setRemoteDescriptionFailed(Exception&& exception)
     ASSERT(isMainThread());
     ALWAYS_LOG(LOGIDENTIFIER, "Set remote description failed:", exception.message());
 
-    if (m_peerConnection.isClosed())
-        return;
+    ASSERT(m_pendingTrackEvents.isEmpty());
+    m_pendingTrackEvents.clear();
 
     ASSERT(m_setDescriptionPromise);
+    m_peerConnection.doTask([this, promise = WTFMove(m_setDescriptionPromise), exception = WTFMove(exception)]() mutable {
+        if (m_peerConnection.isClosed())
+            return;
 
-    m_setDescriptionPromise->reject(WTFMove(exception));
-    m_setDescriptionPromise = std::nullopt;
+        promise->reject(WTFMove(exception));
+    });
 }
 
-static String extractIPAddres(const String& sdp)
+void PeerConnectionBackend::addPendingTrackEvent(PendingTrackEvent&& event)
 {
-    ASSERT(sdp.contains(" host "));
+    ASSERT(!m_peerConnection.isStopped());
+    m_pendingTrackEvents.append(WTFMove(event));
+}
+
+static String extractIPAddress(StringView sdp)
+{
     unsigned counter = 0;
     for (auto item : StringView { sdp }.split(' ')) {
         if (++counter == 5)
@@ -267,45 +313,26 @@ static String extractIPAddres(const String& sdp)
     return { };
 }
 
+static inline bool shouldIgnoreIceCandidate(const RTCIceCandidate& iceCandidate)
+{
+    auto address = extractIPAddress(iceCandidate.candidate());
+    if (!address.endsWithIgnoringASCIICase(".local"_s))
+        return false;
+
+    if (!WTF::isVersion4UUID(StringView { address }.substring(0, address.length() - 6))) {
+        RELEASE_LOG_ERROR(WebRTC, "mDNS candidate is not a Version 4 UUID");
+        return true;
+    }
+    return false;
+}
+
 void PeerConnectionBackend::addIceCandidate(RTCIceCandidate* iceCandidate, DOMPromiseDeferred<void>&& promise)
 {
     ASSERT(!m_peerConnection.isClosed());
 
     if (!iceCandidate) {
-        if (m_waitingForMDNSResolution) {
-            m_finishedReceivingCandidates = true;
-            m_endOfIceCandidatePromise = WTFMove(promise);
-            return;
-        }
         endOfIceCandidates(WTFMove(promise));
         return;
-    }
-
-    if (RuntimeEnabledFeatures::sharedFeatures().mdnsICECandidatesEnabled()) {
-        auto name = extractIPAddres(iceCandidate->candidate());
-        if (name.endsWith(".local")) {
-            ++m_waitingForMDNSResolution;
-            auto& document = downcast<Document>(*m_peerConnection.scriptExecutionContext());
-            auto& provider = document.page()->libWebRTCProvider();
-            provider.resolveMDNSName(document.sessionID(), name, [peerConnection = makeRef(m_peerConnection), this, name, iceCandidate = makeRef(*iceCandidate), promise = WTFMove(promise)] (LibWebRTCProvider::IPAddressOrError&& result) mutable {
-                if (peerConnection->isStopped())
-                    return;
-
-                --m_waitingForMDNSResolution;
-                if (!result.has_value()) {
-                    if (result.error() != MDNSRegisterError::Timeout)
-                        peerConnection->scriptExecutionContext()->addConsoleMessage(MessageSource::JS, MessageLevel::Warning, makeString("MDNS resolution of a host candidate failed with error", (unsigned)result.error()));
-                    return;
-                }
-
-                auto candidate = iceCandidate->candidate();
-                candidate.replace(name, result.value());
-                iceCandidate->setCandidate(WTFMove(candidate));
-                m_addIceCandidatePromise = WTFMove(promise);
-                this->doAddIceCandidate(iceCandidate);
-            });
-            return;
-        }
     }
 
     // FIXME: As per https://w3c.github.io/webrtc-pc/#dom-rtcpeerconnection-addicecandidate(), this check should be done before enqueuing the task.
@@ -313,7 +340,13 @@ void PeerConnectionBackend::addIceCandidate(RTCIceCandidate* iceCandidate, DOMPr
         promise.reject(Exception { TypeError, "Trying to add a candidate that is missing both sdpMid and sdpMLineIndex"_s });
         return;
     }
-    m_addIceCandidatePromise = WTFMove(promise);
+
+    if (shouldIgnoreIceCandidate(*iceCandidate)) {
+        promise.resolve();
+        return;
+    }
+
+    m_addIceCandidatePromise = WTF::makeUnique<DOMPromiseDeferred<void>>(WTFMove(promise));
     doAddIceCandidate(*iceCandidate);
 }
 
@@ -322,17 +355,13 @@ void PeerConnectionBackend::addIceCandidateSucceeded()
     ASSERT(isMainThread());
     ALWAYS_LOG(LOGIDENTIFIER, "Adding ice candidate succeeded");
 
-    if (m_peerConnection.isClosed())
-        return;
-
-    // FIXME: Update remote description and set ICE connection state to checking if not already done so.
     ASSERT(m_addIceCandidatePromise);
+    m_peerConnection.doTask([this, promise = WTFMove(m_addIceCandidatePromise)]() mutable {
+        if (m_peerConnection.isClosed())
+            return;
 
-    m_addIceCandidatePromise->resolve();
-    m_addIceCandidatePromise = std::nullopt;
-
-    if (!m_waitingForMDNSResolution && m_finishedReceivingCandidates)
-        endOfIceCandidates(WTFMove(*m_endOfIceCandidatePromise));
+        promise->resolve();
+    });
 }
 
 void PeerConnectionBackend::addIceCandidateFailed(Exception&& exception)
@@ -340,23 +369,20 @@ void PeerConnectionBackend::addIceCandidateFailed(Exception&& exception)
     ASSERT(isMainThread());
     ALWAYS_LOG(LOGIDENTIFIER, "Adding ice candidate failed:", exception.message());
 
-    if (m_peerConnection.isClosed())
-        return;
-
     ASSERT(m_addIceCandidatePromise);
+    m_peerConnection.doTask([this, promise = WTFMove(m_addIceCandidatePromise), exception = WTFMove(exception)]() mutable {
+        if (m_peerConnection.isClosed())
+            return;
 
-    m_addIceCandidatePromise->reject(WTFMove(exception));
-    m_addIceCandidatePromise = std::nullopt;
-
-    if (!m_waitingForMDNSResolution && m_finishedReceivingCandidates)
-        endOfIceCandidates(WTFMove(*m_endOfIceCandidatePromise));
+        promise->reject(WTFMove(exception));
+    });
 }
 
 void PeerConnectionBackend::fireICECandidateEvent(RefPtr<RTCIceCandidate>&& candidate, String&& serverURL)
 {
     ASSERT(isMainThread());
 
-    m_peerConnection.fireEvent(RTCPeerConnectionIceEvent::create(Event::CanBubble::No, Event::IsCancelable::No, WTFMove(candidate), WTFMove(serverURL)));
+    m_peerConnection.dispatchEventWhenFeasible(RTCPeerConnectionIceEvent::create(Event::CanBubble::No, Event::IsCancelable::No, WTFMove(candidate), WTFMove(serverURL)));
 }
 
 void PeerConnectionBackend::enableICECandidateFiltering()
@@ -412,13 +438,33 @@ String PeerConnectionBackend::filterSDP(String&& sdp) const
         return WTFMove(sdp);
 
     StringBuilder filteredSDP;
-    sdp.split('\n', [&filteredSDP](StringView line) {
-        if (!line.startsWith("a=candidate"))
-            filteredSDP.append(line);
-        else if (line.find(" host ", 11) == notFound)
-            filteredSDP.append(filterICECandidate(line.toString()));
-        else
+    sdp.split('\n', [this, &filteredSDP](StringView line) {
+        if (line.startsWith("c=IN IP4")) {
+            filteredSDP.append("c=IN IP4 0.0.0.0\r\n");
             return;
+        }
+        if (line.startsWith("c=IN IP6")) {
+            filteredSDP.append("c=IN IP6 ::\r\n");
+            return;
+        }
+        if (!line.startsWith("a=candidate")) {
+            filteredSDP.append(line);
+            filteredSDP.append('\n');
+            return;
+        }
+        if (line.find(" host ", 11) == notFound) {
+            filteredSDP.append(filterICECandidate(line.toString()));
+            filteredSDP.append('\n');
+            return;
+        }
+
+        auto ipAddress = extractIPAddress(line);
+        auto mdnsName = m_ipAddressToMDNSNameMap.get(ipAddress);
+        if (mdnsName.isEmpty())
+            return;
+        auto sdp = line.toString();
+        sdp.replace(ipAddress, mdnsName);
+        filteredSDP.append(sdp);
         filteredSDP.append('\n');
     });
     return filteredSDP.toString();
@@ -426,25 +472,28 @@ String PeerConnectionBackend::filterSDP(String&& sdp) const
 
 void PeerConnectionBackend::newICECandidate(String&& sdp, String&& mid, unsigned short sdpMLineIndex, String&& serverURL)
 {
-    ALWAYS_LOG(LOGIDENTIFIER, "Gathered ice candidate:", sdp);
-    m_finishedGatheringCandidates = false;
+    m_peerConnection.doTask([logSiteIdentifier = LOGIDENTIFIER, this, sdp = WTFMove(sdp), mid = WTFMove(mid), sdpMLineIndex, serverURL = WTFMove(serverURL)]() mutable {
+        UNUSED_PARAM(logSiteIdentifier);
+        ALWAYS_LOG(logSiteIdentifier, "Gathered ice candidate:", sdp);
+        m_finishedGatheringCandidates = false;
 
-    if (!m_shouldFilterICECandidates) {
-        fireICECandidateEvent(RTCIceCandidate::create(WTFMove(sdp), WTFMove(mid), sdpMLineIndex), WTFMove(serverURL));
-        return;
-    }
-    if (sdp.find(" host ", 0) != notFound) {
-        // FIXME: We might need to clear all pending candidates when setting again local description.
-        m_pendingICECandidates.append(PendingICECandidate { String { sdp }, WTFMove(mid), sdpMLineIndex, WTFMove(serverURL) });
-        if (RuntimeEnabledFeatures::sharedFeatures().mdnsICECandidatesEnabled()) {
-            auto ipAddress = extractIPAddres(sdp);
-            // We restrict to IPv4 candidates for now.
-            if (ipAddress.contains('.'))
-                registerMDNSName(ipAddress);
+        if (!m_shouldFilterICECandidates) {
+            fireICECandidateEvent(RTCIceCandidate::create(WTFMove(sdp), WTFMove(mid), sdpMLineIndex), WTFMove(serverURL));
+            return;
         }
-        return;
-    }
-    fireICECandidateEvent(RTCIceCandidate::create(filterICECandidate(WTFMove(sdp)), WTFMove(mid), sdpMLineIndex), WTFMove(serverURL));
+        if (sdp.find(" host ", 0) != notFound) {
+            // FIXME: We might need to clear all pending candidates when setting again local description.
+            m_pendingICECandidates.append(PendingICECandidate { String { sdp }, WTFMove(mid), sdpMLineIndex, WTFMove(serverURL) });
+            if (RuntimeEnabledFeatures::sharedFeatures().webRTCMDNSICECandidatesEnabled()) {
+                auto ipAddress = extractIPAddress(sdp);
+                // We restrict to IPv4 candidates for now.
+                if (ipAddress.contains('.'))
+                    registerMDNSName(ipAddress);
+            }
+            return;
+        }
+        fireICECandidateEvent(RTCIceCandidate::create(filterICECandidate(WTFMove(sdp)), WTFMove(mid), sdpMLineIndex), WTFMove(serverURL));
+    });
 }
 
 void PeerConnectionBackend::doneGatheringCandidates()
@@ -456,9 +505,14 @@ void PeerConnectionBackend::doneGatheringCandidates()
     if (m_waitingForMDNSRegistration)
         return;
 
-    m_peerConnection.fireEvent(RTCPeerConnectionIceEvent::create(Event::CanBubble::No, Event::IsCancelable::No, nullptr, { }));
+    m_peerConnection.dispatchEventWhenFeasible(RTCPeerConnectionIceEvent::create(Event::CanBubble::No, Event::IsCancelable::No, nullptr, { }));
     m_peerConnection.updateIceGatheringState(RTCIceGatheringState::Complete);
     m_pendingICECandidates.clear();
+}
+
+void PeerConnectionBackend::endOfIceCandidates(DOMPromiseDeferred<void>&& promise)
+{
+    promise.resolve();
 }
 
 void PeerConnectionBackend::registerMDNSName(const String& ipAddress)
@@ -466,13 +520,13 @@ void PeerConnectionBackend::registerMDNSName(const String& ipAddress)
     ++m_waitingForMDNSRegistration;
     auto& document = downcast<Document>(*m_peerConnection.scriptExecutionContext());
     auto& provider = document.page()->libWebRTCProvider();
-    provider.registerMDNSName(document.sessionID(), document.identifier().toUInt64(), ipAddress, [peerConnection = makeRef(m_peerConnection), this, ipAddress] (LibWebRTCProvider::MDNSNameOrError&& result) {
+    provider.registerMDNSName(document.identifier(), ipAddress, [peerConnection = makeRef(m_peerConnection), this, ipAddress] (LibWebRTCProvider::MDNSNameOrError&& result) {
         if (peerConnection->isStopped())
             return;
 
         --m_waitingForMDNSRegistration;
         if (!result.has_value()) {
-            m_peerConnection.scriptExecutionContext()->addConsoleMessage(MessageSource::JS, MessageLevel::Warning, makeString("MDNS registration of a host candidate failed with error", (unsigned)result.error()));
+            m_peerConnection.scriptExecutionContext()->addConsoleMessage(MessageSource::JS, MessageLevel::Warning, makeString("MDNS registration of a host candidate failed with error ", (unsigned)result.error()));
             return;
         }
 
@@ -482,6 +536,7 @@ void PeerConnectionBackend::registerMDNSName(const String& ipAddress)
 
 void PeerConnectionBackend::finishedRegisteringMDNSName(const String& ipAddress, const String& name)
 {
+    m_ipAddressToMDNSNameMap.add(ipAddress, name);
     Vector<PendingICECandidate*> candidates;
     for (auto& candidate : m_pendingICECandidates) {
         if (candidate.sdp.find(ipAddress) != notFound) {
@@ -505,15 +560,17 @@ void PeerConnectionBackend::updateSignalingState(RTCSignalingState newSignalingS
 
     if (newSignalingState != m_peerConnection.signalingState()) {
         m_peerConnection.setSignalingState(newSignalingState);
-        m_peerConnection.fireEvent(Event::create(eventNames().signalingstatechangeEvent, Event::CanBubble::No, Event::IsCancelable::No));
+        m_peerConnection.dispatchEventWhenFeasible(Event::create(eventNames().signalingstatechangeEvent, Event::CanBubble::No, Event::IsCancelable::No));
     }
 }
 
 void PeerConnectionBackend::stop()
 {
-    m_offerAnswerPromise = std::nullopt;
-    m_setDescriptionPromise = std::nullopt;
-    m_addIceCandidatePromise = std::nullopt;
+    m_offerAnswerPromise = nullptr;
+    m_setDescriptionPromise = nullptr;
+    m_addIceCandidatePromise = nullptr;
+
+    m_pendingTrackEvents.clear();
 
     doStop();
 }
@@ -527,6 +584,47 @@ void PeerConnectionBackend::markAsNeedingNegotiation()
 
     if (m_peerConnection.signalingState() == RTCSignalingState::Stable)
         m_peerConnection.scheduleNegotiationNeededEvent();
+}
+
+ExceptionOr<Ref<RTCRtpSender>> PeerConnectionBackend::addTrack(MediaStreamTrack&, Vector<String>&&)
+{
+    return Exception { NotSupportedError, "Not implemented"_s };
+}
+
+ExceptionOr<Ref<RTCRtpTransceiver>> PeerConnectionBackend::addTransceiver(const String&, const RTCRtpTransceiverInit&)
+{
+    return Exception { NotSupportedError, "Not implemented"_s };
+}
+
+ExceptionOr<Ref<RTCRtpTransceiver>> PeerConnectionBackend::addTransceiver(Ref<MediaStreamTrack>&&, const RTCRtpTransceiverInit&)
+{
+    return Exception { NotSupportedError, "Not implemented"_s };
+}
+
+void PeerConnectionBackend::generateCertificate(Document& document, const CertificateInformation& info, DOMPromiseDeferred<IDLInterface<RTCCertificate>>&& promise)
+{
+#if USE(LIBWEBRTC)
+    LibWebRTCCertificateGenerator::generateCertificate(document.securityOrigin(), document.page()->libWebRTCProvider(), info, WTFMove(promise));
+#else
+    UNUSED_PARAM(document);
+    UNUSED_PARAM(expires);
+    UNUSED_PARAM(type);
+    promise.reject(NotSupportedError);
+#endif
+}
+
+ScriptExecutionContext* PeerConnectionBackend::context() const
+{
+    return m_peerConnection.scriptExecutionContext();
+}
+
+RTCRtpTransceiver* PeerConnectionBackend::transceiverFromSender(const RTCRtpSender& sender)
+{
+    for (auto& transceiver : m_peerConnection.currentTransceivers()) {
+        if (&transceiver->sender() == &sender)
+            return transceiver.get();
+    }
+    return nullptr;
 }
 
 #if !RELEASE_LOG_DISABLED

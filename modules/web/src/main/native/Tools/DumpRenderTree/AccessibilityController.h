@@ -23,8 +23,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef AccessibilityController_h
-#define AccessibilityController_h
+#pragma once
 
 #include "AccessibilityUIElement.h"
 #include <JavaScriptCore/JSObjectRef.h>
@@ -32,15 +31,18 @@
 #include <string>
 #include <wtf/HashMap.h>
 #include <wtf/Platform.h>
+
 #if PLATFORM(WIN)
 #include <windows.h>
 #endif
+
 #if HAVE(ACCESSIBILITY) && PLATFORM(GTK)
 #include "AccessibilityNotificationHandlerAtk.h"
 #include <atk/atk.h>
 #endif
 
 class AccessibilityController {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     AccessibilityController();
     ~AccessibilityController();
@@ -84,17 +86,17 @@ private:
     static JSClassRef getJSClass();
 
 #if PLATFORM(WIN)
-    HWINEVENTHOOK m_focusEventHook;
-    HWINEVENTHOOK m_valueChangeEventHook;
-    HWINEVENTHOOK m_scrollingStartEventHook;
+    HWINEVENTHOOK m_focusEventHook { nullptr };
+    HWINEVENTHOOK m_valueChangeEventHook { nullptr };
+    HWINEVENTHOOK m_scrollingStartEventHook { nullptr };
 
-    HWINEVENTHOOK m_allEventsHook;
-    HWINEVENTHOOK m_notificationsEventHook;
+    HWINEVENTHOOK m_allEventsHook { nullptr };
+    HWINEVENTHOOK m_notificationsEventHook { nullptr };
     HashMap<PlatformUIElement, JSObjectRef> m_notificationListeners;
 #endif
 
-#if PLATFORM(COCOA) || PLATFORM(IOS)
-    RetainPtr<NotificationHandler> m_globalNotificationHandler;
+#if PLATFORM(COCOA)
+    RetainPtr<id> m_globalNotificationHandler;
 #endif
 
 #if HAVE(ACCESSIBILITY) && PLATFORM(GTK)
@@ -103,5 +105,3 @@ private:
 
     void platformResetToConsistentState();
 };
-
-#endif // AccessibilityController_h

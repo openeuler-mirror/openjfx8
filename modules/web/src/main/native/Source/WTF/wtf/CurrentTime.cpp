@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2019 Apple Inc. All rights reserved.
  * Copyright (C) 2008 Google Inc. All rights reserved.
  * Copyright (C) 2007-2009 Torch Mobile, Inc.
  * Copyright (C) 2008 Cameron Zwarich <cwzwarich@uwaterloo.ca>
@@ -32,9 +32,9 @@
  */
 
 #include "config.h"
-#include "MonotonicTime.h"
-#include "WallTime.h"
-#include <time.h>
+#include <wtf/MonotonicTime.h>
+
+#include <wtf/WallTime.h>
 
 #if OS(DARWIN)
 #include <mach/mach.h>
@@ -50,8 +50,10 @@
 #include <windows.h>
 #include <math.h>
 #include <stdint.h>
+#include <time.h>
 #else
 #include <sys/time.h>
+#include <time.h>
 #endif
 
 #if OS(FUCHSIA)
@@ -67,8 +69,8 @@ namespace WTF {
 #if OS(WINDOWS)
 
 // Number of 100 nanosecond between January 1, 1601 and January 1, 1970.
-static const ULONGLONG epochBias = 116444736000000000ULL;
-static const double hundredsOfNanosecondsPerMillisecond = 10000;
+static constexpr ULONGLONG epochBias = 116444736000000000ULL;
+static constexpr double hundredsOfNanosecondsPerMillisecond = 10000;
 
 static double lowResUTCTime()
 {
@@ -229,9 +231,7 @@ static inline double currentTime()
 // Non-Windows GTK builds could use gettimeofday() directly but for the sake of consistency lets use GTK function.
 static inline double currentTime()
 {
-    GTimeVal now;
-    g_get_current_time(&now);
-    return static_cast<double>(now.tv_sec) + static_cast<double>(now.tv_usec / 1000000.0);
+    return static_cast<double>(g_get_real_time() / 1000000.0);
 }
 
 #else

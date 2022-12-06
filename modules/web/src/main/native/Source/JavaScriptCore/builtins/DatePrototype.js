@@ -23,8 +23,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// @conditional=ENABLE(INTL)
-
 function toLocaleString(/* locales, options */)
 {
     "use strict";
@@ -77,9 +75,7 @@ function toLocaleString(/* locales, options */)
 
     var options = toDateTimeOptionsAnyAll(@argument(1));
     var locales = @argument(0);
-
-    var dateFormat = new @DateTimeFormat(locales, options);
-    return dateFormat.format(value);
+    return @dateTimeFormat(locales, options, value);
 }
 
 function toLocaleDateString(/* locales, options */)
@@ -127,9 +123,7 @@ function toLocaleDateString(/* locales, options */)
 
     var options = toDateTimeOptionsDateDate(@argument(1));
     var locales = @argument(0);
-
-    var dateFormat = new @DateTimeFormat(locales, options);
-    return dateFormat.format(value);
+    return @dateTimeFormat(locales, options, value);
 }
 
 function toLocaleTimeString(/* locales, options */)
@@ -176,7 +170,5 @@ function toLocaleTimeString(/* locales, options */)
 
     var options = toDateTimeOptionsTimeTime(@argument(1));
     var locales = @argument(0);
-
-    var dateFormat = new @DateTimeFormat(locales, options);
-    return dateFormat.format(value);
+    return @dateTimeFormat(locales, options, value);
 }

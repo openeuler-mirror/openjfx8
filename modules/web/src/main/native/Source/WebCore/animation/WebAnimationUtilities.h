@@ -25,9 +25,14 @@
 
 #pragma once
 
+#include <wtf/Forward.h>
+#include <wtf/Markable.h>
 #include <wtf/Seconds.h>
 
 namespace WebCore {
+
+class Element;
+class WebAnimation;
 
 inline double secondsToWebAnimationsAPITime(const Seconds time)
 {
@@ -44,6 +49,8 @@ inline double secondsToWebAnimationsAPITime(const Seconds time)
 }
 
 const auto timeEpsilon = Seconds::fromMilliseconds(0.001);
+
+bool compareAnimationsByCompositeOrder(const WebAnimation&, const WebAnimation&);
 
 } // namespace WebCore
 

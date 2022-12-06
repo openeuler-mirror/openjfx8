@@ -26,15 +26,13 @@
 #include <wtf/RefPtr.h>
 #include <wtf/RetainPtr.h>
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
 #include "NativeImage.h"
 #include <CoreGraphics/CoreGraphics.h>
 #elif PLATFORM(MAC)
 OBJC_CLASS NSImage;
 #elif PLATFORM(WIN)
 typedef struct HICON__* HICON;
-#elif PLATFORM(GTK)
-typedef struct _GdkPixbuf GdkPixbuf;
 #elif PLATFORM(JAVA)
 #include "jni.h"
 #include "RQRef.h"
@@ -54,11 +52,11 @@ public:
     void paint(GraphicsContext&, const FloatRect&);
 
 #if PLATFORM(WIN)
-    static RefPtr<Icon> create(HICON hIcon) { return adoptRef(new Icon(hIcon)); }
+    static Ref<Icon> create(HICON hIcon) { return adoptRef(*new Icon(hIcon)); }
 #endif
 
-#if PLATFORM(IOS)
-    // FIXME: Make this work for non-iOS ports and remove the PLATFORM(IOS)-guard.
+#if PLATFORM(IOS_FAMILY)
+    // FIXME: Make this work for non-iOS ports and remove the PLATFORM(IOS_FAMILY)-guard.
     WEBCORE_EXPORT static RefPtr<Icon> createIconForImage(const NativeImagePtr&);
 #endif
 
@@ -68,7 +66,7 @@ public:
 #endif
 
 private:
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     Icon(const RetainPtr<CGImageRef>&);
     RetainPtr<CGImageRef> m_cgImage;
 #elif PLATFORM(MAC)
@@ -77,9 +75,6 @@ private:
 #elif PLATFORM(WIN)
     Icon(HICON);
     HICON m_hIcon;
-#elif PLATFORM(GTK)
-    Icon();
-    GdkPixbuf* m_icon;
 #elif PLATFORM(JAVA)
     Icon(const JLObject &jicon);
     RefPtr<RQRef> m_jicon;

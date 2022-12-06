@@ -131,7 +131,7 @@ protected:
     static void platformApplyGenericWorker(PlatformApplyGenericParameters*);
     static void platformApplyNeonWorker(FELightingPaintingDataForNeon*);
 
-    FELighting(Filter&, LightingType, const Color&, float, float, float, float, float, float, Ref<LightSource>&&);
+    FELighting(Filter&, LightingType, const Color&, float, float, float, float, float, float, Ref<LightSource>&&, Type);
 
     const char* filterName() const final { return "FELighting"; }
 
@@ -147,7 +147,7 @@ protected:
     void platformApplyGenericPaint(const LightingData&, const LightSource::PaintingData&, int startX, int startY);
     void platformApplyGeneric(const LightingData&, const LightSource::PaintingData&);
 
-#if CPU(ARM_NEON) && CPU(ARM_TRADITIONAL) && COMPILER(GCC_OR_CLANG)
+#if CPU(ARM_NEON) && CPU(ARM_TRADITIONAL) && COMPILER(GCC_COMPATIBLE)
     static int getPowerCoefficients(float exponent);
     inline void platformApplyNeon(const LightingData&, const LightSource::PaintingData&);
 #endif

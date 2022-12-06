@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2016, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -341,6 +341,15 @@ public abstract class PrismFontFile implements FontResource, FontConstants {
         this.peer = peer;
     }
 
+    int getTableLength(int tag) {
+        int len = 0;
+        DirectoryEntry tagDE = getDirectoryEntry(tag);
+        if (tagDE != null) {
+            len = tagDE.length;
+        }
+        return len;
+    }
+
     synchronized Buffer readTable(int tag) {
         Buffer buffer = null;
         boolean openedFile = false;
@@ -507,6 +516,15 @@ public abstract class PrismFontFile implements FontResource, FontConstants {
                 // font. For some fonts advanceWidthMax is much larger then "M"
                 // advanceWidthMax = (float)hhea.getChar(10);
                 numHMetrics = hhea.getChar(34) & 0xffff;
+                /* the hmtx table may have a trailing LSB array which we don't
+                 * use. But it means we must not assume these two values match.
+                 * We are only concerned here with not reading more data than
+                 * there is in the table.
+                 */
+                int hmtxEntries = getTableLength(hmtxTag) >> 2;
+                if (numHMetrics > hmtxEntries) {
+                    numHMetrics = hmtxEntries;
+                }
             }
 
             // maxp table is before the OS/2 table. Read it now
@@ -1165,6 +1183,12 @@ public abstract class PrismFontFile implements FontResource, FontConstants {
             if (length >= 30) {
                 smetrics[STRIKETHROUGH_THICKNESS] = os_2.getShort(26) / upem;
                 smetrics[STRIKETHROUGH_OFFSET] = -os_2.getShort(28) / upem;
+                if (smetrics[STRIKETHROUGH_THICKNESS] < 0f) {
+                    smetrics[STRIKETHROUGH_THICKNESS] = 0.05f;
+                }
+                if (Math.abs(smetrics[STRIKETHROUGH_OFFSET]) > 2.0f) {
+                    smetrics[STRIKETHROUGH_OFFSET] = -0.4f;
+                }
             } else {
                 smetrics[STRIKETHROUGH_THICKNESS] = 0.05f;
                 smetrics[STRIKETHROUGH_OFFSET] = -0.4f;
@@ -1228,6 +1252,12 @@ public abstract class PrismFontFile implements FontResource, FontConstants {
             } else {
                 smetrics[UNDERLINE_OFFSET] = -postTable.getShort(8) / upem;
                 smetrics[UNDERLINE_THICKESS] = postTable.getShort(10) / upem;
+                if (smetrics[UNDERLINE_THICKESS] < 0f) {
+                    smetrics[UNDERLINE_THICKESS] = 0.05f;
+                }
+                if (Math.abs(smetrics[UNDERLINE_OFFSET]) > 2.0f) {
+                    smetrics[UNDERLINE_OFFSET] = 0.1f;
+                }
             }
             styleMetrics = smetrics;
         }

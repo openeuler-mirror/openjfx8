@@ -92,11 +92,7 @@ output_file.write("""
 #include "config.h"
 #include "SelectorPseudoTypeMap.h"
 
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunknown-pragmas"
-#pragma clang diagnostic ignored "-Wimplicit-fallthrough"
-#endif
+IGNORE_WARNINGS_BEGIN("implicit-fallthrough")
 
 // Older versions of gperf like to use the `register` keyword.
 #define register
@@ -179,7 +175,7 @@ static inline CSSSelector::PseudoElementType parsePseudoElementString(const UCha
 
     for (unsigned i = 0; i < length; ++i) {
         UChar character = characters[i];
-        if (character & ~0xff)
+        if (!isLatin1(character))
             return CSSSelector::PseudoElementUnknown;
 
         buffer[i] = static_cast<LChar>(character);
@@ -189,7 +185,7 @@ static inline CSSSelector::PseudoElementType parsePseudoElementString(const UCha
 """ % longest_keyword)
 
 output_file.write("""
-CSSSelector::PseudoElementType parsePseudoElementString(const StringImpl& pseudoTypeString)
+CSSSelector::PseudoElementType parsePseudoElementString(StringView pseudoTypeString)
 {
     if (pseudoTypeString.is8Bit())
         return parsePseudoElementString(pseudoTypeString.characters8(), pseudoTypeString.length());
@@ -198,9 +194,7 @@ CSSSelector::PseudoElementType parsePseudoElementString(const StringImpl& pseudo
 
 } // namespace WebCore
 
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#endif
+IGNORE_WARNINGS_END
 
 """)
 output_file.close()

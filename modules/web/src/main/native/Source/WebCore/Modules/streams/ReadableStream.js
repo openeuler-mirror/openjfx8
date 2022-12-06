@@ -24,8 +24,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// @conditional=ENABLE(STREAMS_API)
-
 function initializeReadableStream(underlyingSource, strategy)
 {
     "use strict";
@@ -48,6 +46,13 @@ function initializeReadableStream(underlyingSource, strategy)
     // Initialized with null value to enable distinction with undefined case.
     @putByIdDirectPrivate(this, "readableStreamController", null);
 
+    // FIXME: We should introduce https://streams.spec.whatwg.org/#create-readable-stream.
+    // For now, we emulate this with underlyingSource with private properties.
+    if (@getByIdDirectPrivate(underlyingSource, "pull") !== @undefined) {
+        @setupReadableStreamDefaultController(this, underlyingSource, @undefined, 1, @getByIdDirectPrivate(underlyingSource, "start"), @getByIdDirectPrivate(underlyingSource, "pull"), @getByIdDirectPrivate(underlyingSource, "cancel"));
+        return this;
+    }
+
     const type = underlyingSource.type;
     const typeString = @toString(type);
 
@@ -61,11 +66,12 @@ function initializeReadableStream(underlyingSource, strategy)
             @throwRangeError("Strategy for a ReadableByteStreamController cannot have a size");
 
         let readableByteStreamControllerConstructor = @ReadableByteStreamController;
-        @putByIdDirectPrivate(this, "readableStreamController", new @ReadableByteStreamController(this, underlyingSource, strategy.highWaterMark));
+        @putByIdDirectPrivate(this, "readableStreamController", new @ReadableByteStreamController(this, underlyingSource, strategy.highWaterMark, @isReadableStream));
     } else if (type === @undefined) {
         if (strategy.highWaterMark === @undefined)
             strategy.highWaterMark = 1;
-        @putByIdDirectPrivate(this, "readableStreamController", new @ReadableStreamDefaultController(this, underlyingSource, strategy.size, strategy.highWaterMark));
+
+        @setupReadableStreamDefaultController(this, underlyingSource, strategy.size, strategy.highWaterMark, underlyingSource.start, underlyingSource.pull, underlyingSource.cancel);
     } else
         @throwRangeError("Invalid type for underlying source");
 
@@ -80,7 +86,7 @@ function cancel(reason)
         return @Promise.@reject(@makeThisTypeError("ReadableStream", "cancel"));
 
     if (@isReadableStreamLocked(this))
-        return @Promise.@reject(new @TypeError("ReadableStream is locked"));
+        return @Promise.@reject(@makeTypeError("ReadableStream is locked"));
 
     return @readableStreamCancel(this, reason);
 }
@@ -113,7 +119,7 @@ function pipeThrough(streams, options)
     const readable = streams.readable;
     const promise = this.pipeTo(writable, options);
     if (@isPromise(promise))
-        @putByIdDirectPrivate(promise, "promiseIsHandled", true);
+        @putPromiseInternalField(promise, @promiseFieldFlags, @getPromiseInternalField(promise, @promiseFieldFlags) | @promiseFlagsIsHandled);
     return readable;
 }
 
@@ -198,7 +204,7 @@ function pipeTo(destination)
     @Promise.prototype.@then.@call(destination.closed,
         function() {
             if (!closedPurposefully)
-                cancelSource(new @TypeError('destination is closing or closed and cannot be piped to anymore'));
+                cancelSource(@makeTypeError('destination is closing or closed and cannot be piped to anymore'));
         },
         cancelSource
     );

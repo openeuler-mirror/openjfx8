@@ -23,14 +23,13 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef Atomics_h
-#define Atomics_h
+#pragma once
 
 #include <atomic>
 #include <wtf/StdLibExtras.h>
 
 #if OS(WINDOWS)
-#if !COMPILER(GCC_OR_CLANG)
+#if !COMPILER(GCC_COMPATIBLE)
 extern "C" void _ReadWriteBarrier(void);
 #pragma intrinsic(_ReadWriteBarrier)
 #endif
@@ -54,6 +53,8 @@ ALWAYS_INLINE bool hasFence(std::memory_order order)
 
 template<typename T>
 struct Atomic {
+    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+
     // Don't pass a non-default value for the order parameter unless you really know
     // what you are doing and have thought about it very hard. The cost of seq_cst
     // is usually not high enough to justify the risk.
@@ -242,7 +243,7 @@ inline T atomicExchange(T* location, T newValue, std::memory_order order = std::
 // to do things like register allocation and code motion over pure operations.
 inline void compilerFence()
 {
-#if OS(WINDOWS) && !COMPILER(GCC_OR_CLANG)
+#if OS(WINDOWS) && !COMPILER(GCC_COMPATIBLE)
     _ReadWriteBarrier();
 #else
     asm volatile("" ::: "memory");
@@ -347,6 +348,7 @@ inline InternalDependencyType opaqueMixture(T value, Arguments... arguments)
 }
 
 class Dependency {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     Dependency()
         : m_value(0)
@@ -409,6 +411,8 @@ private:
 
 template<typename InputType, typename ValueType>
 struct InputAndValue {
+    WTF_MAKE_STRUCT_FAST_ALLOCATED;
+
     InputAndValue() { }
 
     InputAndValue(InputType input, ValueType value)
@@ -452,5 +456,3 @@ using WTF::InputAndValue;
 using WTF::inputAndValue;
 using WTF::ensurePointer;
 using WTF::opaqueMixture;
-
-#endif // Atomics_h

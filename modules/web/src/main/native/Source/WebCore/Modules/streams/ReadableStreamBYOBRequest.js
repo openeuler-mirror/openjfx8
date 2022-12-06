@@ -23,7 +23,15 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// @conditional=ENABLE(STREAMS_API)
+function initializeReadableStreamBYOBRequest(controller, view)
+{
+    "use strict";
+
+    if (arguments.length !== 3 && arguments[2] !== @isReadableStream)
+        @throwTypeError("ReadableStreamBYOBRequest constructor should not be called directly");
+
+    return @privateInitializeReadableStreamBYOBRequest.@call(this, controller, view);
+}
 
 function respond(bytesWritten)
 {

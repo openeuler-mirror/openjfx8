@@ -45,6 +45,18 @@
 #COMPILE_WEBKIT = true
 #COMPILE_MEDIA = true
 
+# These properties can be used to support building the libav stubs in support of
+# running on multiple Linux systems. BUILD_LIBAV_STUBS is intended to build a
+# distribution that will run on multiple versions of Linux. BUILD_WORKING_LIBAV
+# is only intended for developers to test their code locally without needing an
+# installed libav; most developers will not ever need to use this option.
+# BUILD_LIBAV_STUBS is valid with COMPILE_MEDIA = true and BUILD_WORKING_LIBAV
+# is valid with COMPILE_MEDIA = true and BUILD_LIBAV_STUBS = true on Linux
+# platforms only.
+
+# BUILD_LIBAV_STUBS = true
+# BUILD_WORKING_LIBAV = true
+
 #To disable building support for JRockit Flight Recorder, uncomment the line below
 
 #COMPILE_JFR = false
@@ -87,6 +99,10 @@
 # This flag is ignored if FULL_TEST is false.
 
 #USE_ROBOT = true
+
+# Specifies whether to run unstable tests, that are not suitable for automated builds
+
+#UNSTABLE_TEST = false
 
 # Specifies whether to run system tests that depend on AWT.
 # This flag is ignored if FULL_TEST is false.
@@ -163,6 +179,19 @@
 #JDK_DOCS = https://docs.oracle.com/javase/8/docs/api
 #JDK_DOCS = file:///Library/Java/JavaVirtualMachines/jdk1.8.0/Content/Home/docs/api
 #JDK_DOCS = relative/path/to/docs/api
+
+# If you want to link against a docs URL that is not accessible to you at build
+# time (e.g., in case you are behind a firewall), you can set the
+# JDK_DOCS_LINK property to the URL of a local javadocs bundle that will
+# be used to resolve the symbols.
+
+#JDK_DOCS_LINK = file:///opt/javadocs/jdk10/docs/api
+
+# If you want to use a local repository for downloading dependencies
+# rather than maven central, you can set the JFX_DEPS_URL property
+# to point to your local server.
+
+#JFX_DEPS_URL=http:/local.server.my.compay.com/dependencies
 
 # Specify the build configuration: Release, Debug, or DebugNative. The default setting is Debug.
 

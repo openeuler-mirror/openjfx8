@@ -117,7 +117,7 @@ PatternData* RenderSVGResourcePattern::buildPattern(RenderElement& renderer, Opt
         return nullptr;
 
     // Build pattern.
-    auto patternData = std::make_unique<PatternData>();
+    auto patternData = makeUnique<PatternData>();
     patternData->pattern = Pattern::create(copiedImage.releaseNonNull(), true, true);
 
     // Compute pattern space transformation.
@@ -146,10 +146,10 @@ PatternData* RenderSVGResourcePattern::buildPattern(RenderElement& renderer, Opt
 bool RenderSVGResourcePattern::applyResource(RenderElement& renderer, const RenderStyle& style, GraphicsContext*& context, OptionSet<RenderSVGResourceMode> resourceMode)
 {
     ASSERT(context);
-    ASSERT(resourceMode != RenderSVGResourceMode::ApplyToDefault);
+    ASSERT(!resourceMode.isEmpty());
 
     if (m_shouldCollectPatternAttributes) {
-        patternElement().synchronizeAnimatedSVGAttribute(anyQName());
+        patternElement().synchronizeAllAttributes();
 
         m_attributes = PatternAttributes();
         collectPatternAttributes(m_attributes);
@@ -185,13 +185,13 @@ bool RenderSVGResourcePattern::applyResource(RenderElement& renderer, const Rend
 
     if (resourceMode.contains(RenderSVGResourceMode::ApplyToText)) {
         if (resourceMode.contains(RenderSVGResourceMode::ApplyToFill)) {
-            context->setTextDrawingMode(TextModeFill);
+            context->setTextDrawingMode(TextDrawingMode::Fill);
 
 #if USE(CG)
             context->applyFillPattern();
 #endif
         } else if (resourceMode.contains(RenderSVGResourceMode::ApplyToStroke)) {
-            context->setTextDrawingMode(TextModeStroke);
+            context->setTextDrawingMode(TextDrawingMode::Stroke);
 
 #if USE(CG)
             context->applyStrokePattern();
@@ -205,7 +205,7 @@ bool RenderSVGResourcePattern::applyResource(RenderElement& renderer, const Rend
 void RenderSVGResourcePattern::postApplyResource(RenderElement&, GraphicsContext*& context, OptionSet<RenderSVGResourceMode> resourceMode, const Path* path, const RenderSVGShape* shape)
 {
     ASSERT(context);
-    ASSERT(resourceMode != RenderSVGResourceMode::ApplyToDefault);
+    ASSERT(!resourceMode.isEmpty());
 
     if (resourceMode.contains(RenderSVGResourceMode::ApplyToFill)) {
         if (path)
@@ -255,7 +255,7 @@ bool RenderSVGResourcePattern::buildTileImageTransform(RenderElement& renderer,
 std::unique_ptr<ImageBuffer> RenderSVGResourcePattern::createTileImage(const PatternAttributes& attributes, const FloatRect& tileBoundaries, const FloatRect& absoluteTileBoundaries, const AffineTransform& tileImageTransform, FloatRect& clampedAbsoluteTileBoundaries, RenderingMode renderingMode) const
 {
     clampedAbsoluteTileBoundaries = ImageBuffer::clampedRect(absoluteTileBoundaries);
-    auto tileImage = SVGRenderingContext::createImageBuffer(absoluteTileBoundaries, clampedAbsoluteTileBoundaries, ColorSpaceSRGB, renderingMode);
+    auto tileImage = SVGRenderingContext::createImageBuffer(absoluteTileBoundaries, clampedAbsoluteTileBoundaries, ColorSpace::SRGB, renderingMode);
     if (!tileImage)
         return nullptr;
 
@@ -278,7 +278,7 @@ std::unique_ptr<ImageBuffer> RenderSVGResourcePattern::createTileImage(const Pat
             continue;
         if (child.renderer()->needsLayout())
             return nullptr;
-        SVGRenderingContext::renderSubtreeToImageBuffer(tileImage.get(), *child.renderer(), contentTransformation);
+        SVGRenderingContext::renderSubtreeToContext(tileImageContext, *child.renderer(), contentTransformation);
     }
 
     return tileImage;

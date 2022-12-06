@@ -34,7 +34,7 @@ namespace WTF {
 
 template<
     const char* typeArguments,
-    typename ValueArg, typename HashArg = typename DefaultHash<ValueArg>::Hash,
+    typename ValueArg, typename HashArg = DefaultHash<ValueArg>,
     typename TraitsArg = HashTraits<ValueArg>,
     typename LoggingTraits = LoggingHashKeyTraits<ValueArg>>
 class LoggingHashSet final {
@@ -99,6 +99,9 @@ public:
 
     iterator begin() const { return m_set.begin(); }
     iterator end() const { return m_set.end(); }
+
+    iterator random() { return m_set.random(); }
+    const_iterator random() const { return m_set.random(); }
 
     iterator find(const ValueType& value) const
     {

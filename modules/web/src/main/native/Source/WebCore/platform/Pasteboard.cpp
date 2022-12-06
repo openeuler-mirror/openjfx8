@@ -30,8 +30,6 @@
 #include "PlatformStrategies.h"
 #include "Settings.h"
 #include "SharedBuffer.h"
-#include "URLParser.h"
-#include <wtf/persistence/PersistentCoders.h>
 #include <wtf/text/StringHash.h>
 
 namespace WebCore {
@@ -47,42 +45,71 @@ bool Pasteboard::isSafeTypeForDOMToReadAndWrite(const String& type)
 
 bool Pasteboard::canExposeURLToDOMWhenPasteboardContainsFiles(const String& urlString)
 {
-    auto url = URLParser { urlString }.result();
+    URL url({ }, urlString);
     return url.protocolIsInHTTPFamily() || url.protocolIsBlob() || url.protocolIsData();
 }
 
-Ref<SharedBuffer> PasteboardCustomData::createSharedBuffer() const
-{
-    const static unsigned currentCustomDataSerializationVersion = 1;
+#if !PLATFORM(COCOA)
 
-    WTF::Persistence::Encoder encoder;
-    encoder << currentCustomDataSerializationVersion;
-    encoder << origin;
-    encoder << sameOriginCustomData;
-    encoder << orderedTypes;
-    return SharedBuffer::create(encoder.buffer(), encoder.bufferSize());
+Vector<String> Pasteboard::readAllStrings(const String& type)
+{
+    auto result = readString(type);
+    if (result.isEmpty())
+        return { };
+
+    return { result };
 }
 
-PasteboardCustomData PasteboardCustomData::fromSharedBuffer(const SharedBuffer& buffer)
+#endif
+
+Optional<Vector<PasteboardItemInfo>> Pasteboard::allPasteboardItemInfo() const
 {
-    const static unsigned maxSupportedDataSerializationVersionNumber = 1;
-
-    PasteboardCustomData result;
-    WTF::Persistence::Decoder decoder { reinterpret_cast<const uint8_t*>(buffer.data()), buffer.size() };
-    unsigned version;
-    if (!decoder.decode(version) || version > maxSupportedDataSerializationVersionNumber)
-        return { };
-
-    if (!decoder.decode(result.origin))
-        return { };
-
-    if (!decoder.decode(result.sameOriginCustomData))
-        return { };
-
-    if (!decoder.decode(result.orderedTypes))
-        return { };
-
-    return result;
+#if PLATFORM(COCOA)
+    if (auto* strategy = platformStrategies()->pasteboardStrategy())
+        return strategy->allPasteboardItemInfo(name(), m_changeCount);
+#endif
+    return WTF::nullopt;
 }
+
+Optional<PasteboardItemInfo> Pasteboard::pasteboardItemInfo(size_t index) const
+{
+#if PLATFORM(COCOA)
+    if (auto* strategy = platformStrategies()->pasteboardStrategy())
+        return strategy->informationForItemAtIndex(index, name(), m_changeCount);
+#else
+    UNUSED_PARAM(index);
+#endif
+    return WTF::nullopt;
+}
+
+String Pasteboard::readString(size_t index, const String& type)
+{
+    if (auto* strategy = platformStrategies()->pasteboardStrategy())
+        return strategy->readStringFromPasteboard(index, type, name());
+    return { };
+}
+
+RefPtr<WebCore::SharedBuffer> Pasteboard::readBuffer(size_t index, const String& type)
+{
+    if (auto* strategy = platformStrategies()->pasteboardStrategy())
+        return strategy->readBufferFromPasteboard(index, type, name());
+    return nullptr;
+}
+
+URL Pasteboard::readURL(size_t index, String& title)
+{
+    if (auto* strategy = platformStrategies()->pasteboardStrategy())
+        return strategy->readURLFromPasteboard(index, name(), title);
+    return { };
+}
+
+#if !PLATFORM(MAC)
+
+bool Pasteboard::canWriteTrustworthyWebURLsPboardType()
+{
+    return false;
+}
+
+#endif
 
 };

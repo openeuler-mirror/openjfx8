@@ -24,18 +24,28 @@
 #include "CustomElementReactionQueue.h"
 #include "DOMTokenList.h"
 #include "DatasetDOMStringMap.h"
+#include "ElementAnimationRareData.h"
 #include "IntersectionObserver.h"
+#include "KeyframeEffectStack.h"
 #include "NamedNodeMap.h"
 #include "NodeRareData.h"
 #include "PseudoElement.h"
 #include "RenderElement.h"
+#include "ResizeObserver.h"
 #include "ShadowRoot.h"
+#include "SpaceSplitString.h"
+#include "StylePropertyMap.h"
 
 namespace WebCore {
 
+inline IntSize defaultMinimumSizeForResizing()
+{
+    return IntSize(LayoutUnit::max(), LayoutUnit::max());
+}
+
 class ElementRareData : public NodeRareData {
 public:
-    explicit ElementRareData(RenderElement*);
+    explicit ElementRareData();
     ~ElementRareData();
 
     void setBeforePseudoElement(RefPtr<PseudoElement>&&);
@@ -47,40 +57,15 @@ public:
     void resetComputedStyle();
     void resetStyleRelations();
 
-    int tabIndex() const { return m_tabIndex; }
+    Optional<int> tabIndex() const { return m_tabIndexWasSetExplicitly ? Optional<int> { m_tabIndex } : WTF::nullopt; }
     void setTabIndexExplicitly(int index) { m_tabIndex = index; m_tabIndexWasSetExplicitly = true; }
     bool tabIndexSetExplicitly() const { return m_tabIndexWasSetExplicitly; }
     void clearTabIndexExplicitly() { m_tabIndex = 0; m_tabIndexWasSetExplicitly = false; }
-
-    bool styleAffectedByActive() const { return m_styleAffectedByActive; }
-    void setStyleAffectedByActive(bool value) { m_styleAffectedByActive = value; }
-
-    bool styleAffectedByEmpty() const { return m_styleAffectedByEmpty; }
-    void setStyleAffectedByEmpty(bool value) { m_styleAffectedByEmpty = value; }
-
-    bool styleAffectedByFocusWithin() const { return m_styleAffectedByFocusWithin; }
-    void setStyleAffectedByFocusWithin(bool value) { m_styleAffectedByFocusWithin = value; }
 
 #if ENABLE(FULLSCREEN_API)
     bool containsFullScreenElement() { return m_containsFullScreenElement; }
     void setContainsFullScreenElement(bool value) { m_containsFullScreenElement = value; }
 #endif
-
-    bool childrenAffectedByDrag() const { return m_childrenAffectedByDrag; }
-    void setChildrenAffectedByDrag(bool value) { m_childrenAffectedByDrag = value; }
-
-    bool childrenAffectedByLastChildRules() const { return m_childrenAffectedByLastChildRules; }
-    void setChildrenAffectedByLastChildRules(bool value) { m_childrenAffectedByLastChildRules = value; }
-    bool childrenAffectedByForwardPositionalRules() const { return m_childrenAffectedByForwardPositionalRules; }
-    void setChildrenAffectedByForwardPositionalRules(bool value) { m_childrenAffectedByForwardPositionalRules = value; }
-    bool descendantsAffectedByForwardPositionalRules() const { return m_descendantsAffectedByForwardPositionalRules; }
-    void setDescendantsAffectedByForwardPositionalRules(bool value) { m_descendantsAffectedByForwardPositionalRules = value; }
-    bool childrenAffectedByBackwardPositionalRules() const { return m_childrenAffectedByBackwardPositionalRules; }
-    void setChildrenAffectedByBackwardPositionalRules(bool value) { m_childrenAffectedByBackwardPositionalRules = value; }
-    bool descendantsAffectedByBackwardPositionalRules() const { return m_descendantsAffectedByBackwardPositionalRules; }
-    void setDescendantsAffectedByBackwardPositionalRules(bool value) { m_descendantsAffectedByBackwardPositionalRules = value; }
-    bool childrenAffectedByPropertyBasedBackwardPositionalRules() const { return m_childrenAffectedByPropertyBasedBackwardPositionalRules; }
-    void setChildrenAffectedByPropertyBasedBackwardPositionalRules(bool value) { m_childrenAffectedByPropertyBasedBackwardPositionalRules = value; }
 
     unsigned childIndex() const { return m_childIndex; }
     void setChildIndex(unsigned index) { m_childIndex = index; }
@@ -117,34 +102,79 @@ public:
     bool hasCSSAnimation() const { return m_hasCSSAnimation; }
     void setHasCSSAnimation(bool value) { m_hasCSSAnimation = value; }
 
+    ElementAnimationRareData* elementAnimationRareData() { return m_animationRareData.get(); }
+    ElementAnimationRareData& ensureAnimationRareData();
+
+    bool hasElementIdentifier() const { return m_hasElementIdentifier; }
+    void setHasElementIdentifier(bool value) { m_hasElementIdentifier = value; }
+
+    DOMTokenList* partList() const { return m_partList.get(); }
+    void setPartList(std::unique_ptr<DOMTokenList> partList) { m_partList = WTFMove(partList); }
+
+    const SpaceSplitString& partNames() const { return m_partNames; }
+    void setPartNames(SpaceSplitString&& partNames) { m_partNames = WTFMove(partNames); }
+
 #if ENABLE(INTERSECTION_OBSERVER)
     IntersectionObserverData* intersectionObserverData() { return m_intersectionObserverData.get(); }
     void setIntersectionObserverData(std::unique_ptr<IntersectionObserverData>&& data) { m_intersectionObserverData = WTFMove(data); }
+#endif
+
+#if ENABLE(RESIZE_OBSERVER)
+    ResizeObserverData* resizeObserverData() { return m_resizeObserverData.get(); }
+    void setResizeObserverData(std::unique_ptr<ResizeObserverData>&& data) { m_resizeObserverData = WTFMove(data); }
+#endif
+
+#if ENABLE(CSS_TYPED_OM)
+    StylePropertyMap* attributeStyleMap() { return m_attributeStyleMap.get(); }
+    void setAttributeStyleMap(Ref<StylePropertyMap>&& map) { m_attributeStyleMap = WTFMove(map); }
+#endif
+
+#if DUMP_NODE_STATISTICS
+    OptionSet<UseType> useTypes() const
+    {
+        auto result = NodeRareData::useTypes();
+        if (m_tabIndexWasSetExplicitly)
+            result.add(UseType::TabIndex);
+        if (m_minimumSizeForResizing != defaultMinimumSizeForResizing())
+            result.add(UseType::MinimumSize);
+        if (!m_savedLayerScrollPosition.isZero())
+            result.add(UseType::ScrollingPosition);
+        if (m_computedStyle)
+            result.add(UseType::ComputedStyle);
+        if (m_dataset)
+            result.add(UseType::Dataset);
+        if (m_classList)
+            result.add(UseType::ClassList);
+        if (m_shadowRoot)
+            result.add(UseType::ShadowRoot);
+        if (m_customElementReactionQueue)
+            result.add(UseType::CustomElementQueue);
+        if (m_attributeMap)
+            result.add(UseType::AttributeMap);
+        if (m_intersectionObserverData)
+            result.add(UseType::InteractionObserver);
+#if ENABLE(RESIZE_OBSERVER)
+        if (m_resizeObserverData)
+            result.add(UseType::ResizeObserver);
+#endif
+        if (m_beforePseudoElement || m_afterPseudoElement)
+            result.add(UseType::PseudoElements);
+        if (m_animationRareData)
+            result.add(UseType::Animations);
+        return result;
+    }
 #endif
 
 private:
     int m_tabIndex;
     unsigned short m_childIndex;
     unsigned m_tabIndexWasSetExplicitly : 1;
-    unsigned m_styleAffectedByActive : 1;
-    unsigned m_styleAffectedByEmpty : 1;
-    unsigned m_styleAffectedByFocusWithin : 1;
 #if ENABLE(FULLSCREEN_API)
     unsigned m_containsFullScreenElement : 1;
 #endif
     unsigned m_hasPendingResources : 1;
     unsigned m_hasCSSAnimation : 1;
-    unsigned m_childrenAffectedByHover : 1;
-    unsigned m_childrenAffectedByDrag : 1;
-    // Bits for dynamic child matching.
-    // We optimize for :first-child and :last-child. The other positional child selectors like nth-child or
-    // *-child-of-type, we will just give up and re-evaluate whenever children change at all.
-    unsigned m_childrenAffectedByLastChildRules : 1;
-    unsigned m_childrenAffectedByForwardPositionalRules : 1;
-    unsigned m_descendantsAffectedByForwardPositionalRules : 1;
-    unsigned m_childrenAffectedByBackwardPositionalRules : 1;
-    unsigned m_descendantsAffectedByBackwardPositionalRules : 1;
-    unsigned m_childrenAffectedByPropertyBasedBackwardPositionalRules : 1;
+    unsigned m_hasElementIdentifier : 1;
 
     LayoutSize m_minimumSizeForResizing;
     IntPoint m_savedLayerScrollPosition;
@@ -159,38 +189,36 @@ private:
     std::unique_ptr<IntersectionObserverData> m_intersectionObserverData;
 #endif
 
+#if ENABLE(RESIZE_OBSERVER)
+    std::unique_ptr<ResizeObserverData> m_resizeObserverData;
+#endif
+
+    std::unique_ptr<ElementAnimationRareData> m_animationRareData;
+
     RefPtr<PseudoElement> m_beforePseudoElement;
     RefPtr<PseudoElement> m_afterPseudoElement;
+
+#if ENABLE(CSS_TYPED_OM)
+    RefPtr<StylePropertyMap> m_attributeStyleMap;
+#endif
+
+    std::unique_ptr<DOMTokenList> m_partList;
+    SpaceSplitString m_partNames;
 
     void releasePseudoElement(PseudoElement*);
 };
 
-inline IntSize defaultMinimumSizeForResizing()
-{
-    return IntSize(LayoutUnit::max(), LayoutUnit::max());
-}
-
-inline ElementRareData::ElementRareData(RenderElement* renderer)
-    : NodeRareData(renderer)
+inline ElementRareData::ElementRareData()
+    : NodeRareData(Type::Element)
     , m_tabIndex(0)
     , m_childIndex(0)
     , m_tabIndexWasSetExplicitly(false)
-    , m_styleAffectedByActive(false)
-    , m_styleAffectedByEmpty(false)
-    , m_styleAffectedByFocusWithin(false)
 #if ENABLE(FULLSCREEN_API)
     , m_containsFullScreenElement(false)
 #endif
     , m_hasPendingResources(false)
     , m_hasCSSAnimation(false)
-    , m_childrenAffectedByHover(false)
-    , m_childrenAffectedByDrag(false)
-    , m_childrenAffectedByLastChildRules(false)
-    , m_childrenAffectedByForwardPositionalRules(false)
-    , m_descendantsAffectedByForwardPositionalRules(false)
-    , m_childrenAffectedByBackwardPositionalRules(false)
-    , m_descendantsAffectedByBackwardPositionalRules(false)
-    , m_childrenAffectedByPropertyBasedBackwardPositionalRules(false)
+    , m_hasElementIdentifier(false)
     , m_minimumSizeForResizing(defaultMinimumSizeForResizing())
 {
 }
@@ -221,17 +249,14 @@ inline void ElementRareData::resetComputedStyle()
 
 inline void ElementRareData::resetStyleRelations()
 {
-    setStyleAffectedByEmpty(false);
-    setStyleAffectedByFocusWithin(false);
     setChildIndex(0);
-    setStyleAffectedByActive(false);
-    setChildrenAffectedByDrag(false);
-    setChildrenAffectedByLastChildRules(false);
-    setChildrenAffectedByForwardPositionalRules(false);
-    setDescendantsAffectedByForwardPositionalRules(false);
-    setChildrenAffectedByBackwardPositionalRules(false);
-    setDescendantsAffectedByBackwardPositionalRules(false);
-    setChildrenAffectedByPropertyBasedBackwardPositionalRules(false);
+}
+
+inline ElementAnimationRareData& ElementRareData::ensureAnimationRareData()
+{
+    if (!m_animationRareData)
+        m_animationRareData = makeUnique<ElementAnimationRareData>();
+    return *m_animationRareData.get();
 }
 
 } // namespace WebCore

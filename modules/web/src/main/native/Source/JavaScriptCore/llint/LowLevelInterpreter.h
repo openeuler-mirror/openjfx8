@@ -27,12 +27,12 @@
 
 #include "Opcode.h"
 
-#if !ENABLE(JIT)
+#if ENABLE(C_LOOP)
 
 namespace JSC {
 
 // The following is a set of alias for the opcode names. This is needed
-// because there is code (e.g. in GetByIdStatus.cpp and PutByIdStatus.cpp)
+// because there is code (e.g. in GetByStatus.cpp and PutByIdStatus.cpp)
 // which refers to the opcodes expecting them to be prefixed with "llint_".
 // In the CLoop implementation, the 2 are equivalent. Hence, we set up this
 // alias here.
@@ -44,4 +44,4 @@ FOR_EACH_CORE_OPCODE_ID(LLINT_OPCODE_ALIAS)
 
 } // namespace JSC
 
-#endif // !ENABLE(JIT)
+#endif // ENABLE(C_LOOP)

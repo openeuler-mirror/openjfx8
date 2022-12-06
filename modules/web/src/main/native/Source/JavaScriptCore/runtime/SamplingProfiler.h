@@ -31,6 +31,8 @@
 #include "CodeBlockHash.h"
 #include "JITCode.h"
 #include "MachineStackMarker.h"
+#include "WasmCompilationMode.h"
+#include "WasmIndexOrName.h"
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/Stopwatch.h>
@@ -53,23 +55,28 @@ public:
             , callSiteIndex(callSiteIndex)
         { }
 
-        UnprocessedStackFrame(void* pc)
+        UnprocessedStackFrame(const void* pc)
             : cCodePC(pc)
         { }
 
         UnprocessedStackFrame() = default;
 
-        void* cCodePC { nullptr };
+        const void* cCodePC { nullptr };
         CalleeBits unverifiedCallee;
         CodeBlock* verifiedCodeBlock { nullptr };
         CallSiteIndex callSiteIndex;
+#if ENABLE(WEBASSEMBLY)
+        Optional<Wasm::IndexOrName> wasmIndexOrName;
+#endif
+        Optional<Wasm::CompilationMode> wasmCompilationMode;
     };
 
     enum class FrameType {
         Executable,
+        Wasm,
         Host,
         C,
-        Unknown
+        Unknown,
     };
 
     struct StackFrame {
@@ -82,9 +89,13 @@ public:
         { }
 
         FrameType frameType { FrameType::Unknown };
-        void* cCodePC { nullptr };
+        const void* cCodePC { nullptr };
         ExecutableBase* executable { nullptr };
         JSObject* callee { nullptr };
+#if ENABLE(WEBASSEMBLY)
+        Optional<Wasm::IndexOrName> wasmIndexOrName;
+#endif
+        Optional<Wasm::CompilationMode> wasmCompilationMode;
 
         struct CodeLocation {
             bool hasCodeBlockHash() const
@@ -94,7 +105,7 @@ public:
 
             bool hasBytecodeIndex() const
             {
-                return bytecodeIndex != std::numeric_limits<unsigned>::max();
+                return !!bytecodeIndex;
             }
 
             bool hasExpressionInfo() const
@@ -106,13 +117,13 @@ public:
             // These attempt to be expression-level line and column number.
             unsigned lineNumber { std::numeric_limits<unsigned>::max() };
             unsigned columnNumber { std::numeric_limits<unsigned>::max() };
-            unsigned bytecodeIndex { std::numeric_limits<unsigned>::max() };
+            BytecodeIndex bytecodeIndex;
             CodeBlockHash codeBlockHash;
-            JITCode::JITType jitType { JITCode::None };
+            JITType jitType { JITType::None };
         };
 
         CodeLocation semanticLocation;
-        std::optional<std::pair<CodeLocation, Strong<CodeBlock>>> machineLocation; // This is non-null if we were inlined. It represents the machine frame we were inlined into.
+        Optional<std::pair<CodeLocation, CodeBlock*>> machineLocation; // This is non-null if we were inlined. It represents the machine frame we were inlined into.
 
         bool hasExpressionInfo() const { return semanticLocation.hasExpressionInfo(); }
         unsigned lineNumber() const
@@ -155,7 +166,7 @@ public:
         { }
     };
 
-    SamplingProfiler(VM&, RefPtr<Stopwatch>&&);
+    SamplingProfiler(VM&, Ref<Stopwatch>&&);
     ~SamplingProfiler();
     void noticeJSLockAcquisition();
     void noticeVMEntry();
@@ -169,7 +180,7 @@ public:
     JS_EXPORT_PRIVATE String stackTracesAsJSON();
     JS_EXPORT_PRIVATE void noticeCurrentThreadAsJSCExecutionThread();
     void noticeCurrentThreadAsJSCExecutionThread(const AbstractLocker&);
-    void processUnverifiedStackTraces(); // You should call this only after acquiring the lock.
+    void processUnverifiedStackTraces(const AbstractLocker&);
     void setStopWatch(const AbstractLocker&, Ref<Stopwatch>&& stopwatch) { m_stopwatch = WTFMove(stopwatch); }
     void pause(const AbstractLocker&);
     void clearData(const AbstractLocker&);
@@ -182,24 +193,26 @@ public:
     JS_EXPORT_PRIVATE void reportTopBytecodes();
     JS_EXPORT_PRIVATE void reportTopBytecodes(PrintStream&);
 
+    JS_EXPORT_PRIVATE Thread* thread() const;
+
 private:
     void createThreadIfNecessary(const AbstractLocker&);
     void timerLoop();
     void takeSample(const AbstractLocker&, Seconds& stackTraceProcessingTime);
 
+    Lock m_lock;
+    bool m_isPaused;
+    bool m_isShutDown;
+    bool m_needsReportAtExit { false };
     VM& m_vm;
     WeakRandom m_weakRandom;
-    RefPtr<Stopwatch> m_stopwatch;
+    Ref<Stopwatch> m_stopwatch;
     Vector<StackTrace> m_stackTraces;
     Vector<UnprocessedStackTrace> m_unprocessedStackTraces;
     Seconds m_timingInterval;
     Seconds m_lastTime;
-    Lock m_lock;
     RefPtr<Thread> m_thread;
     RefPtr<Thread> m_jscExecutionThread;
-    bool m_isPaused;
-    bool m_isShutDown;
-    bool m_needsReportAtExit { false };
     HashSet<JSCell*> m_liveCellPointers;
     Vector<UnprocessedStackFrame> m_currentFrames;
 };

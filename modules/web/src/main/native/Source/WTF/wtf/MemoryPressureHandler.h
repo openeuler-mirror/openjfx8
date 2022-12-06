@@ -34,23 +34,19 @@
 #include <wtf/Optional.h>
 #include <wtf/RunLoop.h>
 
-#if USE(GLIB)
-#include <wtf/glib/GRefPtr.h>
-#endif
-
 #if OS(WINDOWS)
 #include <wtf/win/Win32Handle.h>
 #endif
 
 namespace WTF {
 
-enum class MemoryUsagePolicy {
+enum class MemoryUsagePolicy : uint8_t {
     Unrestricted, // Allocate as much as you want
     Conservative, // Maybe you don't cache every single thing
     Strict, // Time to start pinching pennies for real
 };
 
-enum class WebsamProcessState {
+enum class WebsamProcessState : uint8_t {
     Active,
     Inactive,
 };
@@ -61,6 +57,7 @@ enum class Synchronous { No, Yes };
 typedef WTF::Function<void(Critical, Synchronous)> LowMemoryHandler;
 
 class MemoryPressureHandler {
+    WTF_MAKE_FAST_ALLOCATED;
     friend class WTF::NeverDestroyed<MemoryPressureHandler>;
 public:
     WTF_EXPORT_PRIVATE static MemoryPressureHandler& singleton();
@@ -69,7 +66,7 @@ public:
 
     WTF_EXPORT_PRIVATE void setShouldUsePeriodicMemoryMonitor(bool);
 
-#if OS(LINUX)
+#if OS(LINUX) || OS(FREEBSD)
     WTF_EXPORT_PRIVATE void triggerMemoryPressureEvent(bool isCritical);
 #endif
 
@@ -94,7 +91,12 @@ public:
 
     WTF_EXPORT_PRIVATE static MemoryUsagePolicy currentMemoryUsagePolicy();
 
+#if PLATFORM(COCOA) || PLATFORM(JAVA) && OS(DARWIN)
+    WTF_EXPORT_PRIVATE void setDispatchQueue(dispatch_queue_t);
+#endif
+
     class ReliefLogger {
+        WTF_MAKE_FAST_ALLOCATED;
     public:
         explicit ReliefLogger(const char *log)
             : m_logString(log)
@@ -122,6 +124,7 @@ public:
 
     private:
         struct MemoryUsage {
+            WTF_MAKE_STRUCT_FAST_ALLOCATED;
             MemoryUsage() = default;
             MemoryUsage(size_t resident, size_t physical)
                 : resident(resident)
@@ -131,11 +134,11 @@ public:
             size_t resident { 0 };
             size_t physical { 0 };
         };
-        std::optional<MemoryUsage> platformMemoryUsage();
+        Optional<MemoryUsage> platformMemoryUsage();
         void logMemoryUsageChange();
 
         const char* m_logString;
-        std::optional<MemoryUsage> m_initialMemory;
+        Optional<MemoryUsage> m_initialMemory;
 
         WTF_EXPORT_PRIVATE static bool s_loggingEnabled;
     };
@@ -149,6 +152,8 @@ public:
     WebsamProcessState processState() const { return m_processState; }
 
     WTF_EXPORT_PRIVATE static void setPageCount(unsigned);
+
+    void setShouldLogMemoryMemoryPressureEvents(bool shouldLog) { m_shouldLogMemoryMemoryPressureEvents = shouldLog; }
 
 private:
     size_t thresholdForMemoryKill();
@@ -171,22 +176,23 @@ private:
     void doesExceedInactiveLimitWhileActive();
     void doesNotExceedInactiveLimitWhileActive();
 
-    WebsamProcessState m_processState { WebsamProcessState::Inactive };
-
     unsigned m_pageCount { 0 };
 
+    std::atomic<bool> m_underMemoryPressure { false };
     bool m_installed { false };
-    LowMemoryHandler m_lowMemoryHandler;
-
-    std::atomic<bool> m_underMemoryPressure;
     bool m_isSimulatingMemoryPressure { false };
+    bool m_shouldLogMemoryMemoryPressureEvents { true };
+    bool m_hasInvokedDidExceedInactiveLimitWhileActiveCallback { false };
+
+    WebsamProcessState m_processState { WebsamProcessState::Inactive };
+
+    MemoryUsagePolicy m_memoryUsagePolicy { MemoryUsagePolicy::Unrestricted };
 
     std::unique_ptr<RunLoop::Timer<MemoryPressureHandler>> m_measurementTimer;
-    MemoryUsagePolicy m_memoryUsagePolicy { MemoryUsagePolicy::Unrestricted };
     WTF::Function<void()> m_memoryKillCallback;
     WTF::Function<void(bool)> m_memoryPressureStatusChangedCallback;
     WTF::Function<void()> m_didExceedInactiveLimitWhileActiveCallback;
-    bool m_hasInvokedDidExceedInactiveLimitWhileActiveCallback { false };
+    LowMemoryHandler m_lowMemoryHandler;
 
 #if OS(WINDOWS)
     void windowsMeasurementTimerFired();
@@ -194,9 +200,13 @@ private:
     Win32Handle m_lowMemoryHandle;
 #endif
 
-#if OS(LINUX)
+#if OS(LINUX) || OS(FREEBSD)
     RunLoop::Timer<MemoryPressureHandler> m_holdOffTimer;
     void holdOffTimerFired();
+#endif
+
+#if PLATFORM(COCOA) || PLATFORM(JAVA) && OS(DARWIN)
+    dispatch_queue_t m_dispatchQueue { nullptr };
 #endif
 };
 

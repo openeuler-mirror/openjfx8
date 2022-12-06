@@ -23,8 +23,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef ValueCheck_h
-#define ValueCheck_h
+#pragma once
 
 #include <wtf/FastMalloc.h>
 
@@ -35,7 +34,7 @@ template<typename T> struct ValueCheck {
     static void checkConsistency(const T&) { }
 };
 
-#if !ASSERT_DISABLED
+#if ASSERT_ENABLED
 template<typename P> struct ValueCheck<P*> {
     typedef P* TraitType;
     static void checkConsistency(const P* p)
@@ -46,8 +45,6 @@ template<typename P> struct ValueCheck<P*> {
         ValueCheck<P>::checkConsistency(*p);
     }
 };
-#endif
+#endif // ASSERT_ENABLED
 
 }
-
-#endif // ValueCheck_h

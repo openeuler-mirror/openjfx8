@@ -2,7 +2,7 @@
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2007 David Smith (catfish.man@gmail.com)
- * Copyright (C) 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011 Apple Inc. All rights reserved.
+ * Copyright (C) 2003-2019 Apple Inc. All rights reserved.
  * Copyright (C) Research In Motion Limited 2010. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
@@ -23,7 +23,6 @@
 
 #pragma once
 
-#include "PODIntervalTree.h"
 #include "RootInlineBox.h"
 #include <wtf/ListHashSet.h>
 #include <wtf/WeakPtr.h>
@@ -32,6 +31,9 @@ namespace WebCore {
 
 class RenderBlockFlow;
 class RenderBox;
+
+template<typename, typename> class PODInterval;
+template<typename, typename> class PODIntervalTree;
 
 class FloatingObject {
     WTF_MAKE_NONCOPYABLE(FloatingObject); WTF_MAKE_FAST_ALLOCATED;
@@ -72,7 +74,7 @@ public:
     LayoutUnit paginationStrut() const { return m_paginationStrut; }
     void setPaginationStrut(LayoutUnit strut) { m_paginationStrut = strut; }
 
-#ifndef NDEBUG
+#if ASSERT_ENABLED
     bool isInPlacedTree() const { return m_isInPlacedTree; }
     void setIsInPlacedTree(bool value) { m_isInPlacedTree = value; }
 #endif
@@ -82,7 +84,7 @@ public:
     bool isDescendant() const { return m_isDescendant; }
     void setIsDescendant(bool isDescendant) { m_isDescendant = isDescendant; }
 
-    // FIXME: Callers of these methods are dangerous and should be whitelisted explicitly or removed.
+    // FIXME: Callers of these methods are dangerous and should be allowed explicitly or removed.
     RootInlineBox* originatingLine() const { return m_originatingLine.get(); }
     void clearOriginatingLine() { m_originatingLine = nullptr; }
     void setOriginatingLine(RootInlineBox& line) { m_originatingLine = makeWeakPtr(line); }
@@ -106,21 +108,30 @@ private:
     unsigned m_shouldPaint : 1;
     unsigned m_isDescendant : 1;
     unsigned m_isPlaced : 1;
-#ifndef NDEBUG
+#if ASSERT_ENABLED
     unsigned m_isInPlacedTree : 1;
 #endif
 };
 
+// FIXME: This could be simplified if we made it inherit from PtrHash<std::unique_ptr<FloatingObject>> and
+// changed PtrHashBase to have all of its hash and equal functions bottleneck through single functions (as
+// is done here). That would allow us to only override those master hash and equal functions.
 struct FloatingObjectHashFunctions {
-    static unsigned hash(const std::unique_ptr<FloatingObject>& key) { return PtrHash<RenderBox*>::hash(&key->renderer()); }
-    static bool equal(const std::unique_ptr<FloatingObject>& a, const std::unique_ptr<FloatingObject>& b) { return &a->renderer() == &b->renderer(); }
+    typedef std::unique_ptr<FloatingObject> T;
+    typedef typename WTF::GetPtrHelper<T>::PtrType PtrType;
+
+    static unsigned hash(PtrType key) { return PtrHash<RenderBox*>::hash(&key->renderer()); }
+    static bool equal(PtrType a, PtrType b) { return &a->renderer() == &b->renderer(); }
     static const bool safeToCompareToEmptyOrDeleted = true;
+
+    static unsigned hash(const T& key) { return hash(WTF::getPtr(key)); }
+    static bool equal(const T& a, const T& b) { return equal(WTF::getPtr(a), WTF::getPtr(b)); }
+    static bool equal(PtrType a, const T& b) { return equal(a, WTF::getPtr(b)); }
+    static bool equal(const T& a, PtrType b) { return equal(WTF::getPtr(a), b); }
 };
 struct FloatingObjectHashTranslator {
     static unsigned hash(const RenderBox& key) { return PtrHash<const RenderBox*>::hash(&key); }
-    static unsigned hash(const FloatingObject& key) { return PtrHash<RenderBox*>::hash(&key.renderer()); }
     static bool equal(const std::unique_ptr<FloatingObject>& a, const RenderBox& b) { return &a->renderer() == &b; }
-    static bool equal(const std::unique_ptr<FloatingObject>& a, const FloatingObject& b) { return &a->renderer() == &b.renderer(); }
 };
 
 typedef ListHashSet<std::unique_ptr<FloatingObject>, FloatingObjectHashFunctions> FloatingObjectSet;
@@ -176,18 +187,8 @@ private:
     WeakPtr<const RenderBlockFlow> m_renderer;
 };
 
-} // namespace WebCore
-
 #ifndef NDEBUG
-namespace WTF {
-
-// This helper is used by PODIntervalTree for debugging purposes.
-template<> struct ValueToString<WebCore::FloatingObject*> {
-    static String string(const WebCore::FloatingObject* floatingObject)
-    {
-        return String::format("%p (%ix%i %ix%i)", floatingObject, floatingObject->frameRect().x().toInt(), floatingObject->frameRect().y().toInt(), floatingObject->frameRect().maxX().toInt(), floatingObject->frameRect().maxY().toInt());
-    }
-};
-
-} // namespace WTF
+TextStream& operator<<(TextStream&, const FloatingObject&);
 #endif
+
+} // namespace WebCore

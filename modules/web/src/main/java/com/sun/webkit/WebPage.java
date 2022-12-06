@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -638,10 +638,14 @@ public final class WebPage {
                 return;
             }
             updateDirty(toPaint);
-
+            updateRendering();
         } finally {
             unlockPage();
         }
+    }
+
+    public void updateRendering() {
+        twkUpdateRendering(getPage());
     }
 
     public int getUpdateContentCycleID() {
@@ -997,7 +1001,8 @@ public final class WebPage {
                 log.log(Level.FINE, "getClientSelectedText() request for a disposed web page.");
                 return "";
             }
-            return twkGetSelectedText(getPage());
+            final String selectedText = twkGetSelectedText(getPage());
+            return selectedText != null ? selectedText : "";
 
         } finally {
             unlockPage();
@@ -1157,6 +1162,12 @@ public final class WebPage {
         } finally {
             unlockPage();
         }
+    }
+
+    // DRT support
+    public void forceRepaint() {
+        repaintAll();
+        updateContent(new WCRectangle(0, 0, width, height));
     }
 
     public String getContentType(long frameID) {
@@ -2608,6 +2619,7 @@ public final class WebPage {
     private native void twkSetBounds(long pPage, int x, int y, int w, int h);
     private native void twkPrePaint(long pPage);
     private native void twkUpdateContent(long pPage, WCRenderQueue rq, int x, int y, int w, int h);
+    private native void twkUpdateRendering(long pPage);
     private native void twkPostPaint(long pPage, WCRenderQueue rq,
                                      int x, int y, int w, int h);
 

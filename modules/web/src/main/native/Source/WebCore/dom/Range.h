@@ -3,7 +3,7 @@
  * (C) 2000 Gunnstein Lye (gunnstein@netcom.no)
  * (C) 2000 Frederik Holljen (frederik.holljen@hig.no)
  * (C) 2001 Peter Kelly (pmk@post.com)
- * Copyright (C) 2004, 2005, 2006, 2007, 2008, 2009 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2020 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -27,31 +27,26 @@
 #include "FloatRect.h"
 #include "IntRect.h"
 #include "RangeBoundaryPoint.h"
-#include <wtf/Forward.h>
-#include <wtf/RefCounted.h>
-#include <wtf/Vector.h>
+#include <wtf/OptionSet.h>
 
 namespace WebCore {
 
-class ContainerNode;
 class DOMRect;
 class DOMRectList;
-class Document;
 class DocumentFragment;
 class FloatQuad;
-class Node;
 class NodeWithIndex;
 class RenderText;
 class SelectionRect;
 class Text;
 class VisiblePosition;
 
+struct SimpleRange;
+
+// FIXME: Rename to LiveRange, while leaving the DOM-exposed name as Range.
 class Range : public RefCounted<Range> {
 public:
     WEBCORE_EXPORT static Ref<Range> create(Document&);
-    WEBCORE_EXPORT static Ref<Range> create(Document&, RefPtr<Node>&& startContainer, int startOffset, RefPtr<Node>&& endContainer, int endOffset);
-    WEBCORE_EXPORT static Ref<Range> create(Document&, const Position&, const Position&);
-    WEBCORE_EXPORT static Ref<Range> create(Document&, const VisiblePosition&, const VisiblePosition&);
     WEBCORE_EXPORT ~Range();
 
     Document& ownerDocument() const { return m_ownerDocument; }
@@ -62,8 +57,7 @@ public:
     unsigned endOffset() const { return m_end.offset(); }
     bool collapsed() const { return m_start == m_end; }
 
-    Node* commonAncestorContainer() const { return commonAncestorContainer(&startContainer(), &endContainer()); }
-    WEBCORE_EXPORT static Node* commonAncestorContainer(Node* containerA, Node* containerB);
+    Node* commonAncestorContainer() const { return commonInclusiveAncestor(startContainer(), endContainer()).get(); }
     WEBCORE_EXPORT ExceptionOr<void> setStart(Ref<Node>&& container, unsigned offset);
     WEBCORE_EXPORT ExceptionOr<void> setEnd(Ref<Node>&& container, unsigned offset);
     WEBCORE_EXPORT void collapse(bool toStart);
@@ -84,7 +78,6 @@ public:
     WEBCORE_EXPORT ExceptionOr<void> insertNode(Ref<Node>&&);
     WEBCORE_EXPORT String toString() const;
 
-    String toHTML() const;
     WEBCORE_EXPORT String text() const;
 
     WEBCORE_EXPORT ExceptionOr<Ref<DocumentFragment>> createContextualFragment(const String& html);
@@ -100,43 +93,35 @@ public:
     WEBCORE_EXPORT ExceptionOr<void> surroundContents(Node&);
     WEBCORE_EXPORT ExceptionOr<void> setStartBefore(Node&);
 
-    const Position startPosition() const { return m_start.toPosition(); }
-    const Position endPosition() const { return m_end.toPosition(); }
-    WEBCORE_EXPORT ExceptionOr<void> setStart(const Position&);
-    WEBCORE_EXPORT ExceptionOr<void> setEnd(const Position&);
+    Position startPosition() const { return m_start.toPosition(); }
+    Position endPosition() const { return m_end.toPosition(); }
 
     WEBCORE_EXPORT Node* firstNode() const;
-    WEBCORE_EXPORT Node* pastLastNode() const;
 
-    ShadowRoot* shadowRoot() const;
-
-    enum RangeInFixedPosition {
-        NotFixedPosition,
-        PartiallyFixedPosition,
-        EntirelyFixedPosition
+    enum class BoundingRectBehavior : uint8_t {
+        RespectClipping = 1 << 0,
+        UseVisibleBounds = 1 << 1,
+        IgnoreTinyRects = 1 << 2,
+        IgnoreEmptyTextSelections = 1 << 3, // Do not return empty text rectangles, which is required for Element.getClientRect() conformance.
     };
 
     // Not transform-friendly
-    enum class RespectClippingForTextRects { No, Yes };
-    WEBCORE_EXPORT void absoluteTextRects(Vector<IntRect>&, bool useSelectionHeight = false, RangeInFixedPosition* = nullptr, RespectClippingForTextRects = RespectClippingForTextRects::No) const;
-    WEBCORE_EXPORT IntRect absoluteBoundingBox() const;
+    WEBCORE_EXPORT void absoluteTextRects(Vector<IntRect>&, bool useSelectionHeight = false, OptionSet<BoundingRectBehavior> = { }) const;
+    WEBCORE_EXPORT IntRect absoluteBoundingBox(OptionSet<BoundingRectBehavior> = { }) const;
 
     // Transform-friendly
-    WEBCORE_EXPORT void absoluteTextQuads(Vector<FloatQuad>&, bool useSelectionHeight = false, RangeInFixedPosition* = nullptr) const;
-    WEBCORE_EXPORT FloatRect absoluteBoundingRect(RespectClippingForTextRects = RespectClippingForTextRects::No) const;
-#if PLATFORM(IOS)
-    WEBCORE_EXPORT void collectSelectionRects(Vector<SelectionRect>&) const;
-    WEBCORE_EXPORT int collectSelectionRectsWithoutUnionInteriorLines(Vector<SelectionRect>&) const;
-#endif
+    WEBCORE_EXPORT FloatRect absoluteBoundingRect(OptionSet<BoundingRectBehavior> = { }) const;
 
     void nodeChildrenChanged(ContainerNode&);
     void nodeChildrenWillBeRemoved(ContainerNode&);
     void nodeWillBeRemoved(Node&);
+    bool parentlessNodeMovedToNewDocumentAffectsRange(Node&);
+    void updateRangeForParentlessNodeMovedToNewDocument(Node&);
 
-    void textInserted(Node*, unsigned offset, unsigned length);
-    void textRemoved(Node*, unsigned offset, unsigned length);
+    void textInserted(Node&, unsigned offset, unsigned length);
+    void textRemoved(Node&, unsigned offset, unsigned length);
     void textNodesMerged(NodeWithIndex& oldNode, unsigned offset);
-    void textNodeSplit(Text* oldNode);
+    void textNodeSplit(Text& oldNode);
 
     // Expand range to a unit (word or sentence or block or document) boundary.
     // Please refer to https://bugs.webkit.org/show_bug.cgi?id=27632 comment #5
@@ -157,37 +142,46 @@ public:
 
 private:
     explicit Range(Document&);
-    Range(Document&, Node* startContainer, int startOffset, Node* endContainer, int endOffset);
 
     void setDocument(Document&);
     ExceptionOr<Node*> checkNodeWOffset(Node&, unsigned offset) const;
     ExceptionOr<RefPtr<DocumentFragment>> processContents(ActionType);
 
     enum class CoordinateSpace { Absolute, Client };
-    Vector<FloatRect> borderAndTextRects(CoordinateSpace, RespectClippingForTextRects = RespectClippingForTextRects::No) const;
-    FloatRect boundingRect(CoordinateSpace, RespectClippingForTextRects = RespectClippingForTextRects::No) const;
+    Vector<FloatRect> borderAndTextRects(CoordinateSpace, OptionSet<BoundingRectBehavior> = { }) const;
+    FloatRect boundingRect(CoordinateSpace, OptionSet<BoundingRectBehavior> = { }) const;
 
-    Vector<FloatRect> absoluteRectsForRangeInText(Node*, RenderText&, bool useSelectionHeight, bool& isFixed, RespectClippingForTextRects) const;
+    Vector<FloatRect> absoluteRectsForRangeInText(Node*, RenderText&, bool useSelectionHeight, bool& isFixed, OptionSet<BoundingRectBehavior>) const;
+
+    Node* pastLastNode() const;
 
     Ref<Document> m_ownerDocument;
     RangeBoundaryPoint m_start;
     RangeBoundaryPoint m_end;
 };
 
-WEBCORE_EXPORT Ref<Range> rangeOfContents(Node&);
-
 WEBCORE_EXPORT bool areRangesEqual(const Range*, const Range*);
-bool rangesOverlap(const Range*, const Range*);
+WEBCORE_EXPORT bool rangesOverlap(const Range*, const Range*);
+
+WEBCORE_EXPORT SimpleRange makeSimpleRange(const Range&);
+WEBCORE_EXPORT SimpleRange makeSimpleRange(const Ref<Range>&);
+WEBCORE_EXPORT Optional<SimpleRange> makeSimpleRange(const Range*);
+WEBCORE_EXPORT Optional<SimpleRange> makeSimpleRange(const RefPtr<Range>&);
+
+WEBCORE_EXPORT Ref<Range> createLiveRange(const SimpleRange&);
+WEBCORE_EXPORT RefPtr<Range> createLiveRange(const Optional<SimpleRange>&);
+
+bool documentOrderComparator(const Node*, const Node*);
+
+WTF::TextStream& operator<<(WTF::TextStream&, const RangeBoundaryPoint&);
+WTF::TextStream& operator<<(WTF::TextStream&, const Range&);
 
 inline bool documentOrderComparator(const Node* a, const Node* b)
 {
     return Range::compareBoundaryPoints(const_cast<Node*>(a), 0, const_cast<Node*>(b), 0).releaseReturnValue() < 0;
 }
 
-WTF::TextStream& operator<<(WTF::TextStream&, const RangeBoundaryPoint&);
-WTF::TextStream& operator<<(WTF::TextStream&, const Range&);
-
-} // namespace
+} // namespace WebCore
 
 #if ENABLE(TREE_DEBUGGING)
 // Outside the WebCore namespace for ease of invocation from the debugger.

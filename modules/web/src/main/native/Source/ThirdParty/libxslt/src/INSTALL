@@ -4,10 +4,9 @@ Requirements:
 =============
 
 this library requires a recent version of libxml2 which you can grab from
-either the GNOME download server or the GitLab release page:
+either the GNOME FTP or the xmlsoft.org server:
 
-    https://gitlab.gnome.org/GNOME/libxml2/-/releases
-    https://download.gnome.org/sources/libxml2/
+  ftp://xmlsoft.org/
 
 When installing from a distribution package like a tar.gz:
 ==========================================================

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2015, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,7 +26,6 @@
 package javafx.scene.web;
 
 import java.awt.Color;
-import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -126,19 +125,36 @@ public class CanvasTest extends TestBase {
         });
     }
 
-    // Color comparison algorithm is based on WebKit's Tools/ImageDiff/PlaformImage.cpp#PlatformImage::difference implemenation.
-    // https://trac.webkit.org/browser/webkit/trunk/Tools/ImageDiff/PlatformImage.cpp
-    private static float getColorDifference(final Color base, final Color c) {
-        final float red = (c.getRed() - base.getRed()) / Math.max(255.0f - base.getRed(), base.getRed());
-        final float green = (c.getGreen() - base.getGreen()) / Math.max(255.0f - base.getGreen(), base.getGreen());
-        final float blue = (c.getBlue() - base.getBlue()) / Math.max(255.0f - base.getBlue(), base.getBlue());
-        final float alpha = (c.getAlpha() - base.getAlpha()) / Math.max(255.0f - base.getAlpha(), base.getAlpha());
-        final float distance = ((float) Math.sqrt(red * red + green * green + blue * blue + alpha * alpha)) / 2.0f;
-        return distance >= (1 / 255.0f) ? distance * 100.0f : 0;
-    }
+    // JDK-8234471
+    @Test public void testCanvasPattern() throws Exception {
+        final String htmlCanvasContent = "\n"
+            + "<canvas id='canvaspattern' width='100' height='100'></canvas>\n"
+            + "<svg id='svgpattern'></svg>\n"
+            + "<script>\n"
+            + "var patternCanvas = document.createElement('canvas');\n"
+            + "var patternCtx = patternCanvas.getContext('2d');\n"
+            + "patternCanvas.width = patternCanvas.height = 30;\n"
+            + "patternCtx.fillStyle = 'red';\n"
+            + "patternCtx.fillRect(0, 0, 20, 20);\n"
+            + "\n"
+            + "var ctx = document.getElementById('canvaspattern').getContext('2d');\n"
+            + "var pattern = ctx.createPattern(patternCanvas, 'repeat');\n"
+            + "var matrix = document.getElementById('svgpattern').createSVGMatrix();\n"
+            + "pattern.setTransform(matrix.translate(10, 10));\n"
+            + "ctx.fillStyle = pattern;\n"
+            + "ctx.fillRect(0, 0, 100, 100);\n"
+            + "</script>\n";
 
-    private static boolean isColorsSimilar(final Color base, final Color c, float toleranceInPercentage) {
-        return toleranceInPercentage >= getColorDifference(base, c);
+        loadContent(htmlCanvasContent);
+        submit(() -> {
+            int redColor = 255;
+            assertEquals("Pattern top-left corner", 0, (int) getEngine().executeScript(
+                "document.getElementById('canvaspattern').getContext('2d').getImageData(1, 1, 1, 1).data[0]"));
+            assertEquals("First rect top-left", redColor, (int) getEngine().executeScript(
+                "document.getElementById('canvaspattern').getContext('2d').getImageData(11, 11, 1, 1).data[0]"));
+            assertEquals("First rect center", redColor, (int) getEngine().executeScript(
+                "document.getElementById('canvaspattern').getContext('2d').getImageData(21, 21, 1, 1).data[0]"));
+        });
     }
 
     private BufferedImage htmlCanvasToBufferedImage(final String mime) throws Exception {

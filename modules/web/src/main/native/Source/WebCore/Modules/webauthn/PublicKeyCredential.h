@@ -28,36 +28,34 @@
 #if ENABLE(WEB_AUTHN)
 
 #include "BasicCredential.h"
-#include "ExceptionOr.h"
-#include "JSDOMPromiseDeferred.h"
-#include <JavaScriptCore/ArrayBuffer.h>
+#include "IDLTypes.h"
 #include <wtf/Forward.h>
 
 namespace WebCore {
 
 class AuthenticatorResponse;
+class Document;
+
+struct AuthenticationExtensionsClientOutputs;
+
+template<typename IDLType> class DOMPromiseDeferred;
 
 class PublicKeyCredential final : public BasicCredential {
 public:
-    static Ref<PublicKeyCredential> create(RefPtr<ArrayBuffer>&& id, RefPtr<AuthenticatorResponse>&& response)
-    {
-        return adoptRef(*new PublicKeyCredential(WTFMove(id), WTFMove(response)));
-    }
+    static Ref<PublicKeyCredential> create(Ref<AuthenticatorResponse>&&);
 
-    ArrayBuffer* rawId() const { return m_rawId.get(); }
-    AuthenticatorResponse* response() const { return m_response.get(); }
-    // Not support yet. Always throws.
-    ExceptionOr<bool> getClientExtensionResults() const;
+    ArrayBuffer* rawId() const;
+    AuthenticatorResponse* response() const { return m_response.ptr(); }
+    AuthenticationExtensionsClientOutputs getClientExtensionResults() const;
 
-    static void isUserVerifyingPlatformAuthenticatorAvailable(DOMPromiseDeferred<IDLBoolean>&&);
+    static void isUserVerifyingPlatformAuthenticatorAvailable(Document&, DOMPromiseDeferred<IDLBoolean>&&);
 
 private:
-    PublicKeyCredential(RefPtr<ArrayBuffer>&& id, RefPtr<AuthenticatorResponse>&&);
+    PublicKeyCredential(Ref<AuthenticatorResponse>&&);
 
     Type credentialType() const final { return Type::PublicKey; }
 
-    RefPtr<ArrayBuffer> m_rawId;
-    RefPtr<AuthenticatorResponse> m_response;
+    Ref<AuthenticatorResponse> m_response;
 };
 
 } // namespace WebCore

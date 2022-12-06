@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008, 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,8 +26,7 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef SchedulePair_h
-#define SchedulePair_h
+#pragma once
 
 #include <wtf/HashSet.h>
 #include <wtf/RetainPtr.h>
@@ -59,12 +58,12 @@ private:
         : m_runLoop(runLoop)
     {
         if (mode)
-            m_mode = adoptCF(CFStringCreateCopy(0, mode));
+            m_mode = adoptCF(CFStringCreateCopy(nullptr, mode));
     }
 
 #if PLATFORM(COCOA)
     WTF_EXPORT_PRIVATE SchedulePair(NSRunLoop*, CFStringRef);
-    RetainPtr<NSRunLoop*> m_nsRunLoop;
+    RetainPtr<NSRunLoop> m_nsRunLoop;
 #endif
 
     RetainPtr<CFRunLoopRef> m_runLoop;
@@ -80,7 +79,7 @@ struct SchedulePairHash {
 
     static bool equal(const RefPtr<SchedulePair>& a, const RefPtr<SchedulePair>& b) { return a == b; }
 
-    static const bool safeToCompareToEmptyOrDeleted = true;
+    static constexpr bool safeToCompareToEmptyOrDeleted = true;
 };
 
 typedef HashSet<RefPtr<SchedulePair>, SchedulePairHash> SchedulePairHashSet;
@@ -89,5 +88,3 @@ typedef HashSet<RefPtr<SchedulePair>, SchedulePairHash> SchedulePairHashSet;
 
 using WTF::SchedulePair;
 using WTF::SchedulePairHashSet;
-
-#endif

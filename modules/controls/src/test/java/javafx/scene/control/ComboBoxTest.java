@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2018, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -58,7 +58,8 @@ import javafx.scene.Group;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.input.KeyCode;
-import javafx.scene.layout.StackPane;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
@@ -1934,5 +1935,45 @@ public class ComboBoxTest {
         items.removeAll(items.get(1), items.get(3));
         assertEquals("sanity: selectedItem unchanged", lastItem, sm.getSelectedItem());
         assertEquals("must not fire on unchanged selected item", 0, rt_40012_count);
+    }
+
+    private int skinChangedCount = 0;
+    @Test public void test_JDK_8185854() {
+        final FlowPane comboPane = new FlowPane(10, 10);
+        ComboBox combo = new ComboBox<String>();
+
+        combo.skinProperty().addListener((o, oldSkin, newSkin) -> {
+            skinChangedCount++;
+        });
+
+        combo.setDisable(false);
+        combo.setEditable(false);
+
+        comboPane.getChildren().add(combo);
+
+        TabPane tabPane = new TabPane();
+        Tab tab = new Tab();
+        tab.setText("ComboBox");
+        tab.setContent(comboPane);
+        tabPane.getTabs().add(tab);
+
+        BorderPane p = new BorderPane();
+        p.setCenter(tabPane);
+
+        Scene scene = new Scene(p);
+        scene.getStylesheets().add(ComboBoxTest.class.getResource("JDK_8185854.css").toExternalForm());
+
+        Toolkit tk = Toolkit.getToolkit();
+
+        Stage stage = new Stage();
+        stage.setScene(scene);
+        stage.setWidth(500);
+        stage.setHeight(400);
+
+        stage.show();
+
+        tk.firePulse();
+
+        assertEquals("ComboBox skinProperty changed more than once, which is not expected.", 1, skinChangedCount);
     }
 }

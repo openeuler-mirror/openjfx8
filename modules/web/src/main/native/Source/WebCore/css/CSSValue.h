@@ -20,12 +20,13 @@
 
 #pragma once
 
-#include "URLHash.h"
+#include "CSSPropertyNames.h"
 #include <wtf/Function.h>
 #include <wtf/HashMap.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
 #include <wtf/TypeCasts.h>
+#include <wtf/URLHash.h>
 
 namespace WebCore {
 
@@ -37,7 +38,10 @@ class StyleSheetContents;
 
 enum CSSPropertyID : uint16_t;
 
-class CSSValue : public RefCounted<CSSValue> {
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CSSValue);
+class CSSValue {
+    WTF_MAKE_NONCOPYABLE(CSSValue);
+    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(CSSValue);
 public:
     enum Type {
         CSS_INHERIT = 0,
@@ -49,12 +53,26 @@ public:
         CSS_REVERT = 6
     };
 
-    // Override RefCounted's deref() to ensure operator delete is called on
-    // the appropriate subclass type.
+    static constexpr unsigned refCountFlagIsStatic = 0x1;
+    static constexpr unsigned refCountIncrement = 0x2; // This allows us to ref / deref without disturbing the static CSSValue flag.
+    void ref() const
+    {
+        m_refCount += refCountIncrement;
+    }
+    bool hasOneRef() const { return m_refCount == refCountIncrement; }
+    unsigned refCount() const { return m_refCount / refCountIncrement; }
+    bool hasAtLeastOneRef() const { return m_refCount; }
+
     void deref()
     {
-        if (derefBase())
+        // Customized deref() to ensure operator delete is called on
+        // the appropriate subclass type.
+        unsigned tempRefCount = m_refCount - refCountIncrement;
+        if (!tempRefCount) {
             destroy();
+            return;
+        }
+        m_refCount = tempRefCount;
     }
 
     Type cssValueType() const;
@@ -101,20 +119,19 @@ public:
     bool isShadowValue() const { return m_classType == ShadowClass; }
     bool isCubicBezierTimingFunctionValue() const { return m_classType == CubicBezierTimingFunctionClass; }
     bool isStepsTimingFunctionValue() const { return m_classType == StepsTimingFunctionClass; }
-    bool isFramesTimingFunctionValue() const { return m_classType == FramesTimingFunctionClass; }
     bool isSpringTimingFunctionValue() const { return m_classType == SpringTimingFunctionClass; }
     bool isLineBoxContainValue() const { return m_classType == LineBoxContainClass; }
     bool isCalcValue() const {return m_classType == CalculationClass; }
     bool isFilterImageValue() const { return m_classType == FilterImageClass; }
+#if ENABLE(CSS_PAINTING_API)
+    bool isPaintImageValue() const { return m_classType == PaintImageClass; }
+#endif
     bool isContentDistributionValue() const { return m_classType == CSSContentDistributionClass; }
     bool isGridAutoRepeatValue() const { return m_classType == GridAutoRepeatClass; }
+    bool isGridIntegerRepeatValue() const { return m_classType == GridIntegerRepeatClass; }
     bool isGridTemplateAreasValue() const { return m_classType == GridTemplateAreasClass; }
     bool isGridLineNamesValue() const { return m_classType == GridLineNamesClass; }
     bool isUnicodeRangeValue() const { return m_classType == UnicodeRangeClass; }
-
-#if ENABLE(CSS_ANIMATIONS_LEVEL_2)
-    bool isAnimationTriggerScrollValue() const { return m_classType == AnimationTriggerScrollClass; }
-#endif
 
     bool isCustomIdentValue() const { return m_classType == CustomIdentClass; }
     bool isVariableReferenceValue() const { return m_classType == VariableReferenceClass; }
@@ -125,6 +142,11 @@ public:
     Ref<DeprecatedCSSOMValue> createDeprecatedCSSOMWrapper(CSSStyleDeclaration&) const;
 
     bool traverseSubresources(const WTF::Function<bool (const CachedResource&)>& handler) const;
+
+    // What properties does this value rely on (eg, font-size for em units)
+    void collectDirectComputationalDependencies(HashSet<CSSPropertyID>&) const;
+    // What properties in the root element does this value rely on (eg. font-size for rem units)
+    void collectDirectRootComputationalDependencies(HashSet<CSSPropertyID>&) const;
 
     bool equals(const CSSValue&) const;
     bool operator==(const CSSValue& other) const { return equals(other); }
@@ -141,6 +163,9 @@ protected:
 
         // Image generator classes.
         CanvasClass,
+#if ENABLE(CSS_PAINTING_API)
+        PaintImageClass,
+#endif
         NamedImageClass,
         CrossfadeClass,
         FilterImageClass,
@@ -151,7 +176,6 @@ protected:
         // Timing function classes.
         CubicBezierTimingFunctionClass,
         StepsTimingFunctionClass,
-        FramesTimingFunctionClass,
         SpringTimingFunctionClass,
 
         // Other class types.
@@ -178,9 +202,6 @@ protected:
         LineBoxContainClass,
         CalculationClass,
         GridTemplateAreasClass,
-#if ENABLE(CSS_ANIMATIONS_LEVEL_2)
-        AnimationTriggerScrollClass,
-#endif
 
         CSSContentDistributionClass,
 
@@ -197,6 +218,7 @@ protected:
         ImageSetClass,
         GridLineNamesClass,
         GridAutoRepeatClass,
+        GridIntegerRepeatClass,
         // Do not append non-list class types here.
     };
 
@@ -207,6 +229,7 @@ public:
         CommaSeparator,
         SlashSeparator
     };
+    enum StaticCSSValueTag { StaticCSSValue };
 
 protected:
     ClassType classType() const { return static_cast<ClassType>(m_classType); }
@@ -214,10 +237,14 @@ protected:
     explicit CSSValue(ClassType classType)
         : m_primitiveUnitType(0)
         , m_hasCachedCSSText(false)
-        , m_isQuirkValue(false)
         , m_valueListSeparator(SpaceSeparator)
         , m_classType(classType)
     {
+    }
+
+    void makeStatic()
+    {
+        m_refCount |= refCountFlagIsStatic;
     }
 
     // NOTE: This class is non-virtual for memory and performance reasons.
@@ -228,14 +255,13 @@ protected:
 private:
     WEBCORE_EXPORT void destroy();
 
+    mutable unsigned m_refCount { refCountIncrement };
 protected:
     // The bits in this section are only used by specific subclasses but kept here
     // to maximize struct packing.
-
     // CSSPrimitiveValue bits:
-    unsigned m_primitiveUnitType : 7; // CSSPrimitiveValue::UnitType
+    unsigned m_primitiveUnitType : 7; // CSSUnitType
     mutable unsigned m_hasCachedCSSText : 1;
-    unsigned m_isQuirkValue : 1;
 
     unsigned m_valueListSeparator : ValueListSeparatorBits;
 
@@ -274,7 +300,7 @@ inline bool compareCSSValue(const Ref<CSSValueType>& first, const Ref<CSSValueTy
     return first.get().equals(second);
 }
 
-typedef HashMap<AtomicString, RefPtr<CSSCustomPropertyValue>> CustomPropertyValueMap;
+typedef HashMap<AtomString, RefPtr<CSSCustomPropertyValue>> CustomPropertyValueMap;
 
 } // namespace WebCore
 

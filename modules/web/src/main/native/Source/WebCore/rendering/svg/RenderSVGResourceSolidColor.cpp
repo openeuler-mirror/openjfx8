@@ -35,7 +35,7 @@ RenderSVGResourceSolidColor::~RenderSVGResourceSolidColor() = default;
 bool RenderSVGResourceSolidColor::applyResource(RenderElement& renderer, const RenderStyle& style, GraphicsContext*& context, OptionSet<RenderSVGResourceMode> resourceMode)
 {
     ASSERT(context);
-    ASSERT(resourceMode != RenderSVGResourceMode::ApplyToDefault);
+    ASSERT(!resourceMode.isEmpty());
 
     const SVGRenderStyle& svgStyle = style.svgStyle();
 
@@ -51,7 +51,7 @@ bool RenderSVGResourceSolidColor::applyResource(RenderElement& renderer, const R
             context->setFillRule(svgStyle.fillRule());
 
         if (resourceMode.contains(RenderSVGResourceMode::ApplyToText))
-            context->setTextDrawingMode(TextModeFill);
+            context->setTextDrawingMode(TextDrawingMode::Fill);
     } else if (resourceMode.contains(RenderSVGResourceMode::ApplyToStroke)) {
         // When rendering the mask for a RenderSVGResourceClipper, the stroke code path is never hit.
         ASSERT(!isRenderingMask);
@@ -61,7 +61,7 @@ bool RenderSVGResourceSolidColor::applyResource(RenderElement& renderer, const R
         SVGRenderSupport::applyStrokeStyleToContext(context, style, renderer);
 
         if (resourceMode.contains(RenderSVGResourceMode::ApplyToText))
-            context->setTextDrawingMode(TextModeStroke);
+            context->setTextDrawingMode(TextDrawingMode::Stroke);
     }
 
     return true;
@@ -70,7 +70,7 @@ bool RenderSVGResourceSolidColor::applyResource(RenderElement& renderer, const R
 void RenderSVGResourceSolidColor::postApplyResource(RenderElement&, GraphicsContext*& context, OptionSet<RenderSVGResourceMode> resourceMode, const Path* path, const RenderSVGShape* shape)
 {
     ASSERT(context);
-    ASSERT(resourceMode != RenderSVGResourceMode::ApplyToDefault);
+    ASSERT(!resourceMode.isEmpty());
 
     if (resourceMode.contains(RenderSVGResourceMode::ApplyToFill)) {
         if (path)

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006 Apple Inc.  All rights reserved.
+ * Copyright (C) 2006-2019 Apple Inc.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,7 +33,7 @@
 #include "HeapCellInlines.h"
 
 namespace JSC {
-    class ExecState;
+    class CallFrame;
     class PropertyNameArray;
     class VM;
     class JSObject;
@@ -49,27 +49,27 @@ typedef struct OpaqueJSValue* JSObjectRef;
 
 /* Opaque typing convenience methods */
 
-inline JSC::ExecState* toJS(JSContextRef c)
+inline JSC::JSGlobalObject* toJS(JSContextRef context)
 {
-    ASSERT(c);
-    return reinterpret_cast<JSC::ExecState*>(const_cast<OpaqueJSContext*>(c));
+    ASSERT(context);
+    return reinterpret_cast<JSC::JSGlobalObject*>(const_cast<OpaqueJSContext*>(context));
 }
 
-inline JSC::ExecState* toJS(JSGlobalContextRef c)
+inline JSC::JSGlobalObject* toJS(JSGlobalContextRef context)
 {
-    ASSERT(c);
-    return reinterpret_cast<JSC::ExecState*>(c);
+    ASSERT(context);
+    return reinterpret_cast<JSC::JSGlobalObject*>(context);
 }
 
 inline JSC::JSGlobalObject* toJSGlobalObject(JSGlobalContextRef context)
 {
-    return toJS(context)->lexicalGlobalObject();
+    return toJS(context);
 }
 
-inline JSC::JSValue toJS(JSC::ExecState* exec, JSValueRef v)
+inline JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, JSValueRef v)
 {
-    ASSERT_UNUSED(exec, exec);
-#if USE(JSVALUE32_64)
+    ASSERT_UNUSED(globalObject, globalObject);
+#if !CPU(ADDRESS64)
     JSC::JSCell* jsCell = reinterpret_cast<JSC::JSCell*>(const_cast<OpaqueJSValue*>(v));
     if (!jsCell)
         return JSC::jsNull();
@@ -79,28 +79,28 @@ inline JSC::JSValue toJS(JSC::ExecState* exec, JSValueRef v)
     else
         result = jsCell;
 #else
-    JSC::JSValue result = JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(const_cast<OpaqueJSValue*>(v)));
+    JSC::JSValue result = bitwise_cast<JSC::JSValue>(v);
 #endif
     if (!result)
         return JSC::jsNull();
     if (result.isCell())
-        RELEASE_ASSERT(result.asCell()->methodTable(exec->vm()));
+        RELEASE_ASSERT(result.asCell()->methodTable(getVM(globalObject)));
     return result;
 }
 
-inline JSC::JSValue toJSForGC(JSC::ExecState* exec, JSValueRef v)
+inline JSC::JSValue toJSForGC(JSC::JSGlobalObject* globalObject, JSValueRef v)
 {
-    ASSERT_UNUSED(exec, exec);
-#if USE(JSVALUE32_64)
+    ASSERT_UNUSED(globalObject, globalObject);
+#if !CPU(ADDRESS64)
     JSC::JSCell* jsCell = reinterpret_cast<JSC::JSCell*>(const_cast<OpaqueJSValue*>(v));
     if (!jsCell)
         return JSC::JSValue();
     JSC::JSValue result = jsCell;
 #else
-    JSC::JSValue result = JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(const_cast<OpaqueJSValue*>(v)));
+    JSC::JSValue result = bitwise_cast<JSC::JSValue>(v);
 #endif
     if (result && result.isCell())
-        RELEASE_ASSERT(result.asCell()->methodTable(exec->vm()));
+        RELEASE_ASSERT(result.asCell()->methodTable(getVM(globalObject)));
     return result;
 }
 
@@ -114,7 +114,7 @@ inline JSC::JSObject* toJS(JSObjectRef o)
 {
     JSC::JSObject* object = uncheckedToJS(o);
     if (object)
-        RELEASE_ASSERT(object->methodTable(*object->vm()));
+        RELEASE_ASSERT(object->methodTable(object->vm()));
     return object;
 }
 
@@ -128,19 +128,24 @@ inline JSC::VM* toJS(JSContextGroupRef g)
     return reinterpret_cast<JSC::VM*>(const_cast<OpaqueJSContextGroup*>(g));
 }
 
-inline JSValueRef toRef(JSC::ExecState* exec, JSC::JSValue v)
+inline JSValueRef toRef(JSC::VM& vm, JSC::JSValue v)
 {
-    ASSERT(exec->vm().currentThreadIsHoldingAPILock());
-#if USE(JSVALUE32_64)
+    ASSERT(vm.currentThreadIsHoldingAPILock());
+#if !CPU(ADDRESS64)
     if (!v)
         return 0;
     if (!v.isCell())
-        return reinterpret_cast<JSValueRef>(JSC::jsAPIValueWrapper(exec, v).asCell());
+        return reinterpret_cast<JSValueRef>(JSC::JSAPIValueWrapper::create(vm, v));
     return reinterpret_cast<JSValueRef>(v.asCell());
 #else
-    UNUSED_PARAM(exec);
-    return reinterpret_cast<JSValueRef>(JSC::JSValue::encode(v));
+    UNUSED_PARAM(vm);
+    return bitwise_cast<JSValueRef>(v);
 #endif
+}
+
+inline JSValueRef toRef(JSC::JSGlobalObject* globalObject, JSC::JSValue v)
+{
+    return toRef(getVM(globalObject), v);
 }
 
 inline JSObjectRef toRef(JSC::JSObject* o)
@@ -153,15 +158,14 @@ inline JSObjectRef toRef(const JSC::JSObject* o)
     return reinterpret_cast<JSObjectRef>(const_cast<JSC::JSObject*>(o));
 }
 
-inline JSContextRef toRef(JSC::ExecState* e)
+inline JSContextRef toRef(JSC::JSGlobalObject* globalObject)
 {
-    return reinterpret_cast<JSContextRef>(e);
+    return reinterpret_cast<JSContextRef>(globalObject);
 }
 
-inline JSGlobalContextRef toGlobalRef(JSC::ExecState* e)
+inline JSGlobalContextRef toGlobalRef(JSC::JSGlobalObject* globalObject)
 {
-    ASSERT(e == e->lexicalGlobalObject()->globalExec());
-    return reinterpret_cast<JSGlobalContextRef>(e);
+    return reinterpret_cast<JSGlobalContextRef>(globalObject);
 }
 
 inline JSPropertyNameAccumulatorRef toRef(JSC::PropertyNameArray* l)

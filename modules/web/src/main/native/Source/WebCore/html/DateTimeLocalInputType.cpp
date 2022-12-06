@@ -33,9 +33,11 @@
 
 #if ENABLE(INPUT_TYPE_DATETIMELOCAL)
 
+#include "Decimal.h"
 #include "HTMLInputElement.h"
 #include "HTMLNames.h"
 #include "InputTypeNames.h"
+#include "StepRange.h"
 
 namespace WebCore {
 
@@ -46,7 +48,7 @@ static const int dateTimeLocalDefaultStepBase = 0;
 static const int dateTimeLocalStepScaleFactor = 1000;
 static const StepRange::StepDescription dateTimeLocalStepDescription { dateTimeLocalDefaultStep, dateTimeLocalDefaultStepBase, dateTimeLocalStepScaleFactor, StepRange::ScaledStepValueShouldBeInteger };
 
-const AtomicString& DateTimeLocalInputType::formControlType() const
+const AtomString& DateTimeLocalInputType::formControlType() const
 {
     return InputTypeNames::datetimelocal();
 }
@@ -78,17 +80,14 @@ StepRange DateTimeLocalInputType::createStepRange(AnyStepHandling anyStepHandlin
     return StepRange(stepBase, RangeLimitations::Valid, minimum, maximum, step, dateTimeLocalStepDescription);
 }
 
-bool DateTimeLocalInputType::parseToDateComponentsInternal(const UChar* characters, unsigned length, DateComponents* out) const
+Optional<DateComponents> DateTimeLocalInputType::parseToDateComponents(const StringView& source) const
 {
-    ASSERT(out);
-    unsigned end;
-    return out->parseDateTimeLocal(characters, length, 0, end) && end == length;
+    return DateComponents::fromParsingDateTimeLocal(source);
 }
 
-bool DateTimeLocalInputType::setMillisecondToDateComponents(double value, DateComponents* date) const
+Optional<DateComponents> DateTimeLocalInputType::setMillisecondToDateComponents(double value) const
 {
-    ASSERT(date);
-    return date->setMillisecondsSinceEpochForDateTimeLocal(value);
+    return DateComponents::fromMillisecondsSinceEpochForDateTimeLocal(value);
 }
 
 bool DateTimeLocalInputType::isDateTimeLocalField() const

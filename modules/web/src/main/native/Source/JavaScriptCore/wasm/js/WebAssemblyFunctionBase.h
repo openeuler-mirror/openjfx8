@@ -38,7 +38,7 @@ class WebAssemblyFunctionBase : public JSFunction {
 public:
     using Base = JSFunction;
 
-    const static unsigned StructureFlags = Base::StructureFlags;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     DECLARE_INFO;
 
@@ -48,9 +48,9 @@ public:
 protected:
     static void visitChildren(JSCell*, SlotVisitor&);
     void finishCreation(VM&, NativeExecutable*, unsigned length, const String& name, JSWebAssemblyInstance*);
-    WebAssemblyFunctionBase(VM&, JSGlobalObject*, Structure*);
+    WebAssemblyFunctionBase(VM&, NativeExecutable*, JSGlobalObject*, Structure*);
 
-    PoisonedWriteBarrier<WebAssemblyFunctionBasePoison, JSWebAssemblyInstance> m_instance;
+    WriteBarrier<JSWebAssemblyInstance> m_instance;
 };
 
 } // namespace JSC

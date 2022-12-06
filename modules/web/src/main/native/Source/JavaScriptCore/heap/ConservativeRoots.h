@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009, 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2009-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -41,12 +41,12 @@ public:
     void add(void* begin, void* end);
     void add(void* begin, void* end, JITStubRoutineSet&, CodeBlockSet&);
 
-    size_t size();
-    HeapCell** roots();
+    size_t size() const;
+    HeapCell** roots() const;
 
 private:
-    static const size_t inlineCapacity = 128;
-    static const size_t nonInlineCapacity = 8192 / sizeof(HeapCell*);
+    static constexpr size_t inlineCapacity = 128;
+    static constexpr size_t nonInlineCapacity = 8192 / sizeof(HeapCell*);
 
     template<typename MarkHook>
     void genericAddPointer(void*, HeapVersion markingVersion, HeapVersion newlyAllocatedVersion, TinyBloomFilter, MarkHook&);
@@ -63,12 +63,12 @@ private:
     HeapCell* m_inlineRoots[inlineCapacity];
 };
 
-inline size_t ConservativeRoots::size()
+inline size_t ConservativeRoots::size() const
 {
     return m_size;
 }
 
-inline HeapCell** ConservativeRoots::roots()
+inline HeapCell** ConservativeRoots::roots() const
 {
     return m_roots;
 }

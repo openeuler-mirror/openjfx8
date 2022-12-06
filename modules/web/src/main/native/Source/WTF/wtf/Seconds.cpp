@@ -24,14 +24,15 @@
  */
 
 #include "config.h"
-#include "Seconds.h"
+#include <wtf/Seconds.h>
 
-#include "Condition.h"
-#include "Lock.h"
-#include "MonotonicTime.h"
-#include "PrintStream.h"
-#include "TimeWithDynamicClockType.h"
-#include "WallTime.h"
+#include <wtf/Condition.h>
+#include <wtf/Lock.h>
+#include <wtf/MonotonicTime.h>
+#include <wtf/PrintStream.h>
+#include <wtf/TimeWithDynamicClockType.h>
+#include <wtf/WallTime.h>
+#include <wtf/text/TextStream.h>
 
 namespace WTF {
 
@@ -68,6 +69,12 @@ TimeWithDynamicClockType Seconds::operator-(const TimeWithDynamicClockType& othe
 void Seconds::dump(PrintStream& out) const
 {
     out.print(m_value, " sec");
+}
+
+TextStream& operator<<(TextStream& ts, Seconds seconds)
+{
+    ts << seconds.value() << "s";
+    return ts;
 }
 
 void sleep(Seconds value)

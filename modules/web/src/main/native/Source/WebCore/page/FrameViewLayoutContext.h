@@ -27,7 +27,6 @@
 
 #include "LayoutUnit.h"
 #include "Timer.h"
-
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
@@ -37,12 +36,18 @@ class Frame;
 class FrameView;
 class LayoutScope;
 class LayoutSize;
-class LayoutState;
 class RenderBlockFlow;
 class RenderBox;
 class RenderObject;
 class RenderElement;
+class RenderLayoutState;
 class RenderView;
+#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
+namespace Layout {
+class LayoutState;
+class LayoutTreeContent;
+}
+#endif
 
 class FrameViewLayoutContext {
 public:
@@ -50,9 +55,11 @@ public:
     ~FrameViewLayoutContext();
 
     void layout();
-
-    void setNeedsLayout();
     bool needsLayout() const;
+
+    // We rely on the side-effects of layout, like compositing updates, to update state in various subsystems
+    // whose dependencies are poorly defined. This call triggers such updates.
+    void setNeedsLayoutAfterViewConfigurationChange();
 
     void scheduleLayout();
     void scheduleSubtreeLayout(RenderElement& layoutRoot);
@@ -64,7 +71,7 @@ public:
     void disableSetNeedsLayout();
     void enableSetNeedsLayout();
 
-    enum class LayoutPhase {
+    enum class LayoutPhase : uint8_t {
         OutsideLayout,
         InPreLayout,
         InRenderTreeLayout,
@@ -80,7 +87,7 @@ public:
 
     unsigned layoutCount() const { return m_layoutCount; }
 
-    RenderElement* subtreeLayoutRoot() const { return m_subtreeLayoutRoot.get(); }
+    RenderElement* subtreeLayoutRoot() const;
     void clearSubtreeLayoutRoot() { m_subtreeLayoutRoot.clear(); }
     void convertSubtreeLayoutToFullLayout();
 
@@ -93,7 +100,7 @@ public:
 
     void flushAsynchronousTasks();
 
-    LayoutState* layoutState() const;
+    RenderLayoutState* layoutState() const PURE_FUNCTION;
     // Returns true if layoutState should be used for its cached offset and clip.
     bool isPaintOffsetCacheEnabled() const { return !m_paintOffsetCacheDisableCount && layoutState(); }
 #ifndef NDEBUG
@@ -104,10 +111,17 @@ public:
     // If we're doing a full repaint m_layoutState will be 0, but in that case layoutDelta doesn't matter.
     LayoutSize layoutDelta() const;
     void addLayoutDelta(const LayoutSize& delta);
-#if !ASSERT_DISABLED
+#if ASSERT_ENABLED
     bool layoutDeltaMatches(const LayoutSize& delta);
 #endif
-    using LayoutStateStack = Vector<std::unique_ptr<LayoutState>>;
+    using LayoutStateStack = Vector<std::unique_ptr<RenderLayoutState>>;
+
+#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
+    const Layout::LayoutState* layoutFormattingState() const { return m_layoutState.get(); }
+    Layout::LayoutTreeContent* layoutTreeContent() const { return m_layoutTreeContent.get(); }
+    void invalidateLayoutTreeContent();
+    void invalidateLayoutState();
+#endif
 
 private:
     friend class LayoutScope;
@@ -139,7 +153,7 @@ private:
     // Subtree push/pop
     void pushLayoutState(RenderElement&);
     bool pushLayoutStateForPaginationIfNeeded(RenderBlockFlow&);
-    bool pushLayoutState(RenderBox& renderer, const LayoutSize& offset, LayoutUnit pageHeight = 0, bool pageHeightChanged = false);
+    bool pushLayoutState(RenderBox& renderer, const LayoutSize& offset, LayoutUnit pageHeight = 0_lu, bool pageHeightChanged = false);
     void popLayoutState();
 
     // Suspends the LayoutState optimization. Used under transforms that cannot be represented by
@@ -149,6 +163,9 @@ private:
     // These functions may only be accessed by LayoutStateMaintainer or LayoutStateDisabler.
     void disablePaintOffsetCache() { m_paintOffsetCacheDisableCount++; }
     void enablePaintOffsetCache() { ASSERT(m_paintOffsetCacheDisableCount > 0); m_paintOffsetCacheDisableCount--; }
+#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
+    void layoutUsingFormattingContext();
+#endif
 
     Frame& frame() const;
     FrameView& view() const;
@@ -158,22 +175,25 @@ private:
     FrameView& m_frameView;
     Timer m_layoutTimer;
     Timer m_asynchronousTasksTimer;
+    WeakPtr<RenderElement> m_subtreeLayoutRoot;
 
     bool m_layoutSchedulingIsEnabled { true };
-    bool m_delayedLayout { false };
     bool m_firstLayout { true };
     bool m_needsFullRepaint { true };
     bool m_inAsynchronousTasks { false };
     bool m_setNeedsLayoutWasDeferred { false };
     LayoutPhase m_layoutPhase { LayoutPhase::OutsideLayout };
-    enum class LayoutNestedState { NotInLayout, NotNested, Nested };
+    enum class LayoutNestedState : uint8_t  { NotInLayout, NotNested, Nested };
     LayoutNestedState m_layoutNestedState { LayoutNestedState::NotInLayout };
     unsigned m_layoutCount { 0 };
     unsigned m_disableSetNeedsLayoutCount { 0 };
     int m_layoutDisallowedCount { 0 };
-    WeakPtr<RenderElement> m_subtreeLayoutRoot;
-    LayoutStateStack m_layoutStateStack;
     unsigned m_paintOffsetCacheDisableCount { 0 };
+    LayoutStateStack m_layoutStateStack;
+#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
+    std::unique_ptr<Layout::LayoutState> m_layoutState;
+    std::unique_ptr<Layout::LayoutTreeContent> m_layoutTreeContent;
+#endif
 };
 
 } // namespace WebCore

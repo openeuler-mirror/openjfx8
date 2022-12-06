@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,6 +28,7 @@
 
 #if ENABLE(B3_JIT)
 
+#include "AirAllocateRegistersAndStackAndGenerateCode.h"
 #include "AirAllocateRegistersAndStackByLinearScan.h"
 #include "AirAllocateRegistersByGraphColoring.h"
 #include "AirAllocateStackByGraphColoring.h"
@@ -49,10 +50,8 @@
 #include "B3Common.h"
 #include "B3Procedure.h"
 #include "B3TimingScope.h"
-#include "B3ValueInlines.h"
 #include "CCallHelpers.h"
 #include "DisallowMacroScratchRegisterUsage.h"
-#include "LinkBuffer.h"
 #include <wtf/IndexMap.h>
 
 namespace JSC { namespace B3 { namespace Air {
@@ -63,7 +62,7 @@ void prepareForGeneration(Code& code)
 
     // If we're doing super verbose dumping, the phase scope of any phase will already do a dump.
     if (shouldDumpIR(AirMode) && !shouldDumpIRAtEachPhase(AirMode)) {
-        dataLog("Initial air:\n");
+        dataLog(tierName, "Initial air:\n");
         dataLog(code);
     }
 
@@ -72,6 +71,34 @@ void prepareForGeneration(Code& code)
 
     if (shouldValidateIR())
         validate(code);
+
+    if (!code.optLevel()) {
+        lowerMacros(code);
+
+        // FIXME: The name of this phase doesn't make much sense in O0 since we do this before
+        // register allocation.
+        lowerAfterRegAlloc(code);
+
+        // Actually create entrypoints.
+        lowerEntrySwitch(code);
+
+        // This sorts the basic blocks in Code to achieve an ordering that maximizes the likelihood that a high
+        // frequency successor is also the fall-through target.
+        optimizeBlockOrder(code);
+
+        if (shouldValidateIR())
+            validate(code);
+
+        if (shouldDumpIR(AirMode)) {
+            dataLog("Air after ", code.lastPhaseName(), ", before generation:\n");
+            dataLog(code);
+        }
+
+        code.m_generateAndAllocateRegisters = makeUnique<GenerateAndAllocateRegisters>(code);
+        code.m_generateAndAllocateRegisters->prepareForGeneration();
+
+        return;
+    }
 
     simplifyCFG(code);
 
@@ -83,7 +110,7 @@ void prepareForGeneration(Code& code)
 
     eliminateDeadCode(code);
 
-    if (code.optLevel() <= 1) {
+    if (code.optLevel() == 1) {
         // When we're compiling quickly, we do register and stack allocation in one linear scan
         // phase. It's fast because it computes liveness only once.
         allocateRegistersAndStackByLinearScan(code);
@@ -161,7 +188,7 @@ void prepareForGeneration(Code& code)
     }
 }
 
-void generate(Code& code, CCallHelpers& jit)
+static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
 {
     TimingScope timingScope("Air::generate");
 
@@ -171,10 +198,8 @@ void generate(Code& code, CCallHelpers& jit)
     GenerationContext context;
     context.code = &code;
     context.blockLabels.resize(code.size());
-    for (BasicBlock* block : code) {
-        if (block)
-            context.blockLabels[block] = Box<CCallHelpers::Label>::create();
-    }
+    for (BasicBlock* block : code)
+        context.blockLabels[block] = Box<CCallHelpers::Label>::create();
     IndexMap<BasicBlock*, CCallHelpers::JumpList> blockJumps(code.size());
 
     auto link = [&] (CCallHelpers::Jump jump, BasicBlock* target) {
@@ -207,7 +232,7 @@ void generate(Code& code, CCallHelpers& jit)
         if (disassembler)
             disassembler->startBlock(block, jit);
 
-        if (std::optional<unsigned> entrypointIndex = code.entrypointIndex(block)) {
+        if (Optional<unsigned> entrypointIndex = code.entrypointIndex(block)) {
             ASSERT(code.isEntrypoint(block));
 
             if (disassembler)
@@ -245,12 +270,7 @@ void generate(Code& code, CCallHelpers& jit)
             // We currently don't represent the full prologue/epilogue in Air, so we need to
             // have this override.
             auto start = jit.labelIgnoringWatchpoints();
-            if (code.frameSize()) {
-                jit.emitRestore(code.calleeSaveRegisterAtOffsetList());
-                jit.emitFunctionEpilogue();
-            } else
-                jit.emitFunctionEpilogueWithEmptyFrame();
-            jit.ret();
+            code.emitEpilogue(jit);
             addItem(block->last());
             auto end = jit.labelIgnoringWatchpoints();
             if (disassembler)
@@ -303,6 +323,14 @@ void generate(Code& code, CCallHelpers& jit)
     if (disassembler)
         disassembler->endLatePath(jit);
     pcToOriginMap.appendItem(jit.labelIgnoringWatchpoints(), Origin());
+}
+
+void generate(Code& code, CCallHelpers& jit)
+{
+    if (code.optLevel())
+        generateWithAlreadyAllocatedRegisters(code, jit);
+    else
+        code.m_generateAndAllocateRegisters->generate(jit);
 }
 
 } } } // namespace JSC::B3::Air

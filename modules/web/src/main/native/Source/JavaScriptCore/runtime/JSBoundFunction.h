@@ -29,32 +29,44 @@
 
 namespace JSC {
 
-EncodedJSValue JSC_HOST_CALL boundThisNoArgsFunctionCall(ExecState*);
-EncodedJSValue JSC_HOST_CALL boundFunctionCall(ExecState*);
-EncodedJSValue JSC_HOST_CALL boundThisNoArgsFunctionConstruct(ExecState*);
-EncodedJSValue JSC_HOST_CALL boundFunctionConstruct(ExecState*);
-EncodedJSValue JSC_HOST_CALL isBoundFunction(ExecState*);
-EncodedJSValue JSC_HOST_CALL hasInstanceBoundFunction(ExecState*);
+EncodedJSValue JSC_HOST_CALL boundThisNoArgsFunctionCall(JSGlobalObject*, CallFrame*);
+EncodedJSValue JSC_HOST_CALL boundFunctionCall(JSGlobalObject*, CallFrame*);
+EncodedJSValue JSC_HOST_CALL boundThisNoArgsFunctionConstruct(JSGlobalObject*, CallFrame*);
+EncodedJSValue JSC_HOST_CALL boundFunctionConstruct(JSGlobalObject*, CallFrame*);
+EncodedJSValue JSC_HOST_CALL isBoundFunction(JSGlobalObject*, CallFrame*);
+EncodedJSValue JSC_HOST_CALL hasInstanceBoundFunction(JSGlobalObject*, CallFrame*);
 
 class JSBoundFunction final : public JSFunction {
 public:
     typedef JSFunction Base;
-    const static unsigned StructureFlags = ~ImplementsDefaultHasInstance & Base::StructureFlags;
+    static constexpr unsigned StructureFlags = Base::StructureFlags & ~ImplementsDefaultHasInstance;
+    static_assert(StructureFlags & ImplementsHasInstance, "");
 
-    template<typename CellType>
+    template<typename CellType, SubspaceAccess mode>
     static IsoSubspace* subspaceFor(VM& vm)
     {
-        return &vm.boundFunctionSpace;
+        return vm.boundFunctionSpace<mode>();
     }
 
-    static JSBoundFunction* create(VM&, ExecState*, JSGlobalObject*, JSObject* targetFunction, JSValue boundThis, JSArray* boundArgs, int, const String& name);
+    static JSBoundFunction* create(VM&, JSGlobalObject*, JSObject* targetFunction, JSValue boundThis, JSImmutableButterfly* boundArgs, int, JSString* nameMayBeNull);
 
-    static bool customHasInstance(JSObject*, ExecState*, JSValue);
+    static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
 
     JSObject* targetFunction() { return m_targetFunction.get(); }
     JSValue boundThis() { return m_boundThis.get(); }
-    JSArray* boundArgs() { return m_boundArgs.get(); } // DO NOT allow this array to be mutated!
-    JSArray* boundArgsCopy(ExecState*);
+    JSImmutableButterfly* boundArgs() { return m_boundArgs.get(); } // DO NOT allow this array to be mutated!
+    JSArray* boundArgsCopy(JSGlobalObject*);
+    JSString* nameMayBeNull() { return m_nameMayBeNull.get(); }
+    const String& nameString()
+    {
+        if (!m_nameMayBeNull)
+            return emptyString();
+        ASSERT(!m_nameMayBeNull->isRope());
+        bool allocationAllowed = false;
+        return m_nameMayBeNull->tryGetValue(allocationAllowed);
+    }
+
+    int32_t length(VM&) { return m_length; }
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
@@ -64,22 +76,26 @@ public:
 
     static ptrdiff_t offsetOfTargetFunction() { return OBJECT_OFFSETOF(JSBoundFunction, m_targetFunction); }
     static ptrdiff_t offsetOfBoundThis() { return OBJECT_OFFSETOF(JSBoundFunction, m_boundThis); }
+    static ptrdiff_t offsetOfBoundArgs() { return OBJECT_OFFSETOF(JSBoundFunction, m_boundArgs); }
 
     DECLARE_INFO;
 
-protected:
-    static void visitChildren(JSCell*, SlotVisitor&);
-
 private:
-    JSBoundFunction(VM&, JSGlobalObject*, Structure*, JSObject* targetFunction, JSValue boundThis, JSArray* boundArgs);
+    JSBoundFunction(VM&, NativeExecutable*, JSGlobalObject*, Structure*, JSObject* targetFunction, JSValue boundThis, JSImmutableButterfly* boundArgs, JSString* nameMayBeNull, int length);
 
     void finishCreation(VM&, NativeExecutable*, int length);
+    static void visitChildren(JSCell*, SlotVisitor&);
 
-    // FIXME: Consider poisoning these pointers.
-    // https://bugs.webkit.org/show_bug.cgi?id=182713
     WriteBarrier<JSObject> m_targetFunction;
     WriteBarrier<Unknown> m_boundThis;
-    WriteBarrier<JSArray> m_boundArgs;
+    WriteBarrier<JSImmutableButterfly> m_boundArgs;
+    WriteBarrier<JSString> m_nameMayBeNull;
+    int m_length;
 };
+
+EncodedJSValue JSC_HOST_CALL boundFunctionCall(JSGlobalObject*, CallFrame*);
+EncodedJSValue JSC_HOST_CALL boundFunctionConstruct(JSGlobalObject*, CallFrame*);
+EncodedJSValue JSC_HOST_CALL boundThisNoArgsFunctionCall(JSGlobalObject*, CallFrame*);
+EncodedJSValue JSC_HOST_CALL boundThisNoArgsFunctionConstruct(JSGlobalObject*, CallFrame*);
 
 } // namespace JSC

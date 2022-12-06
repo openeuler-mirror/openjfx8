@@ -23,12 +23,12 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef TextureMapperPlatformLayerProxy_h
-#define TextureMapperPlatformLayerProxy_h
+#pragma once
 
-#if USE(COORDINATED_GRAPHICS_THREADED)
+#if USE(COORDINATED_GRAPHICS)
 
 #include "TextureMapperGLHeaders.h"
+#include <wtf/Condition.h>
 #include <wtf/Function.h>
 #include <wtf/Lock.h>
 #include <wtf/RunLoop.h>
@@ -62,14 +62,14 @@ public:
     // aquire / release the lock explicitly to use below methods.
     Lock& lock() { return m_lock; }
     std::unique_ptr<TextureMapperPlatformLayerBuffer> getAvailableBuffer(const IntSize&, GLint internalFormat);
-    void pushNextBuffer(std::unique_ptr<TextureMapperPlatformLayerBuffer>);
+    void pushNextBuffer(std::unique_ptr<TextureMapperPlatformLayerBuffer>&&);
     bool isActive();
 
     WEBCORE_EXPORT void activateOnCompositingThread(Compositor*, TextureMapperLayer*);
     WEBCORE_EXPORT void invalidate();
 
     WEBCORE_EXPORT void swapBuffer();
-    void dropCurrentBufferWhilePreservingTexture();
+    void dropCurrentBufferWhilePreservingTexture(bool shouldWait = false);
 
     bool scheduleUpdateOnCompositorThread(Function<void()>&&);
 
@@ -86,6 +86,10 @@ private:
 
     Lock m_lock;
 
+    Lock m_wasBufferDroppedLock;
+    Condition m_wasBufferDroppedCondition;
+    bool m_wasBufferDropped { false };
+
     Vector<std::unique_ptr<TextureMapperPlatformLayerBuffer>> m_usedBuffers;
     std::unique_ptr<RunLoop::Timer<TextureMapperPlatformLayerProxy>> m_releaseUnusedBuffersTimer;
 
@@ -100,6 +104,4 @@ private:
 
 } // namespace WebCore
 
-#endif // USE(COORDINATED_GRAPHICS_THREADED)
-
-#endif // TextureMapperPlatformLayerProxy_h
+#endif // USE(COORDINATED_GRAPHICS)

@@ -23,13 +23,15 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef WTF_IteratorRange_h
-#define WTF_IteratorRange_h
+#pragma once
+
+#include <iterator>
 
 namespace WTF {
 
 template<typename Iterator>
 class IteratorRange {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     IteratorRange(Iterator begin, Iterator end)
         : m_begin(WTFMove(begin))
@@ -51,8 +53,21 @@ IteratorRange<Iterator> makeIteratorRange(Iterator&& begin, Iterator&& end)
     return IteratorRange<Iterator>(std::forward<Iterator>(begin), std::forward<Iterator>(end));
 }
 
+template<typename Container>
+IteratorRange<typename Container::reverse_iterator> makeReversedRange(Container& container)
+{
+    return makeIteratorRange(std::rbegin(container), std::rend(container));
+}
+
+template<typename Container>
+IteratorRange<typename Container::const_reverse_iterator> makeReversedRange(const Container& container)
+{
+    return makeIteratorRange(std::crbegin(container), std::crend(container));
+}
+
 template<typename Container, typename Iterator>
 class SizedIteratorRange {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     SizedIteratorRange(const Container& container, Iterator begin, Iterator end)
         : m_container(container)
@@ -79,5 +94,3 @@ SizedIteratorRange<Container, Iterator> makeSizedIteratorRange(const Container& 
 }
 
 } // namespace WTF
-
-#endif // WTF_IteratorRange_h

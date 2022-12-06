@@ -28,9 +28,11 @@
 #pragma once
 
 #include "IntPoint.h"
+#include <wtf/JSONValues.h>
 #include <wtf/MathExtras.h>
+#include <wtf/text/WTFString.h>
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
 #include <CoreGraphics/CoreGraphics.h>
 #endif
 
@@ -121,7 +123,10 @@ public:
            m_height < other.m_height ? m_height : other.m_height);
     }
 
-    WEBCORE_EXPORT float diagonalLength() const;
+    float diagonalLength() const
+    {
+        return std::hypot(m_width, m_height);
+    }
 
     float diagonalLengthSquared() const
     {
@@ -152,6 +157,9 @@ public:
     WEBCORE_EXPORT FloatSize(const D2D1_SIZE_F&);
     operator D2D1_SIZE_F() const;
 #endif
+
+    String toJSONString() const;
+    Ref<JSON::Object> toJSONObject() const;
 
 private:
     float m_width { 0 };
@@ -256,3 +264,17 @@ WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, const FloatSize&);
 
 } // namespace WebCore
 
+namespace WTF {
+template<> struct DefaultHash<WebCore::FloatSize>;
+template<> struct HashTraits<WebCore::FloatSize>;
+
+template<typename Type> struct LogArgument;
+template <>
+struct LogArgument<WebCore::FloatSize> {
+    static String toString(const WebCore::FloatSize& size)
+    {
+        return size.toJSONString();
+    }
+};
+
+} // namespace WTF

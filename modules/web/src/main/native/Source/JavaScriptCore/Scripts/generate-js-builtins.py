@@ -31,23 +31,14 @@ import fnmatch
 import logging
 import optparse
 import os
+import sys
 
 logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.ERROR)
 log = logging.getLogger('global')
 
 from lazywriter import LazyFileWriter
-from builtins_model import *
-from builtins_templates import *
-from builtins_generator import *
-from builtins_generate_combined_header import *
-from builtins_generate_combined_implementation import *
-from builtins_generate_separate_header import *
-from builtins_generate_separate_implementation import *
-from builtins_generate_wrapper_header import *
-from builtins_generate_wrapper_implementation import *
-from builtins_generate_internals_wrapper_header import *
-from builtins_generate_internals_wrapper_implementation import *
 
+from wkbuiltins import *
 
 
 def concatenated_output_filename(builtins_files, framework_name, generate_only_wrapper_files):
@@ -55,6 +46,12 @@ def concatenated_output_filename(builtins_files, framework_name, generate_only_w
         return framework_name + 'JSBuiltins.h-result'
     return os.path.basename(builtins_files[0]) + '-result'
 
+
+def do_open(file, mode):
+    if sys.version_info.major == 2:
+        return open(file, mode)
+    else:
+        return open(file, mode, encoding="UTF-8")
 
 def generate_bindings_for_builtins_files(builtins_files=[],
                                          output_path=None,
@@ -69,7 +66,7 @@ def generate_bindings_for_builtins_files(builtins_files=[],
     model = BuiltinsCollection(framework_name=framework_name)
 
     for filepath in builtins_files:
-        with open(filepath, "r") as file:
+        with do_open(filepath, "r") as file:
             file_text = file.read()
             file_name = os.path.basename(filepath)
 

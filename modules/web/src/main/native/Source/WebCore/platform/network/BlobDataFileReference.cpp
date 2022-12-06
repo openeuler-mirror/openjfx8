@@ -27,27 +27,21 @@
 #include "BlobDataFileReference.h"
 
 #include "File.h"
-#include "FileMetadata.h"
-#include "FileSystem.h"
+#include <wtf/FileMetadata.h>
+#include <wtf/FileSystem.h>
 
 namespace WebCore {
 
-BlobDataFileReference::BlobDataFileReference(const String& path)
+BlobDataFileReference::BlobDataFileReference(const String& path, const String& replacementPath)
     : m_path(path)
-#if ENABLE(FILE_REPLACEMENT)
-    , m_replacementShouldBeGenerated(false)
-#endif
-    , m_size(0)
-    , m_expectedModificationTime(FileSystem::invalidFileTime())
+    , m_replacementPath(replacementPath)
 {
 }
 
 BlobDataFileReference::~BlobDataFileReference()
 {
-#if ENABLE(FILE_REPLACEMENT)
     if (!m_replacementPath.isNull())
         FileSystem::deleteFile(m_replacementPath);
-#endif
 }
 
 const String& BlobDataFileReference::path()
@@ -55,10 +49,9 @@ const String& BlobDataFileReference::path()
 #if ENABLE(FILE_REPLACEMENT)
     if (m_replacementShouldBeGenerated)
         generateReplacementFile();
-
+#endif
     if (!m_replacementPath.isNull())
         return m_replacementPath;
-#endif
 
     return m_path;
 }
@@ -73,15 +66,14 @@ unsigned long long BlobDataFileReference::size()
     return m_size;
 }
 
-double BlobDataFileReference::expectedModificationTime()
+Optional<WallTime> BlobDataFileReference::expectedModificationTime()
 {
 #if ENABLE(FILE_REPLACEMENT)
     // We do not currently track modifications for generated files, because we have a snapshot.
     // Unfortunately, this is inconsistent with regular file handling - File objects should be invalidated when underlying files change.
     if (m_replacementShouldBeGenerated || !m_replacementPath.isNull())
-        return FileSystem::invalidFileTime();
+        return WTF::nullopt;
 #endif
-
     return m_expectedModificationTime;
 }
 
@@ -106,6 +98,13 @@ void BlobDataFileReference::startTrackingModifications()
     if (m_replacementShouldBeGenerated)
         return;
 #endif
+
+    // This is a registered blob with a replacement file. Get the Metadata of the replacement file.
+    if (!m_replacementPath.isNull()) {
+        metadata = FileSystem::fileMetadataFollowingSymlinks(m_replacementPath);
+        if (!metadata)
+            return;
+    }
 
     m_size = metadata.value().length;
 }

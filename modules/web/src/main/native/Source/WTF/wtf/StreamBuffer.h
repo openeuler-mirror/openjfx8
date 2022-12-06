@@ -28,14 +28,15 @@
 * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef WTF_StreamBuffer_h
-#define WTF_StreamBuffer_h
+#pragma once
 
 #include <wtf/Deque.h>
 
 namespace WTF {
 
-template <typename T, size_t BlockSize> class StreamBuffer {
+template <typename T, size_t BlockSize>
+class StreamBuffer {
+    WTF_MAKE_FAST_ALLOCATED;
 private:
     typedef Vector<T> Block;
 public:
@@ -59,7 +60,7 @@ public:
         m_size += size;
         while (size) {
             if (!m_buffer.size() || m_buffer.last()->size() == BlockSize)
-                m_buffer.append(std::make_unique<Block>());
+                m_buffer.append(makeUnique<Block>());
             size_t appendSize = std::min(BlockSize - m_buffer.last()->size(), size);
             m_buffer.last()->append(data, appendSize);
             data += appendSize;
@@ -112,5 +113,3 @@ private:
 } // namespace WTF
 
 using WTF::StreamBuffer;
-
-#endif // WTF_StreamBuffer_h

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,8 +23,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef WTF_MonotonicTime_h
-#define WTF_MonotonicTime_h
+#pragma once
 
 #include <wtf/ClockType.h>
 #include <wtf/Seconds.h>
@@ -38,9 +37,10 @@ class PrintStream;
 // possibly don't count downtime. This uses floating point internally so that you can reason about
 // infinity and other things that arise in math. It's acceptable to use this to wrap NaN times,
 // negative times, and infinite times, so long as they are all relative to the same clock.
-class MonotonicTime {
+class MonotonicTime final {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
-    static const ClockType clockType = ClockType::Monotonic;
+    static constexpr ClockType clockType = ClockType::Monotonic;
 
     // This is the epoch. So, x.secondsSinceEpoch() should be the same as x - MonotonicTime().
     constexpr MonotonicTime() { }
@@ -145,17 +145,17 @@ public:
     }
 
     template<class Decoder>
-    static std::optional<MonotonicTime> decode(Decoder& decoder)
+    static Optional<MonotonicTime> decode(Decoder& decoder)
     {
-        std::optional<double> time;
+        Optional<double> time;
         decoder >> time;
         if (!time)
-            return std::nullopt;
+            return WTF::nullopt;
         return MonotonicTime::fromRawSeconds(*time);
     }
 
     template<class Decoder>
-    static bool decode(Decoder& decoder, MonotonicTime& time)
+    static WARN_UNUSED_RETURN bool decode(Decoder& decoder, MonotonicTime& time)
     {
         double value;
         if (!decoder.decode(value))
@@ -165,6 +165,8 @@ public:
         return true;
     }
 
+    struct MarkableTraits;
+
 private:
     constexpr MonotonicTime(double rawValue)
         : m_value(rawValue)
@@ -172,6 +174,18 @@ private:
     }
 
     double m_value { 0 };
+};
+
+struct MonotonicTime::MarkableTraits {
+    static bool isEmptyValue(MonotonicTime time)
+    {
+        return std::isnan(time.m_value);
+    }
+
+    static constexpr MonotonicTime emptyValue()
+    {
+        return MonotonicTime::nan();
+    }
 };
 
 } // namespace WTF
@@ -196,5 +210,3 @@ inline bool isfinite(WTF::MonotonicTime time)
 } // namespace std
 
 using WTF::MonotonicTime;
-
-#endif // WTF_MonotonicTime_h

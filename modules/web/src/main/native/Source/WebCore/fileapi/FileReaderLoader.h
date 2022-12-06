@@ -31,11 +31,12 @@
 #pragma once
 
 #include "BlobResourceHandle.h"
-#include "FileError.h"
-#include "URL.h"
+#include "ExceptionCode.h"
+#include <wtf/URL.h>
 #include "TextEncoding.h"
 #include "ThreadableLoaderClient.h"
 #include <wtf/Forward.h>
+#include <wtf/Optional.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC {
@@ -61,11 +62,11 @@ public:
     };
 
     // If client is given, do the loading asynchronously. Otherwise, load synchronously.
-    FileReaderLoader(ReadType, FileReaderLoaderClient*);
+    WEBCORE_EXPORT FileReaderLoader(ReadType, FileReaderLoaderClient*);
     ~FileReaderLoader();
 
-    void start(ScriptExecutionContext*, Blob&);
-    void cancel();
+    WEBCORE_EXPORT void start(ScriptExecutionContext*, Blob&);
+    WEBCORE_EXPORT void cancel();
 
     // ThreadableLoaderClient
     void didReceiveResponse(unsigned long, const ResourceResponse&) override;
@@ -74,10 +75,10 @@ public:
     void didFail(const ResourceError&) override;
 
     String stringResult();
-    RefPtr<JSC::ArrayBuffer> arrayBufferResult() const;
+    WEBCORE_EXPORT RefPtr<JSC::ArrayBuffer> arrayBufferResult() const;
     unsigned bytesLoaded() const { return m_bytesLoaded; }
     unsigned totalBytes() const { return m_totalBytes; }
-    FileError::ErrorCode errorCode() const { return m_errorCode; }
+    Optional<ExceptionCode> errorCode() const { return m_errorCode; }
 
     void setEncoding(const String&);
     void setDataType(const String& dataType) { m_dataType = dataType; }
@@ -87,14 +88,14 @@ public:
 private:
     void terminate();
     void cleanup();
-    void failed(FileError::ErrorCode);
+    void failed(ExceptionCode);
     void convertToText();
     void convertToDataURL();
 
     bool isCompleted() const;
 
-    static FileError::ErrorCode httpStatusCodeToErrorCode(int);
-    static FileError::ErrorCode toErrorCode(BlobResourceHandle::Error);
+    static ExceptionCode httpStatusCodeToErrorCode(int);
+    static ExceptionCode toErrorCode(BlobResourceHandle::Error);
 
     ReadType m_readType;
     FileReaderLoaderClient* m_client;
@@ -117,7 +118,7 @@ private:
     unsigned m_bytesLoaded;
     unsigned m_totalBytes;
 
-    FileError::ErrorCode m_errorCode { FileError::OK };
+    Optional<ExceptionCode> m_errorCode;
 };
 
 } // namespace WebCore

@@ -43,12 +43,12 @@
 #pragma mark - Soft-link macros for use within a single source file
 
 #define SOFT_LINK(library, functionName, resultType, callingConvention, parameterDeclarations, parameterNames) \
-    static resultType(callingConvention*softLink##functionName) parameterDeclarations = nullptr; \
+    static void* softLink##functionName; \
     \
     inline resultType functionName parameterDeclarations \
     { \
         if (!softLink##functionName) \
-            softLink##functionName = reinterpret_cast<resultType(callingConvention*)parameterDeclarations>(::EncodePointer(SOFT_LINK_GETPROCADDRESS(library##Library(), #functionName))); \
+            softLink##functionName = ::EncodePointer(reinterpret_cast<void*>(SOFT_LINK_GETPROCADDRESS(library##Library(), #functionName))); \
         return reinterpret_cast<resultType (callingConvention*) parameterDeclarations>(::DecodePointer(softLink##functionName)) parameterNames; \
     }
 
@@ -56,11 +56,11 @@
     typedef resultType (callingConvention *functionName##PtrType) parameterDeclarations; \
     static functionName##PtrType functionName##Ptr() \
     { \
-        static functionName##PtrType ptr; \
+        static void* ptr; \
         static bool initialized; \
         \
         if (!initialized) { \
-            ptr = reinterpret_cast<functionName##PtrType>(::EncodePointer(SOFT_LINK_GETPROCADDRESS(library##Library(), #functionName))); \
+            ptr = ::EncodePointer(reinterpret_cast<void*>(SOFT_LINK_GETPROCADDRESS(library##Library(), #functionName))); \
             initialized = true; \
         } \
         return reinterpret_cast<functionName##PtrType>(::DecodePointer(ptr)); \
@@ -70,12 +70,12 @@
     typedef resultType (callingConvention *functionName##PtrType) parameterDeclarations; \
     static functionName##PtrType functionName##Ptr() \
     { \
-        static functionName##PtrType ptr; \
+        static void* ptr; \
         static bool initialized; \
         \
         if (!initialized) { \
             static HINSTANCE libraryInstance = ::GetModuleHandle(L#library); \
-            ptr = reinterpret_cast<functionName##PtrType>(::EncodePointer(SOFT_LINK_GETPROCADDRESS(libraryInstance, #functionName))); \
+            ptr = ::EncodePointer(reinterpret_cast<void*>(SOFT_LINK_GETPROCADDRESS(libraryInstance, #functionName))); \
             initialized = true; \
         } \
         \
@@ -90,12 +90,12 @@
     #define myFunction softLink_myFunction
 */
 #define SOFT_LINK_DLL_IMPORT(library, functionName, resultType, callingConvention, parameterDeclarations, parameterNames) \
-    static resultType(callingConvention*softLink##functionName) parameterDeclarations = nullptr; \
+    static void* softLink##functionName; \
     \
     inline resultType softLink_##functionName parameterDeclarations \
     { \
         if (!softLink##functionName) \
-            softLink##functionName = reinterpret_cast<resultType(callingConvention*)parameterDeclarations>(::EncodePointer(SOFT_LINK_GETPROCADDRESS(library##Library(), #functionName))); \
+            softLink##functionName = ::EncodePointer(reinterpret_cast<void*>(SOFT_LINK_GETPROCADDRESS(library##Library(), #functionName))); \
         return reinterpret_cast<resultType(callingConvention*)parameterDeclarations>(::DecodePointer(softLink##functionName)) parameterNames; \
     }
 
@@ -103,11 +103,11 @@
     typedef resultType (callingConvention *functionName##PtrType) parameterDeclarations; \
     static functionName##PtrType functionName##Ptr() \
     { \
-        static functionName##PtrType ptr; \
+        static void* ptr; \
         static bool initialized; \
         \
         if (!initialized) { \
-            ptr = reinterpret_cast<resultType(callingConvention*)parameterDeclarations>(::EncodePointer(SOFT_LINK_GETPROCADDRESS(library##Library(), #functionName))); \
+            ptr = ::EncodePointer(reinterpret_cast<void*>(SOFT_LINK_GETPROCADDRESS(library##Library(), #functionName))); \
             initialized = true; \
         } \
         return reinterpret_cast<functionName##PtrType>(::DecodePointer(ptr)); \
@@ -117,11 +117,11 @@
     typedef resultType (callingConvention *functionName##PtrType) parameterDeclarations; \
     static functionName##PtrType functionName##Ptr() \
     { \
-        static functionName##PtrType ptr; \
+        static void* ptr; \
         static bool initialized; \
         \
         if (!initialized) { \
-            ptr = reinterpret_cast<resultType(callingConvention*)parameterDeclarations>(::EncodePointer(SOFT_LINK_GETPROCADDRESS(library##Library(), #functionName))); \
+            ptr = ::EncodePointer(reinterpret_cast<void*>(SOFT_LINK_GETPROCADDRESS(library##Library(), #functionName))); \
             initialized = true; \
         } \
         return reinterpret_cast<functionName##PtrType>(::DecodePointer(ptr)); \
@@ -167,10 +167,10 @@
     } \
     }
 
-#define SOFT_LINK_FRAMEWORK_HELPER(functionNamespace, framework, suffix) \
+#define SOFT_LINK_FRAMEWORK_HELPER(functionNamespace, framework, suffix, export) \
     namespace functionNamespace { \
-    HMODULE framework##Library(bool isOptional = false); \
-    HMODULE framework##Library(bool isOptional) \
+    export HMODULE framework##Library(bool isOptional = false); \
+    export HMODULE framework##Library(bool isOptional) \
     { \
         static HMODULE library = LoadLibraryW(L###framework suffix); \
         ASSERT_WITH_MESSAGE_UNUSED(isOptional, isOptional || library, "Could not load %s", L###framework suffix); \
@@ -178,28 +178,32 @@
     } \
     }
 
-#define SOFT_LINK_FRAMEWORK(functionNamespace, framework) SOFT_LINK_FRAMEWORK_HELPER(functionNamespace, framework, L".dll")
-#define SOFT_LINK_DEBUG_FRAMEWORK(functionNamespace, framework) SOFT_LINK_FRAMEWORK_HELPER(functionNamespace, framework, L"_debug.dll")
+#define SOFT_LINK_FRAMEWORK(functionNamespace, framework) SOFT_LINK_FRAMEWORK_HELPER(functionNamespace, framework, L".dll", )
+#define SOFT_LINK_DEBUG_FRAMEWORK(functionNamespace, framework) SOFT_LINK_FRAMEWORK_HELPER(functionNamespace, framework, L"_debug.dll", )
 
 #ifdef DEBUG_ALL
 #define SOFT_LINK_FRAMEWORK_FOR_SOURCE(functionNamespace, framework) SOFT_LINK_DEBUG_FRAMEWORK(functionNamespace, framework)
+#define SOFT_LINK_FRAMEWORK_FOR_SOURCE_WITH_EXPORT(functionNamespace, framework, export) SOFT_LINK_FRAMEWORK_HELPER(functionNamespace, framework, L"_debug.dll", export)
 #else
 #define SOFT_LINK_FRAMEWORK_FOR_SOURCE(functionNamespace, framework) SOFT_LINK_FRAMEWORK(functionNamespace, framework)
+#define SOFT_LINK_FRAMEWORK_FOR_SOURCE_WITH_EXPORT(functionNamespace, framework, export) SOFT_LINK_FRAMEWORK_HELPER(functionNamespace, framework, L".dll", export)
 #endif
+
+
 
 #define SOFT_LINK_CONSTANT_FOR_HEADER(functionNamespace, framework, variableName, variableType) \
     namespace functionNamespace { \
     variableType get_##framework##_##variableName(); \
     }
 
-#define SOFT_LINK_CONSTANT_FOR_SOURCE(functionNamespace, framework, variableName, variableType) \
+#define SOFT_LINK_CONSTANT_FOR_SOURCE_WITH_EXPORT(functionNamespace, framework, variableName, variableType, export) \
     namespace functionNamespace { \
     static void init##framework##variableName(void* context) { \
         variableType* ptr = reinterpret_cast<variableType*>(SOFT_LINK_GETPROCADDRESS(framework##Library(), #variableName)); \
         RELEASE_ASSERT(ptr); \
         *static_cast<variableType*>(context) = *ptr; \
     } \
-    variableType get_##framework##_##variableName(); \
+    export variableType get_##framework##_##variableName(); \
     variableType get_##framework##_##variableName() \
     { \
         static variableType constant##framework##variableName; \
@@ -208,6 +212,9 @@
         return constant##framework##variableName; \
     } \
     }
+
+#define SOFT_LINK_CONSTANT_FOR_SOURCE(functionNamespace, framework, variableName, variableType) \
+    SOFT_LINK_CONSTANT_FOR_SOURCE_WITH_EXPORT(functionNamespace, framework, variableName, variableType, )
 
 #define SOFT_LINK_CONSTANT_MAY_FAIL_FOR_HEADER(functionNamespace, framework, variableName, variableType) \
     namespace functionNamespace { \
@@ -250,10 +257,10 @@
     } \
     }
 
-#define SOFT_LINK_FUNCTION_FOR_SOURCE(functionNamespace, framework, functionName, resultType, parameterDeclarations, parameterNames) \
+#define SOFT_LINK_FUNCTION_FOR_SOURCE_WITH_EXPORT(functionNamespace, framework, functionName, resultType, parameterDeclarations, parameterNames, export) \
     namespace functionNamespace { \
     static resultType __cdecl init##framework##functionName parameterDeclarations; \
-    resultType(__cdecl*softLink##framework##functionName) parameterDeclarations = init##framework##functionName; \
+    export resultType(__cdecl*softLink##framework##functionName) parameterDeclarations = init##framework##functionName; \
     static resultType __cdecl init##framework##functionName parameterDeclarations \
     { \
         softLink##framework##functionName = reinterpret_cast<resultType (__cdecl*)parameterDeclarations>(SOFT_LINK_GETPROCADDRESS(framework##Library(), #functionName)); \
@@ -261,6 +268,9 @@
         return softLink##framework##functionName parameterNames; \
     } \
     }
+
+#define SOFT_LINK_FUNCTION_FOR_SOURCE(functionNamespace, framework, functionName, resultType, parameterDeclarations, parameterNames) \
+    SOFT_LINK_FUNCTION_FOR_SOURCE_WITH_EXPORT(functionNamespace, framework, functionName, resultType, parameterDeclarations, parameterNames, )
 
 #define SOFT_LINK_FUNCTION_MAY_FAIL_FOR_HEADER(functionNamespace, framework, functionName, resultType, parameterDeclarations, parameterNames) \
     WTF_EXTERN_C_BEGIN \

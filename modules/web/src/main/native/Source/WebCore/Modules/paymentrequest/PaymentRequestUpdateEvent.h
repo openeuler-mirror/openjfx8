@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,10 +33,10 @@
 namespace WebCore {
 
 class DOMPromise;
-class PaymentRequest;
 struct PaymentRequestUpdateEventInit;
 
 class PaymentRequestUpdateEvent : public Event {
+    WTF_MAKE_ISO_ALLOCATED(PaymentRequestUpdateEvent);
 public:
     template <typename... Args> static Ref<PaymentRequestUpdateEvent> create(Args&&... args)
     {
@@ -46,15 +46,13 @@ public:
     ExceptionOr<void> updateWith(Ref<DOMPromise>&&);
 
 protected:
-    PaymentRequestUpdateEvent(const AtomicString& type, PaymentRequest&);
+    explicit PaymentRequestUpdateEvent(const AtomString& type);
+    PaymentRequestUpdateEvent(const AtomString& type, const PaymentRequestUpdateEventInit&);
 
     // Event
     EventInterface eventInterface() const override;
 
 private:
-    PaymentRequestUpdateEvent(const AtomicString& type, PaymentRequestUpdateEventInit&&);
-
-    RefPtr<PaymentRequest> m_paymentRequest;
     bool m_waitForUpdate { false };
 };
 

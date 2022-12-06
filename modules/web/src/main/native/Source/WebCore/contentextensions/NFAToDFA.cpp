@@ -41,9 +41,9 @@ namespace WebCore {
 
 namespace ContentExtensions {
 
-typedef MutableRange<char, NFANodeIndexSet> NFANodeRange;
-typedef MutableRangeList<char, NFANodeIndexSet> NFANodeRangeList;
-typedef MutableRangeList<char, NFANodeIndexSet, 128> PreallocatedNFANodeRangeList;
+typedef MutableRange<signed char, NFANodeIndexSet> NFANodeRange;
+typedef MutableRangeList<signed char, NFANodeIndexSet> NFANodeRangeList;
+typedef MutableRangeList<signed char, NFANodeIndexSet, 128> PreallocatedNFANodeRangeList;
 typedef Vector<uint32_t, 0, ContentExtensionsOverflowHandler> UniqueNodeList;
 typedef Vector<UniqueNodeList, 0, ContentExtensionsOverflowHandler> NFANodeClosures;
 
@@ -224,7 +224,7 @@ struct NodeIdSetToUniqueNodeIdSetSource {
         unsigned hash = 4207445155;
         for (unsigned nodeId : nodeIdSet)
             hash += nodeId;
-        this->hash = DefaultHash<unsigned>::Hash::hash(hash);
+        this->hash = DefaultHash<unsigned>::hash(hash);
     }
     DFA& dfa;
     const NFA& nfa;
@@ -247,7 +247,7 @@ struct NodeIdSetToUniqueNodeIdSetTranslator {
     {
         DFANode newDFANode;
 
-        HashSet<uint64_t, DefaultHash<uint64_t>::Hash, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> actions;
+        HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> actions;
 
         for (unsigned nfaNodeId : source.nodeIdSet) {
             const auto& nfaNode = source.nfa.nodes[nfaNodeId];

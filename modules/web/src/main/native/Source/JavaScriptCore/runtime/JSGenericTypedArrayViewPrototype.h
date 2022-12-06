@@ -32,31 +32,28 @@ namespace JSC {
 template<typename ViewClass>
 class JSGenericTypedArrayViewPrototype final : public JSNonFinalObject {
 public:
-    typedef JSNonFinalObject Base;
+    using Base = JSNonFinalObject;
 
-protected:
-    JSGenericTypedArrayViewPrototype(VM&, Structure*);
-    void finishCreation(VM&, JSGlobalObject*);
+    template<typename CellType, SubspaceAccess>
+    static IsoSubspace* subspaceFor(VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSGenericTypedArrayViewPrototype, Base);
+        return &vm.plainObjectSpace;
+    }
 
-public:
     static JSGenericTypedArrayViewPrototype* create(
         VM&, JSGlobalObject*, Structure*);
 
     // FIXME: We should fix the warnings for extern-template in JSObject template classes: https://bugs.webkit.org/show_bug.cgi?id=161979
-#if COMPILER(CLANG)
-#if __has_warning("-Wundefined-var-template")
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wundefined-var-template"
-#endif
-#endif
+    IGNORE_CLANG_WARNINGS_BEGIN("undefined-var-template")
     DECLARE_INFO;
-#if COMPILER(CLANG)
-#if __has_warning("-Wundefined-var-template")
-#pragma clang diagnostic pop
-#endif
-#endif
+    IGNORE_CLANG_WARNINGS_END
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
+
+private:
+    JSGenericTypedArrayViewPrototype(VM&, Structure*);
+    void finishCreation(VM&, JSGlobalObject*);
 };
 
 } // namespace JSC

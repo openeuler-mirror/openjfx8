@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,16 +34,14 @@
 #include "DFGInsertionSet.h"
 #include "DFGNodeFlowProjection.h"
 #include "DFGPhase.h"
-#include "DFGPredictionPropagationPhase.h"
-#include "DFGVariableAccessDataDump.h"
-#include "JSCInlines.h"
+#include "JSCJSValueInlines.h"
 
 namespace JSC { namespace DFG {
 
 namespace {
 
 namespace DFGIntegerRangeOptimizationPhaseInternal {
-static const bool verbose = false;
+static constexpr bool verbose = false;
 }
 const unsigned giveUpThreshold = 50;
 
@@ -97,8 +95,8 @@ public:
         return 0;
     }
 
-    static const unsigned minVagueness = 0;
-    static const unsigned maxVagueness = 2;
+    static constexpr unsigned minVagueness = 0;
+    static constexpr unsigned maxVagueness = 2;
 
     static Kind flipped(Kind kind)
     {
@@ -274,6 +272,11 @@ public:
     {
         RELEASE_ASSERT(left != m_right);
         m_left = left;
+    }
+    void setRight(NodeFlowProjection right)
+    {
+        RELEASE_ASSERT(right != m_left);
+        m_right = right;
     }
     bool addToOffset(int offset)
     {
@@ -1043,7 +1046,7 @@ public:
         //
         // We merge two lists by merging each relationship in one list with each relationship
         // in the other list. Merging two relationships will yield a relationship list; as with
-        // all such lists it is an intersction. Merging relationships over different variables
+        // all such lists it is an intersection. Merging relationships over different variables
         // always yields the empty list (i.e. TOP). This merge style is sound because if we
         // have:
         //
@@ -1085,20 +1088,19 @@ public:
         // TOP relationship (i.e. no relationships in the relationship list). The merge rule
         // when between the current relationshipsAtHead and the relationships being propagated
         // from a predecessor ensures monotonicity by converting disagreements into one of a
-        // small set of "general" relationships. There are 12 such relationshis, plus TOP. See
+        // small set of "general" relationships. There are 12 such relationships, plus TOP. See
         // the comment above Relationship::merge() for details.
         bool changed = true;
         while (changed) {
             ++m_iterations;
             if (m_iterations >= giveUpThreshold) {
                 // This case is not necessarily wrong but it can be a sign that this phase
-                // does not converge.
-                // If you hit this assertion for a legitimate case, update the giveUpThreshold
+                // does not converge. The value giveUpThreshold was chosen emperically based on
+                // current tests and real world JS.
+                // If you hit this case for a legitimate reason, update the giveUpThreshold
                 // to the smallest values that converges.
-                ASSERT_NOT_REACHED();
 
-                // In release, do not risk holding the thread for too long since this phase
-                // is really slow.
+                // Do not risk holding the thread for too long since this phase is really slow.
                 return false;
             }
 
@@ -1328,9 +1330,13 @@ public:
                         }
                     }
 
+                    if (DFGIntegerRangeOptimizationPhaseInternal::verbose)
+                        dataLogLn("CheckInBounds ", node, " has: ", nonNegative, " ", lessThanLength);
+
                     if (nonNegative && lessThanLength) {
                         executeNode(block->at(nodeIndex));
-                        node->remove(m_graph);
+                        // We just need to make sure we are a value-producing node.
+                        node->convertToIdentityOn(node->child1().node());
                         changed = true;
                     }
                     break;
@@ -1643,7 +1649,7 @@ private:
 
             if (timeToLive && otherRelationship.kind() == Relationship::Equal) {
                 if (DFGIntegerRangeOptimizationPhaseInternal::verbose)
-                    dataLog("      Considering: ", otherRelationship, "\n");
+                    dataLog("      Considering (lhs): ", otherRelationship, "\n");
 
                 // We have:
                 //     @a op @b + C
@@ -1664,6 +1670,31 @@ private:
                             toAdd.append(newRelationship);
                     }
                 }
+            }
+        }
+
+        if (timeToLive && relationship.kind() != Relationship::Equal) {
+            for (Relationship& possibleEquality : relationshipMap.get(relationship.right())) {
+                if (possibleEquality.kind() != Relationship::Equal
+                    || possibleEquality.offset() == std::numeric_limits<int>::min()
+                    || possibleEquality.right() == relationship.left())
+                    continue;
+                if (DFGIntegerRangeOptimizationPhaseInternal::verbose)
+                    dataLog("      Considering (rhs): ", possibleEquality, "\n");
+
+                // We have:
+                //     @a op @b + C
+                //     @b == @c + D
+                //
+                // This implies:
+                //     @a op @c + (C + D)
+                //
+                // Where: @a == relationship.left(), @b == relationship.right()
+
+                Relationship newRelationship = relationship;
+                newRelationship.setRight(possibleEquality.right());
+                if (newRelationship.addToOffset(possibleEquality.offset()))
+                    toAdd.append(newRelationship);
             }
         }
 

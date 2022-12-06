@@ -41,6 +41,7 @@
 namespace Nicosia {
 
 class BackingStoreTextureMapperImpl final : public BackingStore::Impl, public WebCore::TiledBackingStoreClient {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     static Factory createFactory();
 
@@ -85,7 +86,6 @@ public:
         LayerState& operator=(LayerState&&) = delete;
 
         std::unique_ptr<WebCore::TiledBackingStore> mainBackingStore;
-        std::unique_ptr<WebCore::TiledBackingStore> previousBackingStore;
 
         TileUpdate update;
         bool isFlushing { false };

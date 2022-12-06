@@ -66,7 +66,7 @@ public:
     bool isPointInStroke(const FloatPoint&);
 
     float getTotalLength() const;
-    void getPointAtLength(FloatPoint&, float distance) const;
+    FloatPoint getPointAtLength(float distance) const;
 
     bool hasPath() const { return m_path.get(); }
     Path& path() const
@@ -99,7 +99,6 @@ private:
     bool strokeContains(const FloatPoint&, bool requiresStroke = true);
 
     FloatRect repaintRectInLocalCoordinates() const final { return m_repaintBoundingBox; }
-    FloatRect repaintRectInLocalCoordinatesExcludingSVGShadow() const final { return m_repaintBoundingBoxExcludingShadow; }
     const AffineTransform& localToParentTransform() const final { return m_localTransform; }
     AffineTransform localTransform() const final { return m_localTransform; }
 
@@ -123,6 +122,8 @@ private:
 
     bool shouldGenerateMarkerPositions() const;
     FloatRect markerRect(float strokeWidth) const;
+
+    std::unique_ptr<Path> createPath() const;
     void processMarkerPositions();
 
     void fillShape(const RenderStyle&, GraphicsContext&);

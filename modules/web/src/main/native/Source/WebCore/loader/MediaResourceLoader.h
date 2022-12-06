@@ -50,18 +50,20 @@ public:
     WEBCORE_EXPORT virtual ~MediaResourceLoader();
 
     RefPtr<PlatformMediaResource> requestResource(ResourceRequest&&, LoadOptions) final;
+    void sendH2Ping(const URL&, CompletionHandler<void(Expected<Seconds, ResourceError>&&)>&&) final;
     void removeResource(MediaResource&);
 
-    Document* document() { return m_document; }
+    Document* document() { return m_document.get(); }
     const String& crossOriginMode() const { return m_crossOriginMode; }
 
+    WEBCORE_EXPORT static void recordResponsesForTesting();
     Vector<ResourceResponse> responsesForTesting() const { return m_responsesForTesting; }
     void addResponseForTesting(const ResourceResponse&);
 
 private:
     void contextDestroyed() override;
 
-    Document* m_document;
+    WeakPtr<Document> m_document;
     WeakPtr<HTMLMediaElement> m_mediaElement;
     String m_crossOriginMode;
     HashSet<MediaResource*> m_resources;
@@ -75,7 +77,6 @@ public:
 
     // PlatformMediaResource
     void stop() override;
-    void setDefersLoading(bool) override;
     bool didPassAccessControlCheck() const override { return m_didPassAccessControlCheck; }
 
     // CachedRawResourceClient
@@ -84,7 +85,7 @@ public:
     bool shouldCacheResponse(CachedResource&, const ResourceResponse&) override;
     void dataSent(CachedResource&, unsigned long long, unsigned long long) override;
     void dataReceived(CachedResource&, const char*, int) override;
-    void notifyFinished(CachedResource&) override;
+    void notifyFinished(CachedResource&, const NetworkLoadMetrics&) override;
 
 private:
     MediaResource(MediaResourceLoader&, CachedResourceHandle<CachedRawResource>);

@@ -26,7 +26,7 @@
 #include "StorageSyncManager.h"
 
 #include "StorageThread.h"
-#include <WebCore/FileSystem.h>
+#include <wtf/FileSystem.h>
 #include <wtf/MainThread.h>
 #include <wtf/text/CString.h>
 
@@ -38,7 +38,7 @@ Ref<StorageSyncManager> StorageSyncManager::create(const String& path)
 }
 
 StorageSyncManager::StorageSyncManager(const String& path)
-    : m_thread(std::make_unique<StorageThread>())
+    : m_thread(makeUnique<StorageThread>())
     , m_path(path.isolatedCopy())
 {
     ASSERT(isMainThread());

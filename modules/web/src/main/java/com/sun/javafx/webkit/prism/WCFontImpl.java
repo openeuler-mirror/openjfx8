@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,22 +25,14 @@
 
 package com.sun.javafx.webkit.prism;
 
-import com.sun.javafx.font.CharToGlyphMapper;
-import com.sun.javafx.font.FontFactory;
-import com.sun.javafx.font.FontResource;
-import com.sun.javafx.font.FontStrike;
-import com.sun.javafx.font.PGFont;
-import com.sun.javafx.geom.BaseBounds;
+import com.sun.javafx.font.*;
 import com.sun.javafx.geom.transform.BaseTransform;
 import com.sun.javafx.scene.text.GlyphList;
 import com.sun.javafx.scene.text.TextLayout;
-import com.sun.javafx.text.TextRun;
-import static com.sun.javafx.webkit.prism.TextUtilities.getLayoutWidth;
-import static com.sun.javafx.webkit.prism.TextUtilities.getLayoutBounds;
 import com.sun.prism.GraphicsPipeline;
 import com.sun.webkit.graphics.WCFont;
 import com.sun.webkit.graphics.WCTextRun;
-import com.sun.webkit.graphics.WCTextRunImpl;
+
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.logging.Level;
@@ -125,10 +117,24 @@ final class WCFontImpl extends WCFont {
         return getFontStrike().getMetrics().getXHeight();
     }
 
+    private static boolean needsTextLayout(final int glyphs[]) {
+        for (int g : glyphs) {
+            if (g == 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     @Override public int[] getGlyphCodes(char[] chars) {
         int[] glyphs = new int[chars.length];
         CharToGlyphMapper mapper = getFontStrike().getFontResource().getGlyphMapper();
         mapper.charsToGlyphs(chars.length, chars, glyphs);
+        if (needsTextLayout(glyphs)) {
+            // Call charsToGlyphs once again after doing layout if any of the glyph index is zero
+            TextUtilities.createLayout(new String(chars), getPlatformFont()).getRuns();
+            mapper.charsToGlyphs(chars.length, chars, glyphs);
+        }
         return glyphs;
     }
 

@@ -75,6 +75,7 @@ WEBCORE_EXPORT VisiblePosition nextParagraphPosition(const VisiblePosition &, in
 WEBCORE_EXPORT bool isStartOfParagraph(const VisiblePosition &, EditingBoundaryCrossingRule = CannotCrossEditingBoundary);
 WEBCORE_EXPORT bool isEndOfParagraph(const VisiblePosition &, EditingBoundaryCrossingRule = CannotCrossEditingBoundary);
 bool inSameParagraph(const VisiblePosition &, const VisiblePosition &, EditingBoundaryCrossingRule = CannotCrossEditingBoundary);
+bool isBlankParagraph(const VisiblePosition &);
 
 // blocks (true paragraphs; line break elements don't break blocks)
 VisiblePosition startOfBlock(const VisiblePosition &, EditingBoundaryCrossingRule = CannotCrossEditingBoundary);
@@ -100,13 +101,15 @@ WEBCORE_EXPORT bool isEndOfEditableOrNonEditableContent(const VisiblePosition&);
 WEBCORE_EXPORT bool atBoundaryOfGranularity(const VisiblePosition&, TextGranularity, SelectionDirection);
 WEBCORE_EXPORT bool withinTextUnitOfGranularity(const VisiblePosition&, TextGranularity, SelectionDirection);
 WEBCORE_EXPORT VisiblePosition positionOfNextBoundaryOfGranularity(const VisiblePosition&, TextGranularity, SelectionDirection);
-WEBCORE_EXPORT RefPtr<Range> enclosingTextUnitOfGranularity(const VisiblePosition&, TextGranularity, SelectionDirection);
-WEBCORE_EXPORT int distanceBetweenPositions(const VisiblePosition&, const VisiblePosition&);
-WEBCORE_EXPORT RefPtr<Range> wordRangeFromPosition(const VisiblePosition&);
+WEBCORE_EXPORT Optional<SimpleRange> enclosingTextUnitOfGranularity(const VisiblePosition&, TextGranularity, SelectionDirection);
+WEBCORE_EXPORT std::ptrdiff_t distanceBetweenPositions(const VisiblePosition&, const VisiblePosition&);
+WEBCORE_EXPORT Optional<SimpleRange> wordRangeFromPosition(const VisiblePosition&);
 WEBCORE_EXPORT VisiblePosition closestWordBoundaryForPosition(const VisiblePosition& position);
 WEBCORE_EXPORT void charactersAroundPosition(const VisiblePosition&, UChar32& oneAfter, UChar32& oneBefore, UChar32& twoBefore);
-WEBCORE_EXPORT RefPtr<Range> rangeExpandedAroundPositionByCharacters(const VisiblePosition&, int numberOfCharactersToExpand);
-WEBCORE_EXPORT RefPtr<Range> rangeExpandedByCharactersInDirectionAtWordBoundary(const VisiblePosition&, int numberOfCharactersToExpand, SelectionDirection);
+WEBCORE_EXPORT Optional<SimpleRange> rangeExpandedAroundPositionByCharacters(const VisiblePosition&, int numberOfCharactersToExpand);
+WEBCORE_EXPORT Optional<SimpleRange> rangeExpandedByCharactersInDirectionAtWordBoundary(const VisiblePosition&, int numberOfCharactersToExpand, SelectionDirection);
+enum class WithinWordBoundary : bool { No, Yes };
+WEBCORE_EXPORT std::pair<VisiblePosition, WithinWordBoundary> wordBoundaryForPositionWithoutCrossingLine(const VisiblePosition&);
 
 // helper function
 enum BoundarySearchContextAvailability { DontHaveMoreContext, MayHaveMoreContext };
@@ -115,8 +118,8 @@ unsigned startWordBoundary(StringView, unsigned, BoundarySearchContextAvailabili
 unsigned endWordBoundary(StringView, unsigned, BoundarySearchContextAvailability, bool&);
 unsigned startSentenceBoundary(StringView, unsigned, BoundarySearchContextAvailability, bool&);
 unsigned endSentenceBoundary(StringView, unsigned, BoundarySearchContextAvailability, bool&);
-unsigned suffixLengthForRange(const Range&, Vector<UChar, 1024>&);
-unsigned prefixLengthForRange(const Range&, Vector<UChar, 1024>&);
+unsigned suffixLengthForRange(const SimpleRange&, Vector<UChar, 1024>&);
+unsigned prefixLengthForRange(const SimpleRange&, Vector<UChar, 1024>&);
 unsigned backwardSearchForBoundaryWithTextIterator(SimplifiedBackwardsTextIterator&, Vector<UChar, 1024>&, unsigned, BoundarySearchFunction);
 unsigned forwardSearchForBoundaryWithTextIterator(TextIterator&, Vector<UChar, 1024>&, unsigned, BoundarySearchFunction);
 Node* findStartOfParagraph(Node*, Node*, Node*, int&, Position::AnchorType&, EditingBoundaryCrossingRule);

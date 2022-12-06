@@ -299,8 +299,7 @@ public class Stage extends Window {
     }
 
     /**
-     * sets this stage to be the primary stage.
-     * When run as an applet, this stage will appear in the broswer
+     * Sets this stage to be the primary stage.
      * @treatAsPrivate implementation detail
      * @deprecated This is an internal API that is not intended for use and will be removed in the next version
      */
@@ -311,7 +310,6 @@ public class Stage extends Window {
 
     /**
      * Returns whether this stage is the primary stage.
-     * When run as an applet, the primary stage will appear in the broswer
      *
      * @return true if this stage is the primary stage for the application.
      */

@@ -119,7 +119,7 @@ final class GtkApplication extends Application implements
 
         final int gtkVersion = forcedGtkVersion == 0 ?
             AccessController.doPrivileged((PrivilegedAction<Integer>) () -> {
-                String v = System.getProperty("jdk.gtk.version","2");
+                String v = System.getProperty("jdk.gtk.version","3");
                 int ret = 0;
                 if ("3".equals(v) || v.startsWith("3.")) {
                     ret = 3;
@@ -445,5 +445,8 @@ final class GtkApplication extends Application implements
 
     @Override
     protected native int _getKeyCodeForChar(char c);
+
+    @Override
+    protected native int _isKeyLocked(int keyCode);
 
 }

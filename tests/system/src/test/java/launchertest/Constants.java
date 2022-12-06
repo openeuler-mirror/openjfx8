@@ -61,4 +61,6 @@ public class Constants {
 
     static final int ERROR_CONSTRUCTOR_WRONG_CCL = 24;
     static final int ERROR_START_WRONG_CCL = 25;
+
+    static final int ERROR_TIMEOUT = 29;
 }

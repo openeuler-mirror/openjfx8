@@ -125,7 +125,7 @@ public:
     const BorderValue& borderAdjoiningCellAfter(const RenderTableCell&);
 
     using RenderBlockFlow::nodeAtPoint;
-#ifndef NDEBUG
+#if ASSERT_ENABLED
     bool isFirstOrLastCellInRow() const { return !table()->cellAfter(this) || !table()->cellBefore(this); }
 #endif
 
@@ -134,11 +134,10 @@ public:
     void invalidateHasEmptyCollapsedBorders();
     void setHasEmptyCollapsedBorder(CollapsedBorderSide, bool empty) const;
 
-protected:
+private:
     void styleDidChange(StyleDifference, const RenderStyle* oldStyle) override;
     void computePreferredLogicalWidths() override;
 
-private:
     static RenderPtr<RenderTableCell> createTableCellWithStyle(Document&, const RenderStyle&);
 
     const char* renderName() const override { return (isAnonymous() || isPseudoElement()) ? "RenderTableCell (anonymous)" : "RenderTableCell"; }
@@ -155,7 +154,7 @@ private:
     bool boxShadowShouldBeAppliedToBackground(const LayoutPoint& paintOffset, BackgroundBleedAvoidance, InlineFlowBox*) const override;
 
     LayoutSize offsetFromContainer(RenderElement&, const LayoutPoint&, bool* offsetDependsOnPoint = 0) const override;
-    LayoutRect computeRectForRepaint(const LayoutRect&, const RenderLayerModelObject* repaintContainer, RepaintContext = { }) const override;
+    Optional<LayoutRect> computeVisibleRectInContainer(const LayoutRect&, const RenderLayerModelObject* container, VisibleRectContext) const override;
 
     LayoutUnit borderHalfLeft(bool outer) const;
     LayoutUnit borderHalfRight(bool outer) const;

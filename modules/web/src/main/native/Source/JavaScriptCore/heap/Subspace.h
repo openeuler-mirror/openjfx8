@@ -50,7 +50,7 @@ public:
     const char* name() const { return m_name.data(); }
     MarkedSpace& space() const { return m_space; }
 
-    const CellAttributes& attributes() const { return m_attributes; }
+    const CellAttributes& attributes() const;
     HeapCellType* heapCellType() const { return m_heapCellType; }
     AlignedMemoryAllocator* alignedMemoryAllocator() const { return m_alignedMemoryAllocator; }
 
@@ -70,7 +70,7 @@ public:
     template<typename Func>
     void forEachDirectory(const Func&);
 
-    RefPtr<SharedTask<BlockDirectory*()>> parallelDirectorySource();
+    Ref<SharedTask<BlockDirectory*()>> parallelDirectorySource();
 
     template<typename Func>
     void forEachMarkedBlock(const Func&);
@@ -78,44 +78,49 @@ public:
     template<typename Func>
     void forEachNotEmptyMarkedBlock(const Func&);
 
-    JS_EXPORT_PRIVATE RefPtr<SharedTask<MarkedBlock::Handle*()>> parallelNotEmptyMarkedBlockSource();
+    JS_EXPORT_PRIVATE Ref<SharedTask<MarkedBlock::Handle*()>> parallelNotEmptyMarkedBlockSource();
 
     template<typename Func>
-    void forEachLargeAllocation(const Func&);
+    void forEachPreciseAllocation(const Func&);
 
     template<typename Func>
     void forEachMarkedCell(const Func&);
 
     template<typename Func>
-    RefPtr<SharedTask<void(SlotVisitor&)>> forEachMarkedCellInParallel(const Func&);
+    Ref<SharedTask<void(SlotVisitor&)>> forEachMarkedCellInParallel(const Func&);
 
     template<typename Func>
     void forEachLiveCell(const Func&);
 
-    void sweep();
+    void sweepBlocks();
 
     Subspace* nextSubspaceInAlignedMemoryAllocator() const { return m_nextSubspaceInAlignedMemoryAllocator; }
     void setNextSubspaceInAlignedMemoryAllocator(Subspace* subspace) { m_nextSubspaceInAlignedMemoryAllocator = subspace; }
 
-    virtual void didResizeBits(size_t newSize);
-    virtual void didRemoveBlock(size_t blockIndex);
+    virtual void didResizeBits(unsigned newSize);
+    virtual void didRemoveBlock(unsigned blockIndex);
     virtual void didBeginSweepingToFreeList(MarkedBlock::Handle*);
+
+    bool isIsoSubspace() const { return m_isIsoSubspace; }
 
 protected:
     void initialize(HeapCellType*, AlignedMemoryAllocator*);
 
     MarkedSpace& m_space;
 
-    CString m_name;
-    CellAttributes m_attributes;
-
     HeapCellType* m_heapCellType { nullptr };
     AlignedMemoryAllocator* m_alignedMemoryAllocator { nullptr };
 
     BlockDirectory* m_firstDirectory { nullptr };
     BlockDirectory* m_directoryForEmptyAllocation { nullptr }; // Uses the MarkedSpace linked list of blocks.
-    SentinelLinkedList<LargeAllocation, BasicRawSentinelNode<LargeAllocation>> m_largeAllocations;
+    SentinelLinkedList<PreciseAllocation, PackedRawSentinelNode<PreciseAllocation>> m_preciseAllocations;
     Subspace* m_nextSubspaceInAlignedMemoryAllocator { nullptr };
+
+    CString m_name;
+
+    bool m_isIsoSubspace { false };
+protected:
+    uint8_t m_remainingLowerTierCellCount { 0 };
 };
 
 } // namespace JSC

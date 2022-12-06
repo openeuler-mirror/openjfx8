@@ -40,7 +40,7 @@ namespace ContentExtensions {
 
 class PatternParser {
 public:
-    PatternParser(bool patternIsCaseSensitive)
+    explicit PatternParser(bool patternIsCaseSensitive)
         : m_patternIsCaseSensitive(patternIsCaseSensitive)
         , m_parseStatus(URLFilterParser::Ok)
     {
@@ -129,9 +129,14 @@ public:
         fail(URLFilterParser::BackReference);
     }
 
-    void atomNamedBackReference(String)
+    void atomNamedBackReference(const String&)
     {
         fail(URLFilterParser::BackReference);
+    }
+
+    void atomNamedForwardReference(const String&)
+    {
+        fail(URLFilterParser::ForwardReference);
     }
 
     void assertionBOL()
@@ -208,7 +213,7 @@ public:
         fail(URLFilterParser::AtomCharacter);
     }
 
-    void atomParenthesesSubpatternBegin(bool = true, std::optional<String> = std::nullopt)
+    void atomParenthesesSubpatternBegin(bool = true, Optional<String> = WTF::nullopt)
     {
         if (hasError())
             return;
@@ -237,6 +242,11 @@ public:
     void disjunction()
     {
         fail(URLFilterParser::Disjunction);
+    }
+
+    NO_RETURN_DUE_TO_CRASH void resetForReparsing()
+    {
+        RELEASE_ASSERT_NOT_REACHED();
     }
 
 private:
@@ -348,7 +358,7 @@ URLFilterParser::ParseStatus URLFilterParser::addPattern(const String& pattern, 
 
     ParseStatus status = Ok;
     PatternParser patternParser(patternIsCaseSensitive);
-    if (!JSC::Yarr::hasError(JSC::Yarr::parse(patternParser, pattern, false, 0)))
+    if (!JSC::Yarr::hasError(JSC::Yarr::parse(patternParser, pattern, false, 0, false)))
         patternParser.finalize(patternId, m_combinedURLFilters);
     else
         status = YarrError;
@@ -372,6 +382,8 @@ String URLFilterParser::statusString(ParseStatus status)
         return "Character class is not supported.";
     case BackReference:
         return "Patterns cannot contain backreferences.";
+    case ForwardReference:
+        return "Patterns cannot contain forward references.";
     case MisplacedStartOfLine:
         return "Start of line assertion can only appear as the first term in a filter.";
     case WordBoundary:
@@ -391,6 +403,8 @@ String URLFilterParser::statusString(ParseStatus status)
     case InvalidQuantifier:
         return "Arbitrary atom repetitions are not supported.";
     }
+
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 } // namespace ContentExtensions

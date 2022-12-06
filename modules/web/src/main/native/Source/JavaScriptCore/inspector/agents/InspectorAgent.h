@@ -47,16 +47,20 @@ class JS_EXPORT_PRIVATE InspectorAgent final : public InspectorAgentBase, public
     WTF_MAKE_FAST_ALLOCATED;
 public:
     InspectorAgent(AgentContext&);
-    virtual ~InspectorAgent();
+    ~InspectorAgent() final;
 
-    void didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*) override;
-    void willDestroyFrontendAndBackend(DisconnectReason) override;
+    // InspectorAgentBase
+    void didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*) final;
+    void willDestroyFrontendAndBackend(DisconnectReason) final;
 
-    void enable(ErrorString&) override;
-    void disable(ErrorString&) override;
-    void initialized(ErrorString&) override;
+    // InspectorBackendDispatcherHandler
+    void enable(ErrorString&) final;
+    void disable(ErrorString&) final;
+    void initialized(ErrorString&) final;
 
+    // CommandLineAPI
     void inspect(RefPtr<Protocol::Runtime::RemoteObject>&& objectToInspect, RefPtr<JSON::Object>&& hints);
+
     void evaluateForTestInFrontend(const String& script);
 
 #if ENABLE(INSPECTOR_ALTERNATE_DISPATCHERS)
@@ -71,9 +75,6 @@ private:
 
     Vector<String> m_pendingEvaluateTestCommands;
     std::pair<RefPtr<Protocol::Runtime::RemoteObject>, RefPtr<JSON::Object>> m_pendingInspectData;
-#if ENABLE(INSPECTOR_ALTERNATE_DISPATCHERS)
-    RefPtr<JSON::ArrayOf<String>> m_pendingExtraDomainsData;
-#endif
     bool m_enabled { false };
 };
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,8 +23,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef WTF_LockAlgorithm_h
-#define WTF_LockAlgorithm_h
+#pragma once
 
 #include <wtf/Atomics.h>
 #include <wtf/Compiler.h>
@@ -45,8 +44,8 @@ struct EmptyLockHooks {
 
 template<typename LockType, LockType isHeldBit, LockType hasParkedBit, typename Hooks = EmptyLockHooks<LockType>>
 class LockAlgorithm {
-    static const bool verbose = false;
-    static const LockType mask = isHeldBit | hasParkedBit;
+    static constexpr bool verbose = false;
+    static constexpr LockType mask = isHeldBit | hasParkedBit;
 
 public:
     static bool lockFastAssumingZero(Atomic<LockType>& lock)
@@ -155,6 +154,3 @@ private:
 } // namespace WTF
 
 using WTF::LockAlgorithm;
-
-#endif // WTF_LockAlgorithm_h
-

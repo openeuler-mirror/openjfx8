@@ -35,6 +35,7 @@ class Node;
 class PlatformKeyboardEvent;
 
 class KeyboardEvent final : public UIEventWithKeyState {
+    WTF_MAKE_ISO_ALLOCATED(KeyboardEvent);
 public:
     enum KeyLocationCode {
         DOM_KEY_LOCATION_STANDARD = 0x00,
@@ -55,27 +56,22 @@ public:
 
         // Legacy.
         String keyIdentifier;
-        std::optional<unsigned> keyLocation;
+        Optional<unsigned> keyLocation;
         unsigned charCode;
         unsigned keyCode;
         unsigned which;
     };
 
-    static Ref<KeyboardEvent> create(const AtomicString& type, const Init&, IsTrusted = IsTrusted::No);
+    static Ref<KeyboardEvent> create(const AtomString& type, const Init&);
 
     virtual ~KeyboardEvent();
 
-    WEBCORE_EXPORT void initKeyboardEvent(const AtomicString& type, bool canBubble, bool cancelable, RefPtr<WindowProxy>&&,
+    WEBCORE_EXPORT void initKeyboardEvent(const AtomString& type, bool canBubble, bool cancelable, RefPtr<WindowProxy>&&,
         const String& keyIdentifier, unsigned location,
         bool ctrlKey, bool altKey, bool shiftKey, bool metaKey, bool altGraphKey = false);
 
-#if ENABLE(KEYBOARD_KEY_ATTRIBUTE)
     const String& key() const { return m_key; }
-#endif
-#if ENABLE(KEYBOARD_CODE_ATTRIBUTE)
     const String& code() const { return m_code; }
-#endif
-
     const String& keyIdentifier() const { return m_keyIdentifier; }
     unsigned location() const { return m_location; }
     bool repeat() const { return m_repeat; }
@@ -101,22 +97,18 @@ public:
 private:
     KeyboardEvent();
     KeyboardEvent(const PlatformKeyboardEvent&, RefPtr<WindowProxy>&&);
-    KeyboardEvent(const AtomicString&, const Init&, IsTrusted);
+    KeyboardEvent(const AtomString&, const Init&);
 
     std::unique_ptr<PlatformKeyboardEvent> m_underlyingPlatformEvent;
-#if ENABLE(KEYBOARD_KEY_ATTRIBUTE)
     String m_key;
-#endif
-#if ENABLE(KEYBOARD_CODE_ATTRIBUTE)
     String m_code;
-#endif
     String m_keyIdentifier;
     unsigned m_location { DOM_KEY_LOCATION_STANDARD };
     bool m_repeat { false };
     bool m_isComposing { false };
-    std::optional<unsigned> m_charCode;
-    std::optional<unsigned> m_keyCode;
-    std::optional<unsigned> m_which;
+    Optional<unsigned> m_charCode;
+    Optional<unsigned> m_keyCode;
+    Optional<unsigned> m_which;
 
 #if PLATFORM(COCOA)
     // Commands that were sent by AppKit when interpreting the event. Doesn't include input method commands.

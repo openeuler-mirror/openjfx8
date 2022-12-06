@@ -26,15 +26,15 @@
 #include "config.h"
 #include "EvalExecutable.h"
 
-#include "EvalCodeBlock.h"
-#include "JSCInlines.h"
+#include "JSCJSValueInlines.h"
 
 namespace JSC {
 
-const ClassInfo EvalExecutable::s_info = { "EvalExecutable", &ScriptExecutable::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(EvalExecutable) };
+const ClassInfo EvalExecutable::s_info = { "EvalExecutable", &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(EvalExecutable) };
 
-EvalExecutable::EvalExecutable(ExecState* exec, const SourceCode& source, bool inStrictContext, DerivedContextType derivedContextType, bool isArrowFunctionContext, EvalContextType evalContextType)
-    : ScriptExecutable(exec->vm().evalExecutableStructure.get(), exec->vm(), source, inStrictContext, derivedContextType, isArrowFunctionContext, evalContextType, NoIntrinsic)
+EvalExecutable::EvalExecutable(JSGlobalObject* globalObject, const SourceCode& source, bool inStrictContext, DerivedContextType derivedContextType, bool isArrowFunctionContext, bool isInsideOrdinaryFunction, EvalContextType evalContextType, NeedsClassFieldInitializer needsClassFieldInitializer)
+    : Base(globalObject->vm().evalExecutableStructure.get(), globalObject->vm(), source, inStrictContext, derivedContextType, isArrowFunctionContext, isInsideOrdinaryFunction, evalContextType, NoIntrinsic)
+    , m_needsClassFieldInitializer(static_cast<unsigned>(needsClassFieldInitializer))
 {
     ASSERT(source.provider()->sourceType() == SourceProviderSourceType::Program);
 }
@@ -44,6 +44,11 @@ void EvalExecutable::destroy(JSCell* cell)
     static_cast<EvalExecutable*>(cell)->EvalExecutable::~EvalExecutable();
 }
 
+auto EvalExecutable::ensureTemplateObjectMap(VM&) -> TemplateObjectMap&
+{
+    return ensureTemplateObjectMapImpl(m_templateObjectMap);
+}
+
 void EvalExecutable::visitChildren(JSCell* cell, SlotVisitor& visitor)
 {
     EvalExecutable* thisObject = jsCast<EvalExecutable*>(cell);
@@ -51,6 +56,11 @@ void EvalExecutable::visitChildren(JSCell* cell, SlotVisitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_unlinkedEvalCodeBlock);
     visitor.append(thisObject->m_evalCodeBlock);
+    if (TemplateObjectMap* map = thisObject->m_templateObjectMap.get()) {
+        auto locker = holdLock(thisObject->cellLock());
+        for (auto& entry : *map)
+            visitor.append(entry.value);
+    }
 }
 
 } // namespace JSC

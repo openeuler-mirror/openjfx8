@@ -25,11 +25,11 @@
 
 #pragma once
 
-#include <wtf/EnumTraits.h>
+#include <wtf/Forward.h>
 
 namespace JSC {
 
-enum class MessageSource {
+enum class MessageSource : uint8_t {
     XML,
     JS,
     Network,
@@ -40,12 +40,15 @@ enum class MessageSource {
     CSS,
     Security,
     ContentBlocker,
-    Other,
     Media,
+    MediaSource,
     WebRTC,
+    ITPDebug,
+    AdClickAttribution,
+    Other,
 };
 
-enum class MessageType {
+enum class MessageType : uint8_t {
     Log,
     Dir,
     DirXML,
@@ -59,14 +62,15 @@ enum class MessageType {
     Timing,
     Profile,
     ProfileEnd,
+    Image,
 };
 
-enum class MessageLevel {
-    Log = 1,
-    Warning = 2,
-    Error = 3,
-    Debug = 4,
-    Info = 5,
+enum class MessageLevel : uint8_t {
+    Log,
+    Warning,
+    Error,
+    Debug,
+    Info,
 };
 
 } // namespace JSC
@@ -86,9 +90,12 @@ template<> struct EnumTraits<JSC::MessageSource> {
         JSC::MessageSource::CSS,
         JSC::MessageSource::Security,
         JSC::MessageSource::ContentBlocker,
-        JSC::MessageSource::Other,
         JSC::MessageSource::Media,
-        JSC::MessageSource::WebRTC
+        JSC::MessageSource::MediaSource,
+        JSC::MessageSource::WebRTC,
+        JSC::MessageSource::ITPDebug,
+        JSC::MessageSource::AdClickAttribution,
+        JSC::MessageSource::Other
     >;
 };
 

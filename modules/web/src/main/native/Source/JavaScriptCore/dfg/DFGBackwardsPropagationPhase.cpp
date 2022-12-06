@@ -28,10 +28,9 @@
 
 #if ENABLE(DFG_JIT)
 
-#include "DFGBasicBlockInlines.h"
 #include "DFGGraph.h"
 #include "DFGPhase.h"
-#include "JSCInlines.h"
+#include "JSCJSValueInlines.h"
 
 namespace JSC { namespace DFG {
 
@@ -110,7 +109,8 @@ private:
             return isWithinPowerOfTwoForConstant<power>(node);
         }
 
-        case BitAnd: {
+        case ValueBitAnd:
+        case ArithBitAnd: {
             if (power > 31)
                 return true;
 
@@ -118,13 +118,17 @@ private:
                 || isWithinPowerOfTwoNonRecursive<power>(node->child2().node());
         }
 
-        case BitOr:
-        case BitXor:
-        case BitLShift: {
+        case ArithBitOr:
+        case ArithBitXor:
+        case ValueBitOr:
+        case ValueBitXor:
+        case ValueBitLShift:
+        case ArithBitLShift: {
             return power > 31;
         }
 
-        case BitRShift:
+        case ArithBitRShift:
+        case ValueBitRShift:
         case BitURShift: {
             if (power > 31)
                 return true;
@@ -207,11 +211,25 @@ private:
         case CheckVarargs:
             break;
 
-        case BitAnd:
-        case BitOr:
-        case BitXor:
-        case BitRShift:
-        case BitLShift:
+        case ValueBitNot:
+        case ArithBitNot: {
+            flags |= NodeBytecodeUsesAsInt;
+            flags &= ~(NodeBytecodeUsesAsNumber | NodeBytecodeNeedsNegZero | NodeBytecodeUsesAsOther);
+            flags &= ~NodeBytecodeUsesAsArrayIndex;
+            node->child1()->mergeFlags(flags);
+            break;
+        }
+
+        case ArithBitAnd:
+        case ArithBitOr:
+        case ArithBitXor:
+        case ValueBitAnd:
+        case ValueBitOr:
+        case ValueBitXor:
+        case ValueBitLShift:
+        case ArithBitLShift:
+        case ArithBitRShift:
+        case ValueBitRShift:
         case BitURShift:
         case ArithIMul: {
             flags |= NodeBytecodeUsesAsInt;
@@ -222,7 +240,9 @@ private:
             break;
         }
 
-        case StringCharCodeAt: {
+        case StringCharAt:
+        case StringCharCodeAt:
+        case StringCodePointAt: {
             node->child1()->mergeFlags(NodeBytecodeUsesAsValue);
             node->child2()->mergeFlags(NodeBytecodeUsesAsValue | NodeBytecodeUsesAsInt | NodeBytecodeUsesAsArrayIndex);
             break;
@@ -261,7 +281,7 @@ private:
         case ValueAdd: {
             if (isNotNegZero(node->child1().node()) || isNotNegZero(node->child2().node()))
                 flags &= ~NodeBytecodeNeedsNegZero;
-            if (node->child1()->hasNumberResult() || node->child2()->hasNumberResult())
+            if (node->child1()->hasNumericResult() || node->child2()->hasNumericResult() || node->child1()->hasNumberResult() || node->child2()->hasNumberResult())
                 flags &= ~NodeBytecodeUsesAsOther;
             if (!isWithinPowerOfTwo<32>(node->child1()) && !isWithinPowerOfTwo<32>(node->child2()))
                 flags |= NodeBytecodeUsesAsNumber;
@@ -315,6 +335,20 @@ private:
             break;
         }
 
+        case Inc:
+        case Dec: {
+            flags &= ~NodeBytecodeNeedsNegZero;
+            flags &= ~NodeBytecodeUsesAsOther;
+            if (!isWithinPowerOfTwo<32>(node->child1()))
+                flags |= NodeBytecodeUsesAsNumber;
+            if (!m_allowNestedOverflowingAdditions)
+                flags |= NodeBytecodeUsesAsNumber;
+
+            node->child1()->mergeFlags(flags);
+            break;
+        }
+
+        case ValueMul:
         case ArithMul: {
             // As soon as a multiply happens, we can easily end up in the part
             // of the double domain where the point at which you do truncation
@@ -337,6 +371,7 @@ private:
             break;
         }
 
+        case ValueDiv:
         case ArithDiv: {
             flags |= NodeBytecodeUsesAsNumber | NodeBytecodeNeedsNegZero;
             flags &= ~NodeBytecodeUsesAsOther;
@@ -346,6 +381,7 @@ private:
             break;
         }
 
+        case ValueMod:
         case ArithMod: {
             flags |= NodeBytecodeUsesAsNumber;
             flags &= ~NodeBytecodeUsesAsOther;
@@ -370,12 +406,6 @@ private:
             break;
         }
 
-        case StringCharAt: {
-            node->child1()->mergeFlags(NodeBytecodeUsesAsValue);
-            node->child2()->mergeFlags(NodeBytecodeUsesAsValue | NodeBytecodeUsesAsInt | NodeBytecodeUsesAsArrayIndex);
-            break;
-        }
-
         case ToString:
         case CallStringConstructor: {
             node->child1()->mergeFlags(NodeBytecodeUsesAsNumber | NodeBytecodeUsesAsOther);
@@ -383,7 +413,9 @@ private:
         }
 
         case ToPrimitive:
-        case ToNumber: {
+        case ToNumber:
+        case ToNumeric:
+        case CallNumberConstructor: {
             node->child1()->mergeFlags(flags);
             break;
         }

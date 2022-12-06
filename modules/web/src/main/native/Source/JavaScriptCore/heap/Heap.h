@@ -1,7 +1,7 @@
 /*
  *  Copyright (C) 1999-2000 Harri Porten (porten@kde.org)
  *  Copyright (C) 2001 Peter Kelly (pmk@post.com)
- *  Copyright (C) 2003-2017 Apple Inc. All rights reserved.
+ *  Copyright (C) 2003-2020 Apple Inc. All rights reserved.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Lesser General Public
@@ -25,9 +25,11 @@
 #include "CellState.h"
 #include "CollectionScope.h"
 #include "CollectorPhase.h"
+#include "DFGDoesGCCheck.h"
 #include "DeleteAllCodeEffort.h"
 #include "GCConductor.h"
 #include "GCIncomingRefCountedSet.h"
+#include "GCMemoryOperations.h"
 #include "GCRequest.h"
 #include "HandleSet.h"
 #include "HeapFinalizerCallback.h"
@@ -44,6 +46,7 @@
 #include <wtf/Deque.h>
 #include <wtf/HashCountedSet.h>
 #include <wtf/HashSet.h>
+#include <wtf/Markable.h>
 #include <wtf/ParallelHelperPool.h>
 #include <wtf/Threading.h>
 
@@ -71,6 +74,7 @@ class LLIntOffsetsExtractor;
 class MachineThreads;
 class MarkStackArray;
 class MarkStackMergingConstraint;
+class MarkedJSValueRefArray;
 class BlockDirectory;
 class MarkedArgumentBuffer;
 class MarkingConstraint;
@@ -85,7 +89,7 @@ class VM;
 class WeakGCMapBase;
 struct CurrentThreadState;
 
-#if USE(GLIB)
+#ifdef JSC_GLIB_API_ENABLED
 class JSCGLibWrapperObject;
 #endif
 
@@ -93,6 +97,14 @@ namespace DFG {
 class SpeculativeJIT;
 class Worklist;
 }
+
+#if ENABLE(DFG_JIT) && ASSERT_ENABLED
+#define ENABLE_DFG_DOES_GC_VALIDATION 1
+#else
+#define ENABLE_DFG_DOES_GC_VALIDATION 0
+#endif
+
+constexpr bool validateDFGDoesGC = ENABLE_DFG_DOES_GC_VALIDATION;
 
 typedef HashCountedSet<JSCell*> ProtectCountSet;
 typedef HashCountedSet<const char*> TypeCountSet;
@@ -113,9 +125,9 @@ public:
     // deadline when calling Heap::isPagedOut. Decreasing it will cause us to detect
     // overstepping our deadline more quickly, while increasing it will cause
     // our scan to run faster.
-    static const unsigned s_timeCheckResolution = 16;
+    static constexpr unsigned s_timeCheckResolution = 16;
 
-    static bool isMarked(const void*);
+    bool isMarked(const void*);
     static bool testAndSetMarked(HeapVersion, const void*);
 
     static size_t cellSize(const void*);
@@ -131,12 +143,12 @@ public:
     // Take this if you know that from->cellState() < barrierThreshold.
     JS_EXPORT_PRIVATE void writeBarrierSlowPath(const JSCell* from);
 
-    Heap(VM*, HeapType);
+    Heap(VM&, HeapType);
     ~Heap();
     void lastChanceToFinalize();
     void releaseDelayedReleasedObjects();
 
-    VM* vm() const;
+    VM& vm() const;
 
     MarkedSpace& objectSpace() { return m_objectSpace; }
     MachineThreads& machineThreads() { return *m_machineThreads; }
@@ -153,7 +165,7 @@ public:
     void removeObserver(HeapObserver* observer) { m_observers.removeFirst(observer); }
 
     MutatorState mutatorState() const { return m_mutatorState; }
-    std::optional<CollectionScope> collectionScope() const { return m_collectionScope; }
+    Optional<CollectionScope> collectionScope() const { return m_collectionScope; }
     bool hasHeapAccess() const;
     bool worldIsStopped() const;
     bool worldIsRunning() const { return !worldIsStopped(); }
@@ -162,23 +174,25 @@ public:
     // helping heap.
     JS_EXPORT_PRIVATE bool isCurrentThreadBusy();
 
-    typedef void (*Finalizer)(JSCell*);
-    JS_EXPORT_PRIVATE void addFinalizer(JSCell*, Finalizer);
+    typedef void (*CFinalizer)(JSCell*);
+    JS_EXPORT_PRIVATE void addFinalizer(JSCell*, CFinalizer);
+    using LambdaFinalizer = WTF::Function<void(JSCell*)>;
+    JS_EXPORT_PRIVATE void addFinalizer(JSCell*, LambdaFinalizer);
 
     void notifyIsSafeToCollect();
     bool isSafeToCollect() const { return m_isSafeToCollect; }
 
     bool isShuttingDown() const { return m_isShuttingDown; }
 
-    JS_EXPORT_PRIVATE bool isHeapSnapshotting() const;
+    JS_EXPORT_PRIVATE bool isAnalyzingHeap() const;
 
     JS_EXPORT_PRIVATE void sweepSynchronously();
 
     bool shouldCollectHeuristic();
 
     // Queue up a collection. Returns immediately. This will not queue a collection if a collection
-    // of equal or greater strength exists. Full collections are stronger than std::nullopt collections
-    // and std::nullopt collections are stronger than Eden collections. std::nullopt means that the GC can
+    // of equal or greater strength exists. Full collections are stronger than WTF::nullopt collections
+    // and WTF::nullopt collections are stronger than Eden collections. WTF::nullopt means that the GC can
     // choose Eden or Full. This implies that if you request a GC while that GC is ongoing, nothing
     // will happen.
     JS_EXPORT_PRIVATE void collectAsync(GCRequest = GCRequest());
@@ -233,6 +247,7 @@ public:
     JS_EXPORT_PRIVATE std::unique_ptr<TypeCountSet> objectTypeCounts();
 
     HashSet<MarkedArgumentBuffer*>& markListSet();
+    void addMarkedJSValueRefArray(MarkedJSValueRefArray*);
 
     template<typename Functor> void forEachProtectedCell(const Functor&);
     template<typename Functor> void forEachCodeBlock(const Functor&);
@@ -271,7 +286,7 @@ public:
 #if USE(FOUNDATION)
     template<typename T> void releaseSoon(RetainPtr<T>&&);
 #endif
-#if USE(GLIB)
+#ifdef JSC_GLIB_API_ENABLED
     void releaseSoon(std::unique_ptr<JSCGLibWrapperObject>&&);
 #endif
 
@@ -292,6 +307,18 @@ public:
 
     unsigned barrierThreshold() const { return m_barrierThreshold; }
     const unsigned* addressOfBarrierThreshold() const { return &m_barrierThreshold; }
+
+#if ENABLE(DFG_DOES_GC_VALIDATION)
+    DoesGCCheck* addressOfDoesGC() { return &m_doesGC; }
+    void setDoesGCExpectation(bool expectDoesGC, unsigned nodeIndex, unsigned nodeOp) { m_doesGC.set(expectDoesGC, nodeIndex, nodeOp); }
+    void setDoesGCExpectation(bool expectDoesGC, DoesGCCheck::Special special) { m_doesGC.set(expectDoesGC, special); }
+    void verifyCanGC() { m_doesGC.verifyCanGC(vm()); }
+#else
+    DoesGCCheck* addressOfDoesGC() { UNREACHABLE_FOR_PLATFORM(); return nullptr; }
+    void setDoesGCExpectation(bool, unsigned, unsigned) { }
+    void setDoesGCExpectation(bool, DoesGCCheck::Special) { }
+    void verifyCanGC() { }
+#endif
 
     // If true, the GC believes that the mutator is currently messing with the heap. We call this
     // "having heap access". The GC may block if the mutator is in this state. If false, the GC may
@@ -404,17 +431,20 @@ private:
     friend class StochasticSpaceTimeMutatorScheduler;
     friend class SweepingScope;
     friend class IncrementalSweeper;
-    friend class HeapStatistics;
     friend class VM;
     friend class WeakSet;
 
-    class Thread;
-    friend class Thread;
+    class HeapThread;
+    friend class HeapThread;
 
-    static const size_t minExtraMemory = 256;
+    static constexpr size_t minExtraMemory = 256;
 
-    class FinalizerOwner : public WeakHandleOwner {
-        void finalize(Handle<Unknown>, void* context) override;
+    class CFinalizerOwner final : public WeakHandleOwner {
+        void finalize(Handle<Unknown>, void* context) final;
+    };
+
+    class LambdaFinalizerOwner final : public WeakHandleOwner {
+        void finalize(Handle<Unknown>, void* context) final;
     };
 
     JS_EXPORT_PRIVATE bool isValidAllocation(size_t);
@@ -513,7 +543,7 @@ private:
     void updateAllocationLimits();
     void didFinishCollection();
     void resumeCompilerThreads();
-    void gatherExtraHeapSnapshotData(HeapProfiler&);
+    void gatherExtraHeapData(HeapProfiler&);
     void removeDeadHeapSnapshotNodes(HeapProfiler&);
     void finalize();
     void sweepInFinalize();
@@ -555,51 +585,56 @@ private:
 
     void setBonusVisitorTask(RefPtr<SharedTask<void(SlotVisitor&)>>);
 
+    void dumpHeapStatisticsAtVMDestruction();
+
     static bool useGenerationalGC();
     static bool shouldSweepSynchronously();
 
     const HeapType m_heapType;
+    MutatorState m_mutatorState { MutatorState::Running };
     const size_t m_ramSize;
     const size_t m_minBytesPerCycle;
-    size_t m_sizeAfterLastCollect;
-    size_t m_sizeAfterLastFullCollect;
-    size_t m_sizeBeforeLastFullCollect;
-    size_t m_sizeAfterLastEdenCollect;
-    size_t m_sizeBeforeLastEdenCollect;
+    size_t m_sizeAfterLastCollect { 0 };
+    size_t m_sizeAfterLastFullCollect { 0 };
+    size_t m_sizeBeforeLastFullCollect { 0 };
+    size_t m_sizeAfterLastEdenCollect { 0 };
+    size_t m_sizeBeforeLastEdenCollect { 0 };
 
-    size_t m_bytesAllocatedThisCycle;
-    size_t m_bytesAbandonedSinceLastFullCollect;
+    size_t m_bytesAllocatedThisCycle { 0 };
+    size_t m_bytesAbandonedSinceLastFullCollect { 0 };
     size_t m_maxEdenSize;
     size_t m_maxEdenSizeWhenCritical;
     size_t m_maxHeapSize;
-    bool m_shouldDoFullCollection;
-    size_t m_totalBytesVisited;
-    size_t m_totalBytesVisitedThisCycle;
+    size_t m_totalBytesVisited { 0 };
+    size_t m_totalBytesVisitedThisCycle { 0 };
     double m_incrementBalance { 0 };
 
-    std::optional<CollectionScope> m_collectionScope;
-    std::optional<CollectionScope> m_lastCollectionScope;
-    MutatorState m_mutatorState { MutatorState::Running };
+    bool m_shouldDoFullCollection { false };
+    Markable<CollectionScope, EnumMarkableTraits<CollectionScope>> m_collectionScope;
+    Markable<CollectionScope, EnumMarkableTraits<CollectionScope>> m_lastCollectionScope;
+    Lock m_raceMarkStackLock;
+#if ENABLE(DFG_DOES_GC_VALIDATION)
+    DoesGCCheck m_doesGC;
+#endif
+
     StructureIDTable m_structureIDTable;
     MarkedSpace m_objectSpace;
     GCIncomingRefCountedSet<ArrayBuffer> m_arrayBuffers;
-    size_t m_extraMemorySize;
-    size_t m_deprecatedExtraMemorySize;
+    size_t m_extraMemorySize { 0 };
+    size_t m_deprecatedExtraMemorySize { 0 };
 
     HashSet<const JSCell*> m_copyingRememberedSet;
 
     ProtectCountSet m_protectedValues;
     std::unique_ptr<HashSet<MarkedArgumentBuffer*>> m_markListSet;
+    SentinelLinkedList<MarkedJSValueRefArray, BasicRawSentinelNode<MarkedJSValueRefArray>> m_markedJSValueRefArrays;
 
     std::unique_ptr<MachineThreads> m_machineThreads;
 
     std::unique_ptr<SlotVisitor> m_collectorSlotVisitor;
     std::unique_ptr<SlotVisitor> m_mutatorSlotVisitor;
     std::unique_ptr<MarkStackArray> m_mutatorMarkStack;
-
-    Lock m_raceMarkStackLock;
     std::unique_ptr<MarkStackArray> m_raceMarkStack;
-
     std::unique_ptr<MarkingConstraintSet> m_constraintSet;
 
     // We pool the slot visitors used by parallel marking threads. It's useful to be able to
@@ -608,64 +643,57 @@ private:
     // them at the end.
     Vector<std::unique_ptr<SlotVisitor>> m_parallelSlotVisitors;
     Vector<SlotVisitor*> m_availableParallelSlotVisitors;
-    Lock m_parallelSlotVisitorLock;
 
     HandleSet m_handleSet;
     std::unique_ptr<CodeBlockSet> m_codeBlocks;
     std::unique_ptr<JITStubRoutineSet> m_jitStubRoutines;
-    FinalizerOwner m_finalizerOwner;
+    CFinalizerOwner m_cFinalizerOwner;
+    LambdaFinalizerOwner m_lambdaFinalizerOwner;
 
-    bool m_isSafeToCollect;
+    Lock m_parallelSlotVisitorLock;
+    bool m_isSafeToCollect { false };
     bool m_isShuttingDown { false };
-
     bool m_mutatorShouldBeFenced { Options::forceFencedBarrier() };
+
     unsigned m_barrierThreshold { Options::forceFencedBarrier() ? tautologicalThreshold : blackThreshold };
 
-    VM* m_vm;
-    Seconds m_lastFullGCLength;
-    Seconds m_lastEdenGCLength;
+    VM& m_vm;
+    Seconds m_lastFullGCLength { 10_ms };
+    Seconds m_lastEdenGCLength { 10_ms };
 
     Vector<WeakBlock*> m_logicallyEmptyWeakBlocks;
     size_t m_indexOfNextLogicallyEmptyWeakBlockToSweep { WTF::notFound };
 
     RefPtr<FullGCActivityCallback> m_fullActivityCallback;
     RefPtr<GCActivityCallback> m_edenActivityCallback;
-    RefPtr<IncrementalSweeper> m_sweeper;
-    RefPtr<StopIfNecessaryTimer> m_stopIfNecessaryTimer;
+    Ref<IncrementalSweeper> m_sweeper;
+    Ref<StopIfNecessaryTimer> m_stopIfNecessaryTimer;
 
     Vector<HeapObserver*> m_observers;
 
     Vector<HeapFinalizerCallback> m_heapFinalizerCallbacks;
 
-    unsigned m_deferralDepth;
-    bool m_didDeferGCWork { false };
-
     std::unique_ptr<HeapVerifier> m_verifier;
 
 #if USE(FOUNDATION)
     Vector<RetainPtr<CFTypeRef>> m_delayedReleaseObjects;
-    unsigned m_delayedReleaseRecursionCount;
+    unsigned m_delayedReleaseRecursionCount { 0 };
 #endif
-#if USE(GLIB)
+#ifdef JSC_GLIB_API_ENABLED
     Vector<std::unique_ptr<JSCGLibWrapperObject>> m_delayedReleaseObjects;
     unsigned m_delayedReleaseRecursionCount { 0 };
 #endif
+    unsigned m_deferralDepth { 0 };
 
     HashSet<WeakGCMapBase*> m_weakGCMaps;
 
-    Lock m_visitRaceLock;
-
-    Lock m_markingMutex;
-    Condition m_markingConditionVariable;
     std::unique_ptr<MarkStackArray> m_sharedCollectorMarkStack;
     std::unique_ptr<MarkStackArray> m_sharedMutatorMarkStack;
     unsigned m_numberOfActiveParallelMarkers { 0 };
     unsigned m_numberOfWaitingParallelMarkers { 0 };
-    bool m_parallelMarkersShouldExit { false };
 
     ConcurrentPtrHashSet m_opaqueRoots;
-
-    static const size_t s_blockFragmentLength = 32;
+    static constexpr size_t s_blockFragmentLength = 32;
 
     ParallelHelperClient m_helperClient;
     RefPtr<SharedTask<void(SlotVisitor&)>> m_bonusVisitorTask;
@@ -677,14 +705,18 @@ private:
 
     std::unique_ptr<MutatorScheduler> m_scheduler;
 
-    static const unsigned mutatorHasConnBit = 1u << 0u; // Must also be protected by threadLock.
-    static const unsigned stoppedBit = 1u << 1u; // Only set when !hasAccessBit
-    static const unsigned hasAccessBit = 1u << 2u;
-    static const unsigned gcDidJITBit = 1u << 3u; // Set when the GC did some JITing, so on resume we need to cpuid.
-    static const unsigned needFinalizeBit = 1u << 4u;
-    static const unsigned mutatorWaitingBit = 1u << 5u; // Allows the mutator to use this as a condition variable.
+    static constexpr unsigned mutatorHasConnBit = 1u << 0u; // Must also be protected by threadLock.
+    static constexpr unsigned stoppedBit = 1u << 1u; // Only set when !hasAccessBit
+    static constexpr unsigned hasAccessBit = 1u << 2u;
+    static constexpr unsigned gcDidJITBit = 1u << 3u; // Set when the GC did some JITing, so on resume we need to cpuid.
+    static constexpr unsigned needFinalizeBit = 1u << 4u;
+    static constexpr unsigned mutatorWaitingBit = 1u << 5u; // Allows the mutator to use this as a condition variable.
     Atomic<unsigned> m_worldState;
     bool m_worldIsStopped { false };
+    Lock m_visitRaceLock;
+    Lock m_markingMutex;
+    Condition m_markingConditionVariable;
+
     MonotonicTime m_beforeGC;
     MonotonicTime m_afterGC;
     MonotonicTime m_stopTime;
@@ -693,27 +725,24 @@ private:
     GCRequest m_currentRequest;
     Ticket m_lastServedTicket { 0 };
     Ticket m_lastGrantedTicket { 0 };
+
     CollectorPhase m_lastPhase { CollectorPhase::NotRunning };
     CollectorPhase m_currentPhase { CollectorPhase::NotRunning };
     CollectorPhase m_nextPhase { CollectorPhase::NotRunning };
+    bool m_collectorThreadIsRunning { false };
     bool m_threadShouldStop { false };
     bool m_threadIsStopping { false };
     bool m_mutatorDidRun { true };
+    bool m_didDeferGCWork { false };
+    bool m_shouldStopCollectingContinuously { false };
+
     uint64_t m_mutatorExecutionVersion { 0 };
     uint64_t m_phaseVersion { 0 };
     Box<Lock> m_threadLock;
     Ref<AutomaticThreadCondition> m_threadCondition; // The mutator must not wait on this. It would cause a deadlock.
     RefPtr<AutomaticThread> m_thread;
 
-#if PLATFORM(IOS)
-    unsigned m_precentAvailableMemoryCachedCallCount;
-    bool m_overCriticalMemoryThreshold;
-#endif
-
-    Lock m_collectContinuouslyLock;
-    Condition m_collectContinuouslyCondition;
-    bool m_shouldStopCollectingContinuously { false };
-    RefPtr<WTF::Thread> m_collectContinuouslyThread { nullptr };
+    RefPtr<Thread> m_collectContinuouslyThread { nullptr };
 
     MonotonicTime m_lastGCStartTime;
     MonotonicTime m_lastGCEndTime;
@@ -723,7 +752,16 @@ private:
     uintptr_t m_barriersExecuted { 0 };
 
     CurrentThreadState* m_currentThreadState { nullptr };
-    WTF::Thread* m_currentThread { nullptr }; // It's OK if this becomes a dangling pointer.
+    Thread* m_currentThread { nullptr }; // It's OK if this becomes a dangling pointer.
+
+#if USE(BMALLOC_MEMORY_FOOTPRINT_API)
+    unsigned m_percentAvailableMemoryCachedCallCount { 0 };
+    bool m_overCriticalMemoryThreshold { false };
+#endif
+
+    bool m_parallelMarkersShouldExit { false };
+    Lock m_collectContinuouslyLock;
+    Condition m_collectContinuouslyCondition;
 };
 
 } // namespace JSC

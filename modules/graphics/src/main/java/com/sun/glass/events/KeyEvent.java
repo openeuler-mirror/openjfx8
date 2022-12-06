@@ -65,6 +65,13 @@ public class KeyEvent {
     public final static int MODIFIER_BUTTON_MIDDLE     = 1 << 7;
 
     /*
+     * Key lock state
+     */
+    public final static int KEY_LOCK_OFF = 0;
+    public final static int KEY_LOCK_ON = 1;
+    public final static int KEY_LOCK_UNKNOWN = -1;
+
+    /*
      * Key event key codes.
      */
     public final static int VK_UNDEFINED      = 0x0;

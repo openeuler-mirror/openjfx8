@@ -30,7 +30,8 @@
 namespace JSC {
 
 struct EntryFrame;
-class ExecState;
+class CallFrame;
+class JSGlobalObject;
 class JSObject;
 class VM;
 
@@ -40,18 +41,20 @@ struct VMEntryRecord {
      * after callee save registers where local variables would go.
      */
     VM* m_vm;
-    ExecState* m_prevTopCallFrame;
+    CallFrame* m_prevTopCallFrame;
     EntryFrame* m_prevTopEntryFrame;
     JSObject* m_callee;
 
     JSObject* callee() const { return m_callee; }
 
-#if ENABLE(JIT) && NUMBER_OF_CALLEE_SAVES_REGISTERS > 0
-    intptr_t calleeSaveRegistersBuffer[NUMBER_OF_CALLEE_SAVES_REGISTERS];
+#if !ENABLE(C_LOOP) && NUMBER_OF_CALLEE_SAVES_REGISTERS > 0
+    CPURegister calleeSaveRegistersBuffer[NUMBER_OF_CALLEE_SAVES_REGISTERS];
+#elif ENABLE(C_LOOP)
+    CPURegister calleeSaveRegistersBuffer[1];
 #endif
 
-    ExecState* prevTopCallFrame() { return m_prevTopCallFrame; }
-    SUPPRESS_ASAN ExecState* unsafePrevTopCallFrame() { return m_prevTopCallFrame; }
+    CallFrame* prevTopCallFrame() { return m_prevTopCallFrame; }
+    SUPPRESS_ASAN CallFrame* unsafePrevTopCallFrame() { return m_prevTopCallFrame; }
 
     EntryFrame* prevTopEntryFrame() { return m_prevTopEntryFrame; }
     SUPPRESS_ASAN EntryFrame* unsafePrevTopEntryFrame() { return m_prevTopEntryFrame; }

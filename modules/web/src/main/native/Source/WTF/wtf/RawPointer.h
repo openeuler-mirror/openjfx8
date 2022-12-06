@@ -23,15 +23,14 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef RawPointer_h
-#define RawPointer_h
+#pragma once
 
 namespace WTF {
 
 class RawPointer {
 public:
     RawPointer()
-        : m_value(0)
+        : m_value(nullptr)
     {
     }
 
@@ -54,5 +53,3 @@ private:
 } // namespace WTF
 
 using WTF::RawPointer;
-
-#endif // RawPointer_h

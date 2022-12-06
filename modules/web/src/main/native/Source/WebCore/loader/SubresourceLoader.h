@@ -37,14 +37,13 @@ namespace WebCore {
 
 class CachedResource;
 class CachedResourceLoader;
-class DocumentLoader;
 class NetworkLoadMetrics;
 class ResourceRequest;
 class SecurityOrigin;
 
 class SubresourceLoader final : public ResourceLoader {
 public:
-    WEBCORE_EXPORT static void create(DocumentLoader&, CachedResource&, ResourceRequest&&, const ResourceLoaderOptions&, CompletionHandler<void(RefPtr<SubresourceLoader>&&)>&&);
+    WEBCORE_EXPORT static void create(Frame&, CachedResource&, ResourceRequest&&, const ResourceLoaderOptions&, CompletionHandler<void(RefPtr<SubresourceLoader>&&)>&&);
 
     virtual ~SubresourceLoader();
 
@@ -54,7 +53,7 @@ public:
     WEBCORE_EXPORT const HTTPHeaderMap* originalHeaders() const;
 
     SecurityOrigin* origin() { return m_origin.get(); }
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     void startLoading() override;
 
     // FIXME: What is an "iOS" original request? Why is it necessary?
@@ -67,7 +66,7 @@ public:
     void didReceiveResponsePolicy();
 
 private:
-    SubresourceLoader(DocumentLoader&, CachedResource&, const ResourceLoaderOptions&);
+    SubresourceLoader(Frame&, CachedResource&, const ResourceLoaderOptions&);
 
     void init(ResourceRequest&&, CompletionHandler<void(bool)>&&) override;
 
@@ -80,7 +79,6 @@ private:
     void didFail(const ResourceError&) override;
     void willCancel(const ResourceError&) override;
     void didCancel(const ResourceError&) override;
-    void didRetrieveDerivedDataFromCache(const String& type, SharedBuffer&) override;
 
     void updateReferrerPolicy(const String&);
 
@@ -91,8 +89,8 @@ private:
     void releaseResources() override;
 
     bool checkForHTTPStatusCodeError();
-    bool checkResponseCrossOriginAccessControl(const ResourceResponse&, String&);
-    bool checkRedirectionCrossOriginAccessControl(const ResourceRequest& previousRequest, const ResourceResponse&, ResourceRequest& newRequest, String&);
+    Expected<void, String> checkResponseCrossOriginAccessControl(const ResourceResponse&);
+    Expected<void, String> checkRedirectionCrossOriginAccessControl(const ResourceRequest& previousRequest, const ResourceResponse&, ResourceRequest& newRequest);
 
     void didReceiveDataOrBuffer(const char*, int, RefPtr<SharedBuffer>&&, long long encodedDataLength, DataPayloadType);
 
@@ -102,13 +100,14 @@ private:
 
 #if USE(QUICK_LOOK)
     bool shouldCreatePreviewLoaderForResponse(const ResourceResponse&) const;
+    void didReceivePreviewResponse(const ResourceResponse&) override;
 #endif
 
     enum SubresourceLoaderState {
         Uninitialized,
         Initialized,
         Finishing,
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
         CancelledWhileInitializing
 #endif
     };
@@ -125,12 +124,12 @@ private:
         const CachedResource& m_resource;
     };
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     ResourceRequest m_iOSOriginalRequest;
 #endif
     CachedResource* m_resource;
     SubresourceLoaderState m_state;
-    std::optional<RequestCountTracker> m_requestCountTracker;
+    Optional<RequestCountTracker> m_requestCountTracker;
     RefPtr<SecurityOrigin> m_origin;
     CompletionHandler<void()> m_policyForResponseCompletionHandler;
     unsigned m_redirectCount { 0 };
@@ -139,3 +138,7 @@ private:
 };
 
 }
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SubresourceLoader)
+static bool isType(const WebCore::ResourceLoader& loader) { return loader.isSubresourceLoader(); }
+SPECIALIZE_TYPE_TRAITS_END()

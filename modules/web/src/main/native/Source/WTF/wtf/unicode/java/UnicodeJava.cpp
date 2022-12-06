@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2019, Oracle and/or its affiliates. All rights reserved.
  */
 #include "config.h"
 
@@ -25,7 +25,7 @@ static jclass stringCaseClass;
             ASSERT(mid); \
         } \
         jType r = env->CallStatic##eType##Method(characterClass, mid, c); \
-        CheckAndClearException(env); \
+        WTF::CheckAndClearException(env); \
         return static_cast<fType>(r); \
     }
 
@@ -80,7 +80,7 @@ static int stringCaseConvert(const char* methodName, jmethodID* mid,
 
     jstring jDst = static_cast<jstring>(env->CallStaticObjectMethod(
                                                 stringCaseClass, *mid, jSrc));
-    CheckAndClearException(env);
+    WTF::CheckAndClearException(env);
     ASSERT(jDst);
     env->DeleteLocalRef(jSrc);
     jint length = env->GetStringLength(jDst);

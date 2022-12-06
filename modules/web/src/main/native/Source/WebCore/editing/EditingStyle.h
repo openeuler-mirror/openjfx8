@@ -35,9 +35,7 @@
 #include "CSSValueKeywords.h"
 #include "StyleProperties.h"
 #include "WritingDirection.h"
-#include <wtf/Forward.h>
 #include <wtf/RefCounted.h>
-#include <wtf/RefPtr.h>
 #include <wtf/TriState.h>
 #include <wtf/text/WTFString.h>
 
@@ -61,6 +59,9 @@ class StyledElement;
 class VisibleSelection;
 
 enum class TextDecorationChange { None, Add, Remove };
+
+// FIXME: "Keep" should be "Resolve" instead and resolve all generic font family names.
+enum class StandardFontFamilySerializationMode : uint8_t { Keep, Strip };
 
 class EditingStyle : public RefCounted<EditingStyle> {
 public:
@@ -110,7 +111,7 @@ public:
 
     MutableStyleProperties* style() { return m_mutableStyle.get(); }
     Ref<MutableStyleProperties> styleWithResolvedTextDecorations() const;
-    bool textDirection(WritingDirection&) const;
+    Optional<WritingDirection> textDirection() const;
     bool isEmpty() const;
     void setStyle(RefPtr<MutableStyleProperties>&&);
     void overrideWithStyle(const StyleProperties&);
@@ -143,12 +144,13 @@ public:
     void mergeTypingStyle(Document&);
     enum CSSPropertyOverrideMode { OverrideValues, DoNotOverrideValues };
     void mergeInlineStyleOfElement(StyledElement&, CSSPropertyOverrideMode, PropertiesToInclude = AllProperties);
-    static Ref<EditingStyle> wrappingStyleForSerialization(Node& context, bool shouldAnnotate);
+    static Ref<EditingStyle> wrappingStyleForSerialization(Node& context, bool shouldAnnotate, StandardFontFamilySerializationMode);
     void mergeStyleFromRules(StyledElement&);
-    void mergeStyleFromRulesForSerialization(StyledElement&);
+    void mergeStyleFromRulesForSerialization(StyledElement&, StandardFontFamilySerializationMode);
     void removeStyleFromRulesAndContext(StyledElement&, Node* context);
     void removePropertiesInElementDefaultStyle(Element&);
     void forceInline();
+    void addDisplayContents();
     bool convertPositionStyle();
     bool isFloating();
     int legacyFontSize(Document&) const;
@@ -182,7 +184,7 @@ private:
     void extractFontSizeDelta();
     template<typename T> TriState triStateOfStyle(T& styleToCompare, ShouldIgnoreTextOnlyProperties) const;
     bool conflictsWithInlineStyleOfElement(StyledElement&, RefPtr<MutableStyleProperties>* newInlineStyle, EditingStyle* extractedStyle) const;
-    void mergeInlineAndImplicitStyleOfElement(StyledElement&, CSSPropertyOverrideMode, PropertiesToInclude);
+    void mergeInlineAndImplicitStyleOfElement(StyledElement&, CSSPropertyOverrideMode, PropertiesToInclude, StandardFontFamilySerializationMode);
     void mergeStyle(const StyleProperties*, CSSPropertyOverrideMode);
 
     RefPtr<MutableStyleProperties> m_mutableStyle;

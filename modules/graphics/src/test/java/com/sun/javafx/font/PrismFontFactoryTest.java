@@ -65,7 +65,7 @@ public class PrismFontFactoryTest {
     }
 
     /**
-     * Test of getFontFactory method, of class T2KFontFactory.
+     * Test of getFontFactory method.
      */
     @Test
     public void testGetFontFactory() {

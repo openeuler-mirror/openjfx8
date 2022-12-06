@@ -44,6 +44,7 @@
 #elif defined SYSTEM_PROCESSOR_AMD64
   __asm__(".symver powf,powf@GLIBC_2.2.5");
 #endif
+
 namespace WebCore {
 
 using namespace VectorMath;
@@ -122,7 +123,7 @@ void Reverb::initialize(AudioBus* impulseResponseBuffer, size_t renderSliceSize,
     for (size_t i = 0; i < numResponseChannels; ++i) {
         AudioChannel* channel = impulseResponseBuffer->channel(i);
 
-        m_convolvers.append(std::make_unique<ReverbConvolver>(channel, renderSliceSize, maxFFTSize, convolverRenderPhase, useBackgroundThreads));
+        m_convolvers.append(makeUnique<ReverbConvolver>(channel, renderSliceSize, maxFFTSize, convolverRenderPhase, useBackgroundThreads));
 
         convolverRenderPhase += renderSliceSize;
     }

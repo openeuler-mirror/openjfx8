@@ -3,6 +3,7 @@
  * Copyright (C) 2007 Justin Haygood (jhaygood@reaktix.com)
  * Copyright (C) 2016 Konstantin Tokavev <annulen@yandex.ru>
  * Copyright (C) 2016 Yusuke Suzuki <utatane.tea@gmail.com>
+ * Copyright (C) 2019 Oracle and/or its affiliates. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,49 +31,33 @@
  */
 
 #include "config.h"
-#include "MainThread.h"
+#include <pthread.h>
+#if HAVE(PTHREAD_NP_H)
+#include <pthread_np.h>
+#endif
 
 #include <wtf/RunLoop.h>
-#if USE(GLIB)
-#include <wtf/glib/RunLoopSourcePriority.h>
-#endif
 
 namespace WTF {
 
-class MainThreadDispatcher {
-public:
-    MainThreadDispatcher()
-        : m_timer(RunLoop::main(), this, &MainThreadDispatcher::fired)
-    {
-#if USE(GLIB)
-        m_timer.setPriority(RunLoopSourcePriority::MainThreadDispatcherTimer);
+#if !HAVE(PTHREAD_MAIN_NP)
+static pthread_t mainThread;
 #endif
-    }
-
-    void schedule()
-    {
-        m_timer.startOneShot(0_s);
-    }
-
-private:
-    void fired()
-    {
-        dispatchFunctionsFromMainThread();
-    }
-
-    RunLoop::Timer<MainThreadDispatcher> m_timer;
-};
 
 void initializeMainThreadPlatform()
 {
+#if !HAVE(PTHREAD_MAIN_NP)
+    mainThread = pthread_self();
+#endif
 }
 
-void scheduleDispatchFunctionsOnMainThread()
+bool isMainThread()
 {
-    // Use a RunLoop::Timer instead of RunLoop::dispatch() to be able to use a different priority and
-    // avoid the double queue because dispatchOnMainThread also queues the functions.
-    static MainThreadDispatcher dispatcher;
-    dispatcher.schedule();
+#if HAVE(PTHREAD_MAIN_NP)
+    return pthread_main_np();
+#else
+    return pthread_equal(pthread_self(), mainThread);
+#endif
 }
 
 } // namespace WTF

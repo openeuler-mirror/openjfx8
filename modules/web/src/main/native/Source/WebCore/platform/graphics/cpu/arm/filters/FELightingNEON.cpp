@@ -33,7 +33,7 @@
   __asm__(".symver powf,powf@GLIBC_2.2.5");
 #endif
 
-#if CPU(ARM_NEON) && CPU(ARM_TRADITIONAL) && COMPILER(GCC_OR_CLANG)
+#if CPU(ARM_NEON) && CPU(ARM_TRADITIONAL) && COMPILER(GCC_COMPATIBLE)
 
 namespace WebCore {
 
@@ -506,4 +506,4 @@ int FELighting::getPowerCoefficients(float exponent)
 
 } // namespace WebCore
 
-#endif // CPU(ARM_NEON) && COMPILER(GCC_OR_CLANG)
+#endif // CPU(ARM_NEON) && COMPILER(GCC_COMPATIBLE)

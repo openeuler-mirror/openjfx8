@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -61,7 +61,7 @@ public:
     public:
         View(GdkPixbuf* pixbuf, gboolean is_raw_image, gboolean is_offset_set, gint offset_x, gint offset_y);
         void screen_changed();
-        void expose();
+        void expose(cairo_t* context);
         void move(gint x, gint y);
         ~View();
     private:

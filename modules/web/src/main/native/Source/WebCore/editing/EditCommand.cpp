@@ -32,7 +32,6 @@
 #include "Editing.h"
 #include "Editor.h"
 #include "Element.h"
-#include "Frame.h"
 #include "HTMLInputElement.h"
 #include "HTMLTextAreaElement.h"
 #include "NodeTraversal.h"
@@ -42,76 +41,82 @@ namespace WebCore {
 String inputTypeNameForEditingAction(EditAction action)
 {
     switch (action) {
-    case EditActionJustify:
+    case EditAction::Justify:
         return "formatJustifyFull"_s;
-    case EditActionAlignLeft:
+    case EditAction::AlignLeft:
         return "formatJustifyLeft"_s;
-    case EditActionAlignRight:
+    case EditAction::AlignRight:
         return "formatJustifyRight"_s;
-    case EditActionCenter:
+    case EditAction::Center:
         return "formatJustifyCenter"_s;
-    case EditActionSubscript:
+    case EditAction::Subscript:
         return "formatSubscript"_s;
-    case EditActionSuperscript:
+    case EditAction::Superscript:
         return "formatSuperscript"_s;
-    case EditActionUnderline:
+    case EditAction::Underline:
         return "formatUnderline"_s;
-    case EditActionSetColor:
+    case EditAction::StrikeThrough:
+        return "formatStrikeThrough"_s;
+    case EditAction::SetColor:
         return "formatFontColor"_s;
-    case EditActionDeleteByDrag:
+    case EditAction::DeleteByDrag:
         return "deleteByDrag"_s;
-    case EditActionCut:
+    case EditAction::Cut:
         return "deleteByCut"_s;
-    case EditActionBold:
+    case EditAction::Bold:
         return "formatBold"_s;
-    case EditActionItalics:
+    case EditAction::Italics:
         return "formatItalic"_s;
-    case EditActionPaste:
+    case EditAction::Paste:
         return "insertFromPaste"_s;
-    case EditActionDelete:
-    case EditActionTypingDeleteSelection:
+    case EditAction::Delete:
+    case EditAction::TypingDeleteSelection:
         return "deleteContent"_s;
-    case EditActionTypingDeleteBackward:
+    case EditAction::TypingDeleteBackward:
         return "deleteContentBackward"_s;
-    case EditActionTypingDeleteForward:
+    case EditAction::TypingDeleteForward:
         return "deleteContentForward"_s;
-    case EditActionTypingDeleteWordBackward:
+    case EditAction::TypingDeleteWordBackward:
         return "deleteWordBackward"_s;
-    case EditActionTypingDeleteWordForward:
+    case EditAction::TypingDeleteWordForward:
         return "deleteWordForward"_s;
-    case EditActionTypingDeleteLineBackward:
+    case EditAction::TypingDeleteLineBackward:
         return "deleteHardLineBackward"_s;
-    case EditActionTypingDeleteLineForward:
+    case EditAction::TypingDeleteLineForward:
         return "deleteHardLineForward"_s;
-    case EditActionTypingDeletePendingComposition:
+    case EditAction::TypingDeletePendingComposition:
         return "deleteCompositionText"_s;
-    case EditActionTypingDeleteFinalComposition:
+    case EditAction::TypingDeleteFinalComposition:
         return "deleteByComposition"_s;
-    case EditActionInsert:
-    case EditActionTypingInsertText:
+    case EditAction::Insert:
+    case EditAction::TypingInsertText:
         return "insertText"_s;
-    case EditActionInsertReplacement:
+    case EditAction::InsertReplacement:
         return "insertReplacementText"_s;
-    case EditActionInsertFromDrop:
+    case EditAction::InsertFromDrop:
         return "insertFromDrop"_s;
-    case EditActionTypingInsertLineBreak:
+    case EditAction::TypingInsertLineBreak:
         return "insertLineBreak"_s;
-    case EditActionTypingInsertParagraph:
+    case EditAction::TypingInsertParagraph:
         return "insertParagraph"_s;
-    case EditActionInsertOrderedList:
+    case EditAction::InsertOrderedList:
         return "insertOrderedList"_s;
-    case EditActionInsertUnorderedList:
+    case EditAction::InsertUnorderedList:
         return "insertUnorderedList"_s;
-    case EditActionTypingInsertPendingComposition:
+    case EditAction::TypingInsertPendingComposition:
         return "insertCompositionText"_s;
-    case EditActionTypingInsertFinalComposition:
+    case EditAction::TypingInsertFinalComposition:
         return "insertFromComposition"_s;
-    case EditActionIndent:
+    case EditAction::Indent:
         return "formatIndent"_s;
-    case EditActionOutdent:
+    case EditAction::Outdent:
         return "formatOutdent"_s;
-    case EditActionSetWritingDirection:
+    case EditAction::SetInlineWritingDirection:
         return "formatSetInlineTextDirection"_s;
+    case EditAction::SetBlockWritingDirection:
+        return "formatSetBlockTextDirection"_s;
+    case EditAction::CreateLink:
+        return "insertLink"_s;
     default:
         return emptyString();
     }
@@ -121,32 +126,18 @@ EditCommand::EditCommand(Document& document, EditAction editingAction)
     : m_document(document)
     , m_editingAction(editingAction)
 {
-    ASSERT(document.frame());
-    setStartingSelection(m_document->frame()->selection().selection());
+    setStartingSelection(m_document->selection().selection());
     setEndingSelection(m_startingSelection);
 }
 
 EditCommand::EditCommand(Document& document, const VisibleSelection& startingSelection, const VisibleSelection& endingSelection)
     : m_document(document)
 {
-    ASSERT(document.frame());
     setStartingSelection(startingSelection);
     setEndingSelection(endingSelection);
 }
 
 EditCommand::~EditCommand() = default;
-
-Frame& EditCommand::frame()
-{
-    ASSERT(document().frame());
-    return *document().frame();
-}
-
-const Frame& EditCommand::frame() const
-{
-    ASSERT(document().frame());
-    return *document().frame();
-}
 
 EditAction EditCommand::editingAction() const
 {
@@ -162,11 +153,7 @@ static inline EditCommandComposition* compositionIfPossible(EditCommand* command
 
 bool EditCommand::isEditingTextAreaOrTextInput() const
 {
-    auto* frame = m_document->frame();
-    if (!frame)
-        return false;
-
-    auto* container = frame->selection().selection().start().containerNode();
+    auto* container = m_document->selection().selection().start().containerNode();
     if (!container)
         return false;
 
@@ -211,7 +198,7 @@ void EditCommand::postTextStateChangeNotification(AXTextEditType type, const Str
 {
     if (!AXObjectCache::accessibilityEnabled())
         return;
-    postTextStateChangeNotification(type, text, frame().selection().selection().start());
+    postTextStateChangeNotification(type, text, m_document->selection().selection().start());
 }
 
 void EditCommand::postTextStateChangeNotification(AXTextEditType type, const String& text, const VisiblePosition& position)

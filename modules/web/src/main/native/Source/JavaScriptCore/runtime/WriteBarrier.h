@@ -27,11 +27,9 @@
 
 #include "GCAssertions.h"
 #include "HandleTypes.h"
-#include "JSCPoison.h"
 #include <type_traits>
 #include <wtf/DumbPtrTraits.h>
 #include <wtf/DumbValueTraits.h>
-#include <wtf/Poisoned.h>
 
 namespace JSC {
 
@@ -197,7 +195,7 @@ class WriteBarrier : public WriteBarrierBase<T, Traits> {
 public:
     WriteBarrier()
     {
-        this->setWithoutWriteBarrier(0);
+        this->setWithoutWriteBarrier(nullptr);
     }
 
     WriteBarrier(VM& vm, const JSCell* owner, T* value)
@@ -249,13 +247,5 @@ inline bool operator==(const WriteBarrierBase<U, TraitsU>& lhs, const WriteBarri
 {
     return lhs.get() == rhs.get();
 }
-
-template<typename Poison, class T>
-using PoisonedWriteBarrierTraitsSelect = typename std::conditional<std::is_same<T, Unknown>::value,
-    WTF::PoisonedValueTraits<Poison, T>, WTF::PoisonedPtrTraits<Poison, T>
->::type;
-
-template <typename Poison, typename T>
-using PoisonedWriteBarrier = WriteBarrier<T, PoisonedWriteBarrierTraitsSelect<Poison, T>>;
 
 } // namespace JSC

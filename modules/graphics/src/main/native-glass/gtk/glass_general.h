@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -283,10 +283,10 @@ void
 glass_gdk_mouse_devices_ungrab();
 
 void
-glass_gdk_master_pointer_grab(GdkWindow *window, GdkCursor *cursor);
+glass_gdk_master_pointer_grab(GdkEvent *event, GdkWindow *window, GdkCursor *cursor);
 
 void
-glass_gdk_master_pointer_ungrab();
+glass_gdk_master_pointer_ungrab(GdkEvent *event);
 
 void
 glass_gdk_master_pointer_get_position(gint *x, gint *y);

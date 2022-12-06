@@ -35,6 +35,7 @@
 #include "ResourceRequest.h"
 #include "ResourceResponse.h"
 #include <wtf/Forward.h>
+#include <wtf/WeakPtr.h>
 
 #if ENABLE(CONTENT_EXTENSIONS)
 #include "ResourceLoadInfo.h"
@@ -50,11 +51,12 @@ class AuthenticationChallenge;
 class DocumentLoader;
 class Frame;
 class FrameLoader;
+class LegacyPreviewLoader;
 class NetworkLoadMetrics;
-class PreviewLoader;
-class URL;
 
-class ResourceLoader : public RefCounted<ResourceLoader>, protected ResourceHandleClient {
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ResourceLoader);
+class ResourceLoader : public CanMakeWeakPtr<ResourceLoader>, public RefCounted<ResourceLoader>, protected ResourceHandleClient {
+    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(ResourceLoader);
 public:
     virtual ~ResourceLoader() = 0;
 
@@ -64,7 +66,7 @@ public:
 
     void deliverResponseAndData(const ResourceResponse&, RefPtr<SharedBuffer>&&);
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     virtual void startLoading()
     {
         start();
@@ -106,7 +108,6 @@ public:
     virtual void didReceiveBuffer(Ref<SharedBuffer>&&, long long encodedDataLength, DataPayloadType);
     virtual void didFinishLoading(const NetworkLoadMetrics&);
     virtual void didFail(const ResourceError&);
-    virtual void didRetrieveDerivedDataFromCache(const String& type, SharedBuffer&);
 
     WEBCORE_EXPORT void didBlockAuthenticationChallenge();
 
@@ -118,6 +119,7 @@ public:
 
 #if USE(QUICK_LOOK)
     bool isQuickLookResource() const;
+    virtual void didReceivePreviewResponse(const ResourceResponse&) { };
 #endif
 
     const URL& url() const { return m_request.url(); }
@@ -127,10 +129,9 @@ public:
     bool shouldSniffContent() const { return m_options.sniffContent == ContentSniffingPolicy::SniffContent; }
     bool shouldSniffContentEncoding() const { return m_options.sniffContentEncoding == ContentEncodingSniffingPolicy::Sniff; }
     WEBCORE_EXPORT bool isAllowedToAskUserForCredentials() const;
-    bool shouldIncludeCertificateInfo() const { return m_options.certificateInfoPolicy == CertificateInfoPolicy::IncludeCertificateInfo; }
+    WEBCORE_EXPORT bool shouldIncludeCertificateInfo() const;
 
     bool reachedTerminalState() const { return m_reachedTerminalState; }
-
 
     const ResourceRequest& request() const { return m_request; }
     void setRequest(ResourceRequest&& request) { m_request = WTFMove(request); }
@@ -155,7 +156,7 @@ public:
     ResourceRequest takeDeferredRequest() { return std::exchange(m_deferredRequest, { }); }
 
 protected:
-    ResourceLoader(DocumentLoader&, ResourceLoaderOptions);
+    ResourceLoader(Frame&, ResourceLoaderOptions);
 
     void didFinishLoadingOnePart(const NetworkLoadMetrics&);
     void cleanupForError(const ResourceError&);
@@ -179,7 +180,7 @@ protected:
     ResourceResponse m_response;
     LoadTiming m_loadTiming;
 #if USE(QUICK_LOOK)
-    std::unique_ptr<PreviewLoader> m_previewLoader;
+    std::unique_ptr<LegacyPreviewLoader> m_previewLoader;
 #endif
     bool m_canCrossOriginRequestsAskUserForCredentials { true };
 
@@ -209,7 +210,7 @@ private:
     void canAuthenticateAgainstProtectionSpaceAsync(ResourceHandle*, const ProtectionSpace&, CompletionHandler<void(bool)>&&) override;
 #endif
     void receivedCancellation(ResourceHandle*, const AuthenticationChallenge& challenge) override { receivedCancellation(challenge); }
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     RetainPtr<CFDictionaryRef> connectionProperties(ResourceHandle*) override;
 #endif
 #if USE(CFURLCONNECTION)
@@ -245,7 +246,7 @@ private:
 
 #if ENABLE(CONTENT_EXTENSIONS)
 protected:
-    ResourceType m_resourceType { ResourceType::Invalid };
+    ContentExtensions::ResourceType m_resourceType { ContentExtensions::ResourceType::Invalid };
 #endif
 };
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -57,7 +57,7 @@ void JITRightShiftGenerator::generateFastPath(CCallHelpers& jit)
             else
                 jit.urshift32(CCallHelpers::Imm32(shiftAmount), m_result.payloadGPR());
 #if USE(JSVALUE64)
-            jit.or64(GPRInfo::tagTypeNumberRegister, m_result.payloadGPR());
+            jit.or64(GPRInfo::numberTagRegister, m_result.payloadGPR());
 #endif
         }
 
@@ -70,7 +70,14 @@ void JITRightShiftGenerator::generateFastPath(CCallHelpers& jit)
             m_slowPathJumpList.append(jit.branchIfNotNumber(m_left, m_scratchGPR));
 
             jit.unboxDoubleNonDestructive(m_left, m_leftFPR, m_scratchGPR, m_scratchFPR);
-            m_slowPathJumpList.append(jit.branchTruncateDoubleToInt32(m_leftFPR, m_scratchGPR));
+#if CPU(ARM64)
+            if (MacroAssemblerARM64::supportsDoubleToInt32ConversionUsingJavaScriptSemantics())
+                jit.convertDoubleToInt32UsingJavaScriptSemantics(m_leftFPR, m_scratchGPR);
+            else
+#endif
+            {
+                m_slowPathJumpList.append(jit.branchTruncateDoubleToInt32(m_leftFPR, m_scratchGPR));
+            }
 
             if (shiftAmount) {
                 if (m_shiftType == SignedShift)
@@ -109,7 +116,7 @@ void JITRightShiftGenerator::generateFastPath(CCallHelpers& jit)
         else
             jit.urshift32(rightOperandGPR, m_result.payloadGPR());
 #if USE(JSVALUE64)
-        jit.or64(GPRInfo::tagTypeNumberRegister, m_result.payloadGPR());
+        jit.or64(GPRInfo::numberTagRegister, m_result.payloadGPR());
 #endif
         if (m_leftOperand.isConstInt32())
             return;
@@ -122,7 +129,14 @@ void JITRightShiftGenerator::generateFastPath(CCallHelpers& jit)
 
             m_slowPathJumpList.append(jit.branchIfNotNumber(m_left, m_scratchGPR));
             jit.unboxDoubleNonDestructive(m_left, m_leftFPR, m_scratchGPR, m_scratchFPR);
-            m_slowPathJumpList.append(jit.branchTruncateDoubleToInt32(m_leftFPR, m_scratchGPR));
+#if CPU(ARM64)
+            if (MacroAssemblerARM64::supportsDoubleToInt32ConversionUsingJavaScriptSemantics())
+                jit.convertDoubleToInt32UsingJavaScriptSemantics(m_leftFPR, m_scratchGPR);
+            else
+#endif
+            {
+                m_slowPathJumpList.append(jit.branchTruncateDoubleToInt32(m_leftFPR, m_scratchGPR));
+            }
 
             if (m_shiftType == SignedShift)
                 jit.rshift32(m_right.payloadGPR(), m_scratchGPR);

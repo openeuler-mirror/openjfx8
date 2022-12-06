@@ -27,16 +27,19 @@
 #include "CSSPropertyNames.h"
 #include "ClipPathOperation.h"
 #include "CounterDirectives.h"
-#include "DataRef.h"
 #include "FillLayer.h"
+#include "GapLength.h"
 #include "LengthPoint.h"
 #include "LineClampValue.h"
 #include "NinePieceImage.h"
 #include "ShapeValue.h"
 #include "StyleContentAlignmentData.h"
 #include "StyleSelfAlignmentData.h"
+#include "TouchAction.h"
 #include "WillChangeData.h"
 #include <memory>
+#include <wtf/DataRef.h>
+#include <wtf/OptionSet.h>
 #include <wtf/Vector.h>
 
 namespace WebCore {
@@ -44,6 +47,7 @@ namespace WebCore {
 class AnimationList;
 class ContentData;
 class ShadowData;
+class StyleCustomPropertyData;
 class StyleDeprecatedFlexibleBoxData;
 class StyleFilterData;
 class StyleFlexibleBoxData;
@@ -58,7 +62,6 @@ class StyleScrollSnapPort;
 class StyleTransformData;
 
 struct LengthSize;
-struct StyleDashboardRegion;
 
 // Page size type.
 // StyleRareNonInheritedData::pageSize is meaningful only when
@@ -73,7 +76,9 @@ enum PageSizeType {
 // This struct is for rarely used non-inherited CSS3, CSS2, and WebKit-specific properties.
 // By grouping them together, we save space, and only allocate this object when someone
 // actually uses one of these properties.
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(StyleRareNonInheritedData);
 class StyleRareNonInheritedData : public RefCounted<StyleRareNonInheritedData> {
+    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(StyleRareNonInheritedData);
 public:
     static Ref<StyleRareNonInheritedData> create() { return adoptRef(*new StyleRareNonInheritedData); }
     Ref<StyleRareNonInheritedData> copy() const;
@@ -81,6 +86,8 @@ public:
 
     bool operator==(const StyleRareNonInheritedData&) const;
     bool operator!=(const StyleRareNonInheritedData& other) const { return !(*this == other); }
+
+    LengthPoint perspectiveOrigin() const { return { perspectiveOriginX, perspectiveOriginY }; }
 
     bool contentDataEquivalent(const StyleRareNonInheritedData&) const;
 
@@ -104,10 +111,6 @@ public:
     LineClampValue lineClamp; // An Apple extension.
 
     IntSize initialLetter;
-
-#if ENABLE(DASHBOARD_SUPPORT)
-    Vector<StyleDashboardRegion> dashboardRegions;
-#endif
 
     DataRef<StyleDeprecatedFlexibleBoxData> deprecatedFlexibleBox; // Flexible box properties
     DataRef<StyleFlexibleBoxData> flexibleBox;
@@ -138,8 +141,8 @@ public:
 
     RefPtr<StyleReflection> boxReflect;
 
-    std::unique_ptr<AnimationList> animations;
-    std::unique_ptr<AnimationList> transitions;
+    RefPtr<AnimationList> animations;
+    RefPtr<AnimationList> transitions;
 
     FillLayer mask;
     NinePieceImage maskBoxImage;
@@ -150,6 +153,8 @@ public:
     RefPtr<ShapeValue> shapeOutside;
     Length shapeMargin;
     float shapeImageThreshold;
+
+    int order;
 
     RefPtr<ClipPathOperation> clipPath;
 
@@ -162,8 +167,6 @@ public:
     Color visitedLinkBorderTopColor;
     Color visitedLinkBorderBottomColor;
 
-    int order;
-
     StyleContentAlignmentData alignContent;
     StyleSelfAlignmentData alignItems;
     StyleSelfAlignmentData alignSelf;
@@ -171,9 +174,10 @@ public:
     StyleSelfAlignmentData justifyItems;
     StyleSelfAlignmentData justifySelf;
 
-#if ENABLE(TOUCH_EVENTS)
-    unsigned touchAction : 1; // TouchAction
-#endif
+    DataRef<StyleCustomPropertyData> customProperties;
+    std::unique_ptr<HashSet<String>> customPaintWatchedProperties;
+
+    OptionSet<TouchAction> touchActions;
 
     unsigned pageSizeType : 2; // PageSizeType
     unsigned transformStyle3D : 1; // TransformStyle3D
@@ -181,6 +185,7 @@ public:
 
     unsigned userDrag : 2; // UserDrag
     unsigned textOverflow : 1; // Whether or not lines that spill out should be truncated with "..."
+    unsigned useSmoothScrolling : 1; // ScrollBehavior
     unsigned marginBeforeCollapse : 2; // MarginCollapse
     unsigned marginAfterCollapse : 2; // MarginCollapse
     unsigned appearance : 6; // EAppearance
@@ -198,7 +203,7 @@ public:
 
 #if ENABLE(APPLE_PAY)
     unsigned applePayButtonStyle : 2;
-    unsigned applePayButtonType : 3;
+    unsigned applePayButtonType : 4;
 #endif
 
     unsigned objectFit : 3; // ObjectFit

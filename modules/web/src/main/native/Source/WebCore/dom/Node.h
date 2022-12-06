@@ -31,14 +31,19 @@
 #include "RenderStyleConstants.h"
 #include "StyleValidity.h"
 #include "TreeScope.h"
-#include "URLHash.h"
+#include <wtf/CompactPointerTuple.h>
 #include <wtf/Forward.h>
 #include <wtf/IsoMalloc.h>
 #include <wtf/ListHashSet.h>
 #include <wtf/MainThread.h>
+#include <wtf/URLHash.h>
 
 // This needs to be here because Document.h also depends on it.
 #define DUMP_NODE_STATISTICS 0
+
+namespace WTF {
+class TextStream;
+}
 
 namespace WebCore {
 
@@ -63,20 +68,6 @@ class ShadowRoot;
 class TouchEvent;
 
 using NodeOrString = Variant<RefPtr<Node>, String>;
-
-class NodeRareDataBase {
-public:
-    RenderObject* renderer() const { return m_renderer; }
-    void setRenderer(RenderObject* renderer) { m_renderer = renderer; }
-
-protected:
-    NodeRareDataBase(RenderObject* renderer)
-        : m_renderer(renderer)
-    { }
-
-private:
-    RenderObject* m_renderer;
-};
 
 class Node : public EventTarget {
     WTF_MAKE_ISO_ALLOCATED(Node);
@@ -165,17 +156,17 @@ public:
     Ref<Node> cloneNode(bool deep) { return cloneNodeInternal(document(), deep ? CloningOperation::Everything : CloningOperation::OnlySelf); }
     WEBCORE_EXPORT ExceptionOr<Ref<Node>> cloneNodeForBindings(bool deep);
 
-    virtual const AtomicString& localName() const;
-    virtual const AtomicString& namespaceURI() const;
-    virtual const AtomicString& prefix() const;
-    virtual ExceptionOr<void> setPrefix(const AtomicString&);
+    virtual const AtomString& localName() const;
+    virtual const AtomString& namespaceURI() const;
+    virtual const AtomString& prefix() const;
+    virtual ExceptionOr<void> setPrefix(const AtomString&);
     WEBCORE_EXPORT void normalize();
 
     bool isSameNode(Node* other) const { return this == other; }
     WEBCORE_EXPORT bool isEqualNode(Node*) const;
-    WEBCORE_EXPORT bool isDefaultNamespace(const AtomicString& namespaceURI) const;
-    WEBCORE_EXPORT const AtomicString& lookupPrefix(const AtomicString& namespaceURI) const;
-    WEBCORE_EXPORT const AtomicString& lookupNamespaceURI(const AtomicString& prefix) const;
+    WEBCORE_EXPORT bool isDefaultNamespace(const AtomString& namespaceURI) const;
+    WEBCORE_EXPORT const AtomString& lookupPrefix(const AtomString& namespaceURI) const;
+    WEBCORE_EXPORT const AtomString& lookupNamespaceURI(const AtomString& prefix) const;
 
     WEBCORE_EXPORT String textContent(bool convertBRsToNewlines = false) const;
     WEBCORE_EXPORT ExceptionOr<void> setTextContent(const String&);
@@ -207,14 +198,12 @@ public:
     bool isAfterPseudoElement() const { return pseudoId() == PseudoId::After; }
     PseudoId pseudoId() const { return (isElementNode() && hasCustomStyleResolveCallbacks()) ? customPseudoId() : PseudoId::None; }
 
-    virtual bool isMediaControlElement() const { return false; }
-    virtual bool isMediaControls() const { return false; }
-#if ENABLE(VIDEO_TRACK)
+#if ENABLE(VIDEO)
     virtual bool isWebVTTElement() const { return false; }
 #endif
-    bool isStyledElement() const { return getFlag(IsStyledElementFlag); }
+    bool isStyledElement() const { return getFlag(IsHTMLFlag) || getFlag(IsSVGFlag) || getFlag(IsMathMLFlag); }
     virtual bool isAttributeNode() const { return false; }
-    virtual bool isCharacterDataNode() const { return false; }
+    bool isCharacterDataNode() const { return !isContainerNode() && (isTextNode() || virtualIsCharacterData()); }
     virtual bool isFrameOwnerElement() const { return false; }
     virtual bool isPluginElement() const { return false; }
 #if ENABLE(SERVICE_CONTROLS)
@@ -222,10 +211,10 @@ public:
     virtual bool isImageControlsButtonElement() const { return false; }
 #endif
 
-    bool isDocumentNode() const { return getFlag(IsContainerFlag) && !getFlag(IsElementFlag) && !getFlag(IsDocumentFragmentFlag); }
-    bool isTreeScope() const;
-    bool isDocumentFragment() const { return getFlag(IsDocumentFragmentFlag); }
-    bool isShadowRoot() const { return isDocumentFragment() && isTreeScope(); }
+    bool isDocumentNode() const { return getFlag(IsDocumentNodeFlag); }
+    bool isTreeScope() const { return getFlag(IsDocumentNodeFlag) || getFlag(IsShadowRootFlag); }
+    bool isDocumentFragment() const { return getFlag(IsContainerFlag) && !(getFlag(IsElementFlag) || getFlag(IsDocumentNodeFlag)); }
+    bool isShadowRoot() const { return getFlag(IsShadowRootFlag); }
 
     bool hasCustomStyleResolveCallbacks() const { return getFlag(HasCustomStyleResolveCallbacksFlag); }
 
@@ -234,9 +223,6 @@ public:
 
     // If this node is in a shadow tree, returns its shadow host. Otherwise, returns null.
     WEBCORE_EXPORT Element* shadowHost() const;
-    // If this node is in a shadow tree, returns its shadow host. Otherwise, returns this.
-    // Deprecated. Should use shadowHost() and check the return value.
-    WEBCORE_EXPORT Node* deprecatedShadowAncestorNode() const;
     ShadowRoot* containingShadowRoot() const;
     ShadowRoot* shadowRoot() const;
     bool isClosedShadowHidden(const Node&) const;
@@ -286,7 +272,7 @@ public:
 
     virtual bool canContainRangeEndPoint() const { return false; }
 
-    bool isRootEditableElement() const;
+    WEBCORE_EXPORT bool isRootEditableElement() const;
     WEBCORE_EXPORT Element* rootEditableElement() const;
 
     // Called by the parser when this element's close tag is reached,
@@ -325,19 +311,20 @@ public:
     bool hasEventTargetData() const { return getFlag(HasEventTargetDataFlag); }
     void setHasEventTargetData(bool flag) { setFlag(flag, HasEventTargetDataFlag); }
 
-    enum UserSelectAllTreatment {
-        UserSelectAllDoesNotAffectEditability,
-        UserSelectAllIsAlwaysNonEditable
-    };
     WEBCORE_EXPORT bool isContentEditable();
     bool isContentRichlyEditable();
 
     WEBCORE_EXPORT void inspect();
 
+    enum UserSelectAllTreatment {
+        UserSelectAllDoesNotAffectEditability,
+        UserSelectAllIsAlwaysNonEditable
+    };
     bool hasEditableStyle(UserSelectAllTreatment treatment = UserSelectAllIsAlwaysNonEditable) const
     {
         return computeEditability(treatment, ShouldUpdateStyle::DoNotUpdate) != Editability::ReadOnly;
     }
+
     // FIXME: Replace every use of this function by helpers in Editing.h
     bool hasRichlyEditableStyle() const
     {
@@ -357,12 +344,8 @@ public:
     // of a Document node.
     WEBCORE_EXPORT Document* ownerDocument() const;
 
-    // Returns the document associated with this node.
-    // A Document node returns itself.
-    Document& document() const
-    {
-        return treeScope().documentScope();
-    }
+    // Returns the document associated with this node. A document node returns itself.
+    Document& document() const { return treeScope().documentScope(); }
 
     TreeScope& treeScope() const
     {
@@ -374,10 +357,7 @@ public:
 
     // Returns true if this node is associated with a document and is in its associated document's
     // node tree, false otherwise (https://dom.spec.whatwg.org/#connected).
-    bool isConnected() const
-    {
-        return getFlag(IsConnectedFlag);
-    }
+    bool isConnected() const { return getFlag(IsConnectedFlag); }
     bool isInUserAgentShadowTree() const;
     bool isInShadowTree() const { return getFlag(IsInShadowTreeFlag); }
     bool isInTreeScope() const { return getFlag(static_cast<NodeFlags>(IsConnectedFlag | IsInShadowTreeFlag)); }
@@ -385,23 +365,17 @@ public:
     bool isDocumentTypeNode() const { return nodeType() == DOCUMENT_TYPE_NODE; }
     virtual bool childTypeAllowed(NodeType) const { return false; }
     unsigned countChildNodes() const;
+    unsigned length() const;
     Node* traverseToChildAt(unsigned) const;
 
-    ExceptionOr<void> checkSetPrefix(const AtomicString& prefix);
+    ExceptionOr<void> checkSetPrefix(const AtomString& prefix);
 
     WEBCORE_EXPORT bool isDescendantOf(const Node&) const;
     bool isDescendantOf(const Node* other) const { return other && isDescendantOf(*other); }
 
     bool isDescendantOrShadowDescendantOf(const Node*) const;
     WEBCORE_EXPORT bool contains(const Node*) const;
-    bool containsIncludingShadowDOM(const Node*) const;
-    bool containsIncludingHostElements(const Node*) const;
-
-    // Used to determine whether range offsets use characters or node indices.
-    virtual bool offsetInCharacters() const;
-    // Number of DOM 16-bit units contained in node. Note that rendered text length can be different - e.g. because of
-    // css-transform:capitalize breaking up precomposed characters and ligatures.
-    virtual int maxCharacterOffset() const;
+    WEBCORE_EXPORT bool containsIncludingShadowDOM(const Node*) const;
 
     // Whether or not a selection can be started in this object
     virtual bool canStartSelection() const;
@@ -416,14 +390,8 @@ public:
     // Integration with rendering tree
 
     // As renderer() includes a branch you should avoid calling it repeatedly in hot code paths.
-    RenderObject* renderer() const { return hasRareData() ? m_data.m_rareData->renderer() : m_data.m_renderer; };
-    void setRenderer(RenderObject* renderer)
-    {
-        if (hasRareData())
-            m_data.m_rareData->setRenderer(renderer);
-        else
-            m_data.m_renderer = renderer;
-    }
+    RenderObject* renderer() const { return m_rendererWithStyleFlags.pointer(); }
+    void setRenderer(RenderObject*); // Defined in RenderObject.h
 
     // Use these two methods with caution.
     WEBCORE_EXPORT RenderBox* renderBox() const;
@@ -438,7 +406,6 @@ public:
         Done,
         NeedsPostInsertionCallback,
     };
-
     struct InsertionType {
         bool connectedToDocument { false };
         bool treeScopeChanged { false };
@@ -453,6 +420,8 @@ public:
         bool treeScopeChanged { false };
     };
     virtual void removedFromAncestor(RemovalType, ContainerNode& oldParentOfRemovedTree);
+
+    virtual String debugDescription() const;
 
 #if ENABLE(TREE_DEBUGGING)
     virtual void formatForDebugger(char* buffer, unsigned length) const;
@@ -478,15 +447,15 @@ public:
     EventTargetInterface eventTargetInterface() const override;
     ScriptExecutionContext* scriptExecutionContext() const final; // Implemented in Document.h
 
-    bool addEventListener(const AtomicString& eventType, Ref<EventListener>&&, const AddEventListenerOptions&) override;
-    bool removeEventListener(const AtomicString& eventType, EventListener&, const ListenerOptions&) override;
+    WEBCORE_EXPORT bool addEventListener(const AtomString& eventType, Ref<EventListener>&&, const AddEventListenerOptions&) override;
+    bool removeEventListener(const AtomString& eventType, EventListener&, const ListenerOptions&) override;
 
     using EventTarget::dispatchEvent;
     void dispatchEvent(Event&) override;
 
     void dispatchScopedEvent(Event&);
 
-    virtual void handleLocalEvents(Event&);
+    virtual void handleLocalEvents(Event&, EventInvokePhase);
 
     void dispatchSubtreeModifiedEvent();
     void dispatchDOMActivateEvent(Event& underlyingClickEvent);
@@ -502,14 +471,14 @@ public:
     // Perform the default action for an event.
     virtual void defaultEventHandler(Event&);
 
-    void ref();
-    void deref();
+    void ref() const;
+    void deref() const;
     bool hasOneRef() const;
-    int refCount() const;
+    unsigned refCount() const;
 
-#ifndef NDEBUG
+#if ASSERT_ENABLED
     bool m_deletionHasBegun { false };
-    bool m_inRemovedLastRefFunction { false };
+    mutable bool m_inRemovedLastRefFunction { false };
     bool m_adoptionIsRequired { true };
 #endif
 
@@ -518,13 +487,11 @@ public:
     EventTargetData& ensureEventTargetData() final;
 
     HashMap<Ref<MutationObserver>, MutationRecordDeliveryOptions> registeredMutationObservers(MutationObserver::MutationType, const QualifiedName* attributeName);
-    void registerMutationObserver(MutationObserver&, MutationObserverOptions, const HashSet<AtomicString>& attributeFilter);
+    void registerMutationObserver(MutationObserver&, MutationObserverOptions, const HashSet<AtomString>& attributeFilter);
     void unregisterMutationObserver(MutationObserverRegistration&);
     void registerTransientMutationObserver(MutationObserverRegistration&);
     void unregisterTransientMutationObserver(MutationObserverRegistration&);
     void notifyMutationObserversNodeWillDetach();
-
-    WEBCORE_EXPORT void textRects(Vector<IntRect>&) const;
 
     unsigned connectedSubframeCount() const;
     void incrementConnectedSubframeCount(unsigned amount = 1);
@@ -534,14 +501,14 @@ public:
 
 #if ENABLE(JIT)
     static ptrdiff_t nodeFlagsMemoryOffset() { return OBJECT_OFFSETOF(Node, m_nodeFlags); }
-    static ptrdiff_t rareDataMemoryOffset() { return OBJECT_OFFSETOF(Node, m_data.m_rareData); }
+    static ptrdiff_t rareDataMemoryOffset() { return OBJECT_OFFSETOF(Node, m_rareData); }
     static int32_t flagIsText() { return IsTextFlag; }
     static int32_t flagIsContainer() { return IsContainerFlag; }
     static int32_t flagIsElement() { return IsElementFlag; }
+    static int32_t flagIsShadowRoot() { return IsShadowRootFlag; }
     static int32_t flagIsHTML() { return IsHTMLFlag; }
     static int32_t flagIsLink() { return IsLinkFlag; }
     static int32_t flagHasFocusWithin() { return HasFocusWithin; }
-    static int32_t flagHasRareData() { return HasRareDataFlag; }
     static int32_t flagIsParsingChildrenFinished() { return IsParsingChildrenFinishedFlag; }
     static int32_t flagChildrenAffectedByFirstChildRulesFlag() { return ChildrenAffectedByFirstChildRulesFlag; }
     static int32_t flagChildrenAffectedByLastChildRulesFlag() { return ChildrenAffectedByLastChildRulesFlag; }
@@ -555,41 +522,44 @@ protected:
         IsTextFlag = 1,
         IsContainerFlag = 1 << 1,
         IsElementFlag = 1 << 2,
-        IsStyledElementFlag = 1 << 3,
-        IsHTMLFlag = 1 << 4,
-        IsSVGFlag = 1 << 5,
-        DescendantsAffectedByPreviousSiblingFlag = 1 << 6,
-        ChildNeedsStyleRecalcFlag = 1 << 7,
+        IsHTMLFlag = 1 << 3,
+        IsSVGFlag = 1 << 4,
+        IsMathMLFlag = 1 << 5,
+        IsDocumentNodeFlag = 1 << 6,
+        IsShadowRootFlag = 1 << 7,
         IsConnectedFlag = 1 << 8,
-        IsLinkFlag = 1 << 9,
-        IsUserActionElement = 1 << 10,
-        HasRareDataFlag = 1 << 11,
-        IsDocumentFragmentFlag = 1 << 12,
+        IsInShadowTreeFlag = 1 << 9,
+        // UnusedFlag = 1 << 10,
+        HasEventTargetDataFlag = 1 << 11,
 
         // These bits are used by derived classes, pulled up here so they can
         // be stored in the same memory word as the Node bits above.
-        IsParsingChildrenFinishedFlag = 1 << 13, // Element
-        StyleValidityShift = 14,
+        ChildNeedsStyleRecalcFlag = 1 << 12, // ContainerNode
+        DirectChildNeedsStyleRecalcFlag = 1 << 13,
+
+        IsEditingTextOrUndefinedCustomElementFlag = 1 << 14, // Text and Element
+        IsCustomElement = 1 << 15, // Element
+        HasFocusWithin = 1 << 16,
+        IsLinkFlag = 1 << 17,
+        IsUserActionElement = 1 << 18,
+        IsParsingChildrenFinishedFlag = 1 << 19,
+        HasSyntheticAttrChildNodesFlag = 1 << 20,
+        SelfOrAncestorHasDirAutoFlag = 1 << 21,
+
+        // The following flags are used in style invalidation.
+        StyleValidityShift = 22,
         StyleValidityMask = 3 << StyleValidityShift,
-        StyleResolutionShouldRecompositeLayerFlag = 1 << 16,
-        IsEditingTextOrUndefinedCustomElementFlag = 1 << 17,
-        HasFocusWithin = 1 << 18,
-        HasSyntheticAttrChildNodesFlag = 1 << 19,
-        HasCustomStyleResolveCallbacksFlag = 1 << 20,
-        HasEventTargetDataFlag = 1 << 21,
-        IsCustomElement = 1 << 22,
-        IsInShadowTreeFlag = 1 << 23,
-        IsMathMLFlag = 1 << 24,
+        StyleResolutionShouldRecompositeLayerFlag = 1 << 24,
 
         ChildrenAffectedByFirstChildRulesFlag = 1 << 25,
         ChildrenAffectedByLastChildRulesFlag = 1 << 26,
-        ChildrenAffectedByHoverRulesFlag = 1 << 27,
+        // UnusedFlag = 1 << 27,
 
-        DirectChildNeedsStyleRecalcFlag = 1 << 28,
-        AffectsNextSiblingElementStyle = 1 << 29,
-        StyleIsAffectedByPreviousSibling = 1 << 30,
+        AffectsNextSiblingElementStyle = 1 << 28,
+        StyleIsAffectedByPreviousSibling = 1 << 29,
+        DescendantsAffectedByPreviousSiblingFlag = 1 << 30,
 
-        SelfOrAncestorHasDirAutoFlag = 1 << 31,
+        HasCustomStyleResolveCallbacksFlag = 1 << 31,
 
         DefaultNodeFlags = IsParsingChildrenFinishedFlag
     };
@@ -609,22 +579,39 @@ protected:
         CreateContainer = DefaultNodeFlags | IsContainerFlag,
         CreateElement = CreateContainer | IsElementFlag,
         CreatePseudoElement =  CreateElement | IsConnectedFlag,
-        CreateShadowRoot = CreateContainer | IsDocumentFragmentFlag | IsInShadowTreeFlag,
-        CreateDocumentFragment = CreateContainer | IsDocumentFragmentFlag,
-        CreateStyledElement = CreateElement | IsStyledElementFlag,
-        CreateHTMLElement = CreateStyledElement | IsHTMLFlag,
-        CreateSVGElement = CreateStyledElement | IsSVGFlag | HasCustomStyleResolveCallbacksFlag,
-        CreateDocument = CreateContainer | IsConnectedFlag,
+        CreateShadowRoot = CreateContainer | IsShadowRootFlag | IsInShadowTreeFlag,
+        CreateDocumentFragment = CreateContainer,
+        CreateHTMLElement = CreateElement | IsHTMLFlag,
+        CreateSVGElement = CreateElement | IsSVGFlag | HasCustomStyleResolveCallbacksFlag,
+        CreateMathMLElement = CreateElement | IsMathMLFlag,
+        CreateDocument = CreateContainer | IsDocumentNodeFlag | IsConnectedFlag,
         CreateEditingText = CreateText | IsEditingTextOrUndefinedCustomElementFlag,
-        CreateMathMLElement = CreateStyledElement | IsMathMLFlag
     };
     Node(Document&, ConstructionType);
 
+    static constexpr uint32_t s_refCountIncrement = 2;
+    static constexpr uint32_t s_refCountMask = ~static_cast<uint32_t>(1);
+
+    enum class ElementStyleFlag : uint8_t {
+        StyleAffectedByEmpty                                    = 1 << 0,
+        // Bits for dynamic child matching.
+        // We optimize for :first-child and :last-child. The other positional child selectors like nth-child or
+        // *-child-of-type, we will just give up and re-evaluate whenever children change at all.
+        ChildrenAffectedByForwardPositionalRules                = 1 << 1,
+        DescendantsAffectedByForwardPositionalRules             = 1 << 2,
+        ChildrenAffectedByBackwardPositionalRules               = 1 << 3,
+        DescendantsAffectedByBackwardPositionalRules            = 1 << 4,
+        ChildrenAffectedByPropertyBasedBackwardPositionalRules  = 1 << 5,
+    };
+
+    bool hasStyleFlag(ElementStyleFlag state) const { return m_rendererWithStyleFlags.type() & static_cast<uint8_t>(state); }
+    void setStyleFlag(ElementStyleFlag state) { m_rendererWithStyleFlags.setType(m_rendererWithStyleFlags.type() | static_cast<uint8_t>(state)); }
+    void clearStyleFlags() { m_rendererWithStyleFlags.setType(0); }
+
     virtual void addSubresourceAttributeURLs(ListHashSet<URL>&) const { }
 
-    bool hasRareData() const { return getFlag(HasRareDataFlag); }
-
-    NodeRareData* rareData() const;
+    bool hasRareData() const { return !!m_rareData; }
+    NodeRareData* rareData() const { return m_rareData.get(); }
     NodeRareData& ensureRareData();
     void clearRareData();
 
@@ -646,6 +633,8 @@ private:
         return PseudoId::None;
     }
 
+    virtual bool virtualIsCharacterData() const { return false; }
+
     WEBCORE_EXPORT void removedLastRef();
 
     void refEventTarget() final;
@@ -666,21 +655,25 @@ private:
     static void moveTreeToNewScope(Node&, TreeScope& oldScope, TreeScope& newScope);
     void moveNodeToNewDocument(Document& oldDocument, Document& newDocument);
 
-    int m_refCount;
+    struct NodeRareDataDeleter {
+        void operator()(NodeRareData*) const;
+    };
+
+    mutable uint32_t m_refCountAndParentBit { s_refCountIncrement };
     mutable uint32_t m_nodeFlags;
 
     ContainerNode* m_parentNode { nullptr };
     TreeScope* m_treeScope { nullptr };
     Node* m_previous { nullptr };
     Node* m_next { nullptr };
-    // When a node has rare data we move the renderer into the rare data.
-    union DataUnion {
-        RenderObject* m_renderer;
-        NodeRareDataBase* m_rareData;
-    } m_data { nullptr };
+    CompactPointerTuple<RenderObject*, uint8_t> m_rendererWithStyleFlags;
+    std::unique_ptr<NodeRareData, NodeRareDataDeleter> m_rareData;
 };
 
-#ifndef NDEBUG
+WEBCORE_EXPORT RefPtr<Node> commonInclusiveAncestor(Node&, Node&);
+
+#if ASSERT_ENABLED
+
 inline void adopted(Node* node)
 {
     if (!node)
@@ -689,42 +682,48 @@ inline void adopted(Node* node)
     ASSERT(!node->m_inRemovedLastRefFunction);
     node->m_adoptionIsRequired = false;
 }
-#endif
 
-ALWAYS_INLINE void Node::ref()
+#endif // ASSERT_ENABLED
+
+ALWAYS_INLINE void Node::ref() const
 {
     ASSERT(isMainThread());
     ASSERT(!m_deletionHasBegun);
     ASSERT(!m_inRemovedLastRefFunction);
     ASSERT(!m_adoptionIsRequired);
-    ++m_refCount;
+    m_refCountAndParentBit += s_refCountIncrement;
 }
 
-ALWAYS_INLINE void Node::deref()
+ALWAYS_INLINE void Node::deref() const
 {
     ASSERT(isMainThread());
-    ASSERT(m_refCount >= 0);
+    ASSERT(refCount());
     ASSERT(!m_deletionHasBegun);
     ASSERT(!m_inRemovedLastRefFunction);
     ASSERT(!m_adoptionIsRequired);
-    if (--m_refCount <= 0 && !parentNode()) {
-#ifndef NDEBUG
+    auto updatedRefCount = m_refCountAndParentBit - s_refCountIncrement;
+    if (!updatedRefCount) {
+        // Don't update m_refCountAndParentBit to avoid double destruction through use of Ref<T>/RefPtr<T>.
+        // (This is a security mitigation in case of programmer error. It will ASSERT in debug builds.)
+#if ASSERT_ENABLED
         m_inRemovedLastRefFunction = true;
 #endif
-        removedLastRef();
+        const_cast<Node&>(*this).removedLastRef();
+        return;
     }
+    m_refCountAndParentBit = updatedRefCount;
 }
 
 ALWAYS_INLINE bool Node::hasOneRef() const
 {
     ASSERT(!m_deletionHasBegun);
     ASSERT(!m_inRemovedLastRefFunction);
-    return m_refCount == 1;
+    return refCount() == 1;
 }
 
-ALWAYS_INLINE int Node::refCount() const
+ALWAYS_INLINE unsigned Node::refCount() const
 {
-    return m_refCount;
+    return m_refCountAndParentBit / s_refCountIncrement;
 }
 
 // Used in Node::addSubresourceAttributeURLs() and in addSubresourceStyleURLs()
@@ -738,6 +737,7 @@ inline void Node::setParentNode(ContainerNode* parent)
 {
     ASSERT(isMainThread());
     m_parentNode = parent;
+    m_refCountAndParentBit = (m_refCountAndParentBit & s_refCountMask) | !!parent;
 }
 
 inline ContainerNode* Node::parentNode() const
@@ -784,6 +784,10 @@ inline void Node::setTreeScopeRecursively(TreeScope& newTreeScope)
     if (m_treeScope != &newTreeScope)
         moveTreeToNewScope(*this, *m_treeScope, newTreeScope);
 }
+
+bool areNodesConnectedInSameTreeScope(const Node*, const Node*);
+
+WTF::TextStream& operator<<(WTF::TextStream&, const Node&);
 
 } // namespace WebCore
 

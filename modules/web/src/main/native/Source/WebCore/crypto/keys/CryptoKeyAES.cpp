@@ -26,8 +26,9 @@
 #include "config.h"
 #include "CryptoKeyAES.h"
 
-#if ENABLE(SUBTLE_CRYPTO)
+#if ENABLE(WEB_CRYPTO)
 
+#include "CryptoAesKeyAlgorithm.h"
 #include "CryptoAlgorithmAesKeyParams.h"
 #include "CryptoAlgorithmRegistry.h"
 #include "ExceptionOr.h"
@@ -130,4 +131,4 @@ auto CryptoKeyAES::algorithm() const -> KeyAlgorithm
 
 } // namespace WebCore
 
-#endif // ENABLE(SUBTLE_CRYPTO)
+#endif // ENABLE(WEB_CRYPTO)

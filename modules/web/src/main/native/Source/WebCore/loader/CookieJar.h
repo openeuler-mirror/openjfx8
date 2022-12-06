@@ -25,26 +25,54 @@
 
 #pragma once
 
+#include "FrameIdentifier.h"
+#include "PageIdentifier.h"
 #include <wtf/Forward.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
+enum class IncludeSecureCookies : bool { No, Yes };
+enum class IncludeHttpOnlyCookies : bool { No, Yes };
+enum class SecureCookiesAccessed : bool { No, Yes };
+
 class Document;
-class URL;
 struct Cookie;
 struct CookieRequestHeaderFieldProxy;
+class NetworkStorageSession;
+class StorageSessionProvider;
+struct SameSiteInfo;
 
-// Functions in this file take a Document pointer to determine which cookie storage to use. We should merge that into call sites, and use PlatformCookieJar directly.
+class WEBCORE_EXPORT CookieJar : public RefCounted<CookieJar> {
+public:
+    static Ref<CookieJar> create(Ref<StorageSessionProvider>&&);
 
-// These two functions implement document.cookie API, with special rules for HttpOnly cookies.
-WEBCORE_EXPORT String cookies(Document&, const URL&);
-WEBCORE_EXPORT void setCookies(Document&, const URL&, const String& cookieString);
+    static CookieRequestHeaderFieldProxy cookieRequestHeaderFieldProxy(const Document&, const URL&);
 
-WEBCORE_EXPORT bool cookiesEnabled(const Document&);
-WEBCORE_EXPORT String cookieRequestHeaderFieldValue(Document&, const URL&);
-WEBCORE_EXPORT CookieRequestHeaderFieldProxy cookieRequestHeaderFieldProxy(const Document&, const URL&);
-WEBCORE_EXPORT bool getRawCookies(const Document&, const URL&, Vector<Cookie>&);
-WEBCORE_EXPORT void deleteCookie(const Document&, const URL&, const String& cookieName);
+    String cookieRequestHeaderFieldValue(Document&, const URL&) const;
+
+    // These two functions implement document.cookie API, with special rules for HttpOnly cookies.
+    virtual String cookies(Document&, const URL&) const;
+    virtual void setCookies(Document&, const URL&, const String& cookieString);
+
+    virtual bool cookiesEnabled(const Document&) const;
+    virtual std::pair<String, SecureCookiesAccessed> cookieRequestHeaderFieldValue(const URL& firstParty, const SameSiteInfo&, const URL&, Optional<FrameIdentifier>, Optional<PageIdentifier>, IncludeSecureCookies) const;
+    virtual bool getRawCookies(const Document&, const URL&, Vector<Cookie>&) const;
+    virtual void setRawCookie(const Document&, const Cookie&);
+    virtual void deleteCookie(const Document&, const URL&, const String& cookieName);
+
+    // Cookie Cache.
+    virtual void clearCache() { }
+    virtual void clearCacheForHost(const String&) { }
+
+    virtual ~CookieJar();
+protected:
+    static SameSiteInfo sameSiteInfo(const Document&);
+    static IncludeSecureCookies shouldIncludeSecureCookies(const Document&, const URL&);
+    CookieJar(Ref<StorageSessionProvider>&&);
+
+private:
+    Ref<StorageSessionProvider> m_storageSessionProvider;
+};
 
 } // namespace WebCore

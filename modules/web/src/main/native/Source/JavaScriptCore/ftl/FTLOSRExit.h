@@ -69,7 +69,7 @@ struct OSRExitHandle;
 struct OSRExitDescriptor {
     OSRExitDescriptor(
         DataFormat profileDataFormat, MethodOfGettingAValueProfile,
-        unsigned numberOfArguments, unsigned numberOfLocals);
+        unsigned numberOfArguments, unsigned numberOfLocals, unsigned numberOfTmps);
 
     // The first argument to the exit call may be a value we wish to profile.
     // If that's the case, the format will be not Invalid and we'll have a
@@ -90,9 +90,9 @@ struct OSRExitDescriptor {
     // up to the OSRExit object, which this creates. Note that it's OK to drop the OSRExitHandle object
     // on the ground. It contains information that is mostly not useful if you use this API, since after
     // this call, the OSRExit is simply ready to go.
-    RefPtr<OSRExitHandle> emitOSRExit(
+    Ref<OSRExitHandle> emitOSRExit(
         State&, ExitKind, const DFG::NodeOrigin&, CCallHelpers&, const B3::StackmapGenerationParams&,
-        unsigned offset = 0);
+        uint32_t dfgNodeIndex, unsigned offset);
 
     // In some cases you want an OSRExit to come into existence, but you don't want to emit it right now.
     // This will emit the OSR exit in a late path. You can't be sure exactly when that will happen, but
@@ -102,21 +102,21 @@ struct OSRExitDescriptor {
     // This API is meant to be used for things like exception handling, where some patchpoint wants to
     // have a place to jump to for OSR exit. It doesn't care where that OSR exit is emitted so long as it
     // eventually gets access to its label.
-    RefPtr<OSRExitHandle> emitOSRExitLater(
+    Ref<OSRExitHandle> emitOSRExitLater(
         State&, ExitKind, const DFG::NodeOrigin&, const B3::StackmapGenerationParams&,
-        unsigned offset = 0);
+        uint32_t dfgNodeIndex, unsigned offset);
 
 private:
     // This is the low-level interface. It will create a handle representing the desire to emit code for
     // an OSR exit. You can call OSRExitHandle::emitExitThunk() once you have a place to emit it. Note
     // that the above two APIs are written in terms of this and OSRExitHandle::emitExitThunk().
-    RefPtr<OSRExitHandle> prepareOSRExitHandle(
+    Ref<OSRExitHandle> prepareOSRExitHandle(
         State&, ExitKind, const DFG::NodeOrigin&, const B3::StackmapGenerationParams&,
-        unsigned offset = 0);
+        uint32_t dfgNodeIndex, unsigned offset);
 };
 
 struct OSRExit : public DFG::OSRExitBase {
-    OSRExit(OSRExitDescriptor*, ExitKind, CodeOrigin, CodeOrigin codeOriginForExitProfile, bool wasHoisted);
+    OSRExit(OSRExitDescriptor*, ExitKind, CodeOrigin, CodeOrigin codeOriginForExitProfile, bool wasHoisted, uint32_t dfgNodeIndex);
 
     OSRExitDescriptor* m_descriptor;
     MacroAssemblerCodeRef<OSRExitPtrTag> m_code;

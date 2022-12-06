@@ -28,6 +28,7 @@ package com.sun.javafx.scene;
 import com.sun.glass.ui.Accessible;
 import javafx.scene.Node;
 import javafx.scene.SubScene;
+import javafx.scene.text.Font;
 
 /**
  * Used to access internal methods of Node.
@@ -58,6 +59,10 @@ public class NodeHelper {
         return nodeAccessor.getAccessible(node);
     };
 
+    public static void recalculateRelativeSizeProperties(Node node, Font fontForRelativeSizes) {
+        nodeAccessor.recalculateRelativeSizeProperties(node, fontForRelativeSizes);
+    }
+
     public static void setNodeAccessor(final NodeAccessor newAccessor) {
         if (nodeAccessor != null) {
             throw new IllegalStateException();
@@ -80,6 +85,7 @@ public class NodeHelper {
         SubScene getSubScene(Node node);
         void setLabeledBy(Node node, Node labeledBy);
         Accessible getAccessible(Node node);
+        void recalculateRelativeSizeProperties(Node node, Font fontForRelativeSizes);
     }
 
     private static void forceInit(final Class<?> classToInit) {

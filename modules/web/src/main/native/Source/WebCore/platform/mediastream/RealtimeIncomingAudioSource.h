@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,36 +34,62 @@
 
 #include "LibWebRTCMacros.h"
 #include "RealtimeMediaSource.h"
-#include <webrtc/api/mediastreaminterface.h>
+
+ALLOW_UNUSED_PARAMETERS_BEGIN
+
+#include <webrtc/api/media_stream_interface.h>
+
+ALLOW_UNUSED_PARAMETERS_END
+
 #include <wtf/RetainPtr.h>
 
 namespace WebCore {
 
-class RealtimeIncomingAudioSource : public RealtimeMediaSource, private webrtc::AudioTrackSinkInterface {
+class RealtimeIncomingAudioSource
+    : public RealtimeMediaSource
+    , private webrtc::AudioTrackSinkInterface
+    , private webrtc::ObserverInterface
+{
 public:
     static Ref<RealtimeIncomingAudioSource> create(rtc::scoped_refptr<webrtc::AudioTrackInterface>&&, String&&);
-
-    void setSourceTrack(rtc::scoped_refptr<webrtc::AudioTrackInterface>&&);
 
 protected:
     RealtimeIncomingAudioSource(rtc::scoped_refptr<webrtc::AudioTrackInterface>&&, String&&);
     ~RealtimeIncomingAudioSource();
 
+#if !RELEASE_LOG_DISABLED
+    const char* logClassName() const final { return "RealtimeIncomingAudioSource"; }
+#endif
+
 private:
     // webrtc::AudioTrackSinkInterface API
     virtual void OnData(const void* /* audioData */, int /* bitsPerSample */, int /* sampleRate */, size_t /* numberOfChannels */, size_t /* numberOfFrames */) { };
+
+    // webrtc::ObserverInterface API
+    void OnChanged() final;
 
     // RealtimeMediaSource API
     void startProducingData() final;
     void stopProducingData()  final;
 
-    const RealtimeMediaSourceCapabilities& capabilities() const final;
-    const RealtimeMediaSourceSettings& settings() const final;
+    const RealtimeMediaSourceCapabilities& capabilities() final;
+    const RealtimeMediaSourceSettings& settings() final;
+
+    bool isIncomingAudioSource() const final { return true; }
 
     RealtimeMediaSourceSettings m_currentSettings;
     rtc::scoped_refptr<webrtc::AudioTrackInterface> m_audioTrack;
+
+#if !RELEASE_LOG_DISABLED
+    mutable RefPtr<const Logger> m_logger;
+    const void* m_logIdentifier;
+#endif
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::RealtimeIncomingAudioSource)
+    static bool isType(const WebCore::RealtimeMediaSource& source) { return source.isIncomingAudioSource(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // USE(LIBWEBRTC)

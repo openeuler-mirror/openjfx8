@@ -28,7 +28,7 @@
 
 #pragma once
 
-#if !ENABLE(JIT)
+#if ENABLE(C_LOOP)
 
 #include "Register.h"
 #include <wtf/Noncopyable.h>
@@ -46,7 +46,7 @@ namespace JSC {
         WTF_MAKE_NONCOPYABLE(CLoopStack);
     public:
         // Allow 8k of excess registers before we start trying to reap the stack
-        static const ptrdiff_t maxExcessCapacity = 8 * 1024;
+        static constexpr ptrdiff_t maxExcessCapacity = 8 * 1024;
 
         CLoopStack(VM&);
         ~CLoopStack();
@@ -107,4 +107,4 @@ namespace JSC {
 
 } // namespace JSC
 
-#endif // !ENABLE(JIT)
+#endif // ENABLE(C_LOOP)

@@ -55,29 +55,50 @@ public:
     WEBCORE_EXPORT void addSelfToGlobalObjectInWorld(DOMWrapperWorld&);
 
     void loaded();
-    void requestSetDockSide(const String&);
     void closeWindow();
+    void reopen();
+    void reset();
+
     void bringToFront();
     void inspectedURLChanged(const String&);
+
+    bool supportsShowCertificate() const;
+    bool showCertificate(const String& serializedCertificate);
 
     void setZoomFactor(float);
     float zoomFactor();
 
+    void setForcedAppearance(String);
+
     String userInterfaceLayoutDirection();
+
+    bool supportsDockSide(const String&);
+    void requestSetDockSide(const String&);
 
     void setAttachedWindowHeight(unsigned);
     void setAttachedWindowWidth(unsigned);
 
+    void setSheetRect(float x, float y, unsigned width, unsigned height);
+
     void startWindowDrag();
     void moveWindowBy(float x, float y) const;
 
-    String localizedStringsURL();
-    String backendCommandsURL();
-    String debuggableType();
-    unsigned inspectionLevel();
+    bool isRemote() const;
+    String localizedStringsURL() const;
+    String backendCommandsURL() const;
+    unsigned inspectionLevel() const;
 
-    String platform();
-    String port();
+    String platform() const;
+    String port() const;
+
+    struct DebuggableInfo {
+        String debuggableType;
+        String targetPlatformName;
+        String targetBuildVersion;
+        String targetProductVersion;
+        bool targetIsSimulator;
+    };
+    DebuggableInfo debuggableInfo() const;
 
     void copyText(const String& text);
     void killText(const String& text, bool shouldPrependToKillRing, bool shouldStartNewSequence);
@@ -90,10 +111,10 @@ public:
     struct ContextMenuItem {
         String type;
         String label;
-        std::optional<int> id;
-        std::optional<bool> enabled;
-        std::optional<bool> checked;
-        std::optional<Vector<ContextMenuItem>> subItems;
+        Optional<int> id;
+        Optional<bool> enabled;
+        Optional<bool> checked;
+        Optional<Vector<ContextMenuItem>> subItems;
     };
     void showContextMenu(Event&, Vector<ContextMenuItem>&&);
 
@@ -101,10 +122,18 @@ public:
     void dispatchEventAsContextMenuEvent(Event&);
 
     bool isUnderTest();
+    bool isExperimentalBuild();
     void unbufferedLog(const String& message);
 
     void beep();
     void inspectInspector();
+    bool isBeingInspected();
+
+    bool supportsDiagnosticLogging();
+#if ENABLE(INSPECTOR_TELEMETRY)
+    bool diagnosticLoggingAvailable();
+    void logDiagnosticEvent(const String& eventName, const String& payload);
+#endif
 
 private:
 #if ENABLE(CONTEXT_MENUS)

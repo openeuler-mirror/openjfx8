@@ -45,12 +45,11 @@ ifdef HOST_COMPILE
                   -Wformat \
                   -Wextra \
                   -Wformat-security \
-                  -Werror=implicit-function-declaration \
                   -fPIC -fstack-protector-all  \
 	          -DGSTREAMER_LITE
-
-	PACKAGES_INCLUDES := $(shell pkg-config --cflags glib-2.0)
-	PACKAGES_LIBS := $(shell pkg-config --libs glib-2.0 gobject-2.0 gmodule-2.0 gthread-2.0)
+	          
+    PACKAGES_INCLUDES := $(shell pkg-config --cflags glib-2.0)
+    PACKAGES_LIBS := $(shell pkg-config --libs glib-2.0 gobject-2.0 gmodule-2.0 gthread-2.0)
 
 	INCLUDES = $(BASE_INCLUDES) \
 		   -I$(JAVA_HOME)/include \
@@ -58,7 +57,7 @@ ifdef HOST_COMPILE
 	           -I$(GSTREAMER_LITE_DIR)/gstreamer \
 		   -I$(GSTREAMER_LITE_DIR)/gst-plugins-base/gst-libs \
 	           -I$(GSTREAMER_LITE_DIR)/gstreamer/libs \
-                    $(PACKAGES_INCLUDES)
+           $(PACKAGES_INCLUDES)
 
 	LDFLAGS = -Wl,-rpath,\$$ORIGIN -L$(BUILD_DIR) -lgstreamer-lite $(PACKAGES_LIBS) -z relro -z now -z noexecstack
 else

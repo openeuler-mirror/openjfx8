@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include "Error.h"
 #include "InternalFunction.h"
 #include "NativeErrorPrototype.h"
 
@@ -29,22 +30,9 @@ class ErrorInstance;
 class FunctionPrototype;
 class NativeErrorPrototype;
 
-class NativeErrorConstructor final : public InternalFunction {
+class NativeErrorConstructorBase : public InternalFunction {
 public:
-    typedef InternalFunction Base;
-
-    template<typename CellType>
-    static IsoSubspace* subspaceFor(VM& vm)
-    {
-        return &vm.nativeErrorConstructorSpace;
-    }
-
-    static NativeErrorConstructor* create(VM& vm, JSGlobalObject* globalObject, Structure* structure, Structure* prototypeStructure, const String& name)
-    {
-        NativeErrorConstructor* constructor = new (NotNull, allocateCell<NativeErrorConstructor>(vm.heap)) NativeErrorConstructor(vm, structure);
-        constructor->finishCreation(vm, globalObject, prototypeStructure, name);
-        return constructor;
-    }
+    using Base = InternalFunction;
 
     DECLARE_INFO;
 
@@ -53,16 +41,43 @@ public:
         return Structure::create(vm, globalObject, prototype, TypeInfo(InternalFunctionType, StructureFlags), info());
     }
 
-    Structure* errorStructure() { return m_errorStructure.get(); }
-
 protected:
-    void finishCreation(VM&, JSGlobalObject*, Structure* prototypeStructure, const String& name);
+    NativeErrorConstructorBase(VM& vm, Structure* structure, NativeFunction functionForCall, NativeFunction functionForConstruct)
+        : InternalFunction(vm, structure, functionForCall, functionForConstruct)
+    {
+    }
 
-private:
-    NativeErrorConstructor(VM&, Structure*);
-    static void visitChildren(JSCell*, SlotVisitor&);
-
-    WriteBarrier<Structure> m_errorStructure;
+    void finishCreation(VM&, NativeErrorPrototype*, ErrorType);
 };
+
+template<ErrorType errorType>
+class NativeErrorConstructor final : public NativeErrorConstructorBase {
+public:
+    static NativeErrorConstructor* create(VM& vm, Structure* structure, NativeErrorPrototype* prototype)
+    {
+        NativeErrorConstructor* constructor = new (NotNull, allocateCell<NativeErrorConstructor>(vm.heap)) NativeErrorConstructor(vm, structure);
+        constructor->finishCreation(vm, prototype, errorType);
+        return constructor;
+    }
+private:
+    static EncodedJSValue JSC_HOST_CALL callNativeErrorConstructor(JSGlobalObject*, CallFrame*);
+    static EncodedJSValue JSC_HOST_CALL constructNativeErrorConstructor(JSGlobalObject*, CallFrame*);
+
+    NativeErrorConstructor(VM&, Structure*);
+};
+
+using EvalErrorConstructor = NativeErrorConstructor<ErrorType::EvalError>;
+using RangeErrorConstructor = NativeErrorConstructor<ErrorType::RangeError>;
+using ReferenceErrorConstructor = NativeErrorConstructor<ErrorType::ReferenceError>;
+using SyntaxErrorConstructor = NativeErrorConstructor<ErrorType::SyntaxError>;
+using TypeErrorConstructor = NativeErrorConstructor<ErrorType::TypeError>;
+using URIErrorConstructor = NativeErrorConstructor<ErrorType::URIError>;
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(EvalErrorConstructor, InternalFunction);
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(RangeErrorConstructor, InternalFunction);
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(ReferenceErrorConstructor, InternalFunction);
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(SyntaxErrorConstructor, InternalFunction);
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(TypeErrorConstructor, InternalFunction);
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(URIErrorConstructor, InternalFunction);
 
 } // namespace JSC

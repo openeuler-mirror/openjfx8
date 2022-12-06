@@ -23,7 +23,7 @@
  * questions.
  */
 
-package test.javafx.stage;
+package javafx.stage;
 
 import java.io.FileNotFoundException;
 import java.io.PrintWriter;

@@ -27,17 +27,21 @@
 
 #include "Position.h"
 #include <wtf/Forward.h>
+#include <wtf/HashSet.h>
 #include <wtf/unicode/CharacterNames.h>
 
 namespace WebCore {
 
 class Document;
 class HTMLElement;
+class HTMLImageElement;
 class HTMLSpanElement;
 class HTMLTextFormControlElement;
 class RenderBlock;
 class VisiblePosition;
 class VisibleSelection;
+
+struct SimpleRange;
 
 // -------------------------------------------------------------------------
 // Node
@@ -96,11 +100,13 @@ bool isNodeRendered(const Node&);
 bool isRenderedAsNonInlineTableImageOrHR(const Node*);
 bool isNonTableCellHTMLBlockElement(const Node*);
 
-bool isNodeVisiblyContainedWithin(Node&, const Range&);
+bool isNodeVisiblyContainedWithin(Node&, const SimpleRange&);
 
 bool areIdenticalElements(const Node&, const Node&);
 
 bool positionBeforeOrAfterNodeIsCandidate(Node&);
+
+WEBCORE_EXPORT HashSet<RefPtr<HTMLImageElement>> visibleImageElementsInRangeWithNonLoadedImages(const SimpleRange&);
 
 // -------------------------------------------------------------------------
 // Position
@@ -142,7 +148,7 @@ VisiblePosition visiblePositionAfterNode(Node&);
 
 bool lineBreakExistsAtVisiblePosition(const VisiblePosition&);
 
-int comparePositions(const VisiblePosition&, const VisiblePosition&);
+WEBCORE_EXPORT int comparePositions(const VisiblePosition&, const VisiblePosition&);
 
 WEBCORE_EXPORT int indexForVisiblePosition(const VisiblePosition&, RefPtr<ContainerNode>& scope);
 int indexForVisiblePosition(Node&, const VisiblePosition&, bool forSelectionPreservation);
@@ -150,13 +156,15 @@ WEBCORE_EXPORT VisiblePosition visiblePositionForPositionWithOffset(const Visibl
 WEBCORE_EXPORT VisiblePosition visiblePositionForIndex(int index, ContainerNode* scope);
 VisiblePosition visiblePositionForIndexUsingCharacterIterator(Node&, int index); // FIXME: Why do we need this version?
 
+WEBCORE_EXPORT VisiblePosition closestEditablePositionInElementForAbsolutePoint(const Element&, const IntPoint&);
+
 // -------------------------------------------------------------------------
 // HTMLElement
 // -------------------------------------------------------------------------
 
 WEBCORE_EXPORT Ref<HTMLElement> createDefaultParagraphElement(Document&);
 Ref<HTMLElement> createHTMLElement(Document&, const QualifiedName&);
-Ref<HTMLElement> createHTMLElement(Document&, const AtomicString&);
+Ref<HTMLElement> createHTMLElement(Document&, const AtomString&);
 
 WEBCORE_EXPORT HTMLElement* enclosingList(Node*);
 HTMLElement* outermostEnclosingList(Node*, Node* rootList = nullptr);
@@ -197,7 +205,7 @@ const String& nonBreakingSpaceString();
 
 // Miscellaneous functions for caret rendering.
 
-RenderBlock* rendererForCaretPainting(Node*);
+RenderBlock* rendererForCaretPainting(const Node*);
 LayoutRect localCaretRectInRendererForCaretPainting(const VisiblePosition&, RenderBlock*&);
 LayoutRect localCaretRectInRendererForRect(LayoutRect&, Node*, RenderObject*, RenderBlock*&);
 IntRect absoluteBoundsForLocalCaretRect(RenderBlock* rendererForCaretPainting, const LayoutRect&, bool* insideFixed = nullptr);

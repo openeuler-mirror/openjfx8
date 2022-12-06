@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011 Apple Inc. All rights reserved.
+ * Copyright (C) 2011-2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,7 +28,8 @@
 #include "Color.h"
 #include "LayoutSize.h"
 #include "Length.h"
-#include <wtf/RefCounted.h>
+#include <wtf/EnumTraits.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/TypeCasts.h>
 #include <wtf/text/WTFString.h>
 
@@ -44,10 +45,10 @@ namespace WebCore {
 class CachedResourceLoader;
 class CachedSVGDocumentReference;
 class FilterEffect;
-struct FloatComponents;
 struct ResourceLoaderOptions;
+template<typename> struct SRGBA;
 
-class FilterOperation : public RefCounted<FilterOperation> {
+class FilterOperation : public ThreadSafeRefCounted<FilterOperation> {
 public:
     enum OperationType {
         REFERENCE, // url(#somefilter)
@@ -79,8 +80,8 @@ public:
         return nullptr;
     }
 
-    virtual bool transformColor(FloatComponents&) const { return false; }
-    virtual bool inverseTransformColor(FloatComponents&) const { return false; }
+    virtual bool transformColor(SRGBA<float>&) const { return false; }
+    virtual bool inverseTransformColor(SRGBA<float>&) const { return false; }
 
     OperationType type() const { return m_type; }
 
@@ -189,9 +190,6 @@ public:
 
     CachedSVGDocumentReference* cachedSVGDocumentReference() const { return m_cachedSVGDocumentReference.get(); }
 
-    FilterEffect* filterEffect() const { return m_filterEffect.get(); }
-    void setFilterEffect(RefPtr<FilterEffect>&&);
-
 private:
     ReferenceFilterOperation(const String& url, const String& fragment);
 
@@ -200,7 +198,6 @@ private:
     String m_url;
     String m_fragment;
     std::unique_ptr<CachedSVGDocumentReference> m_cachedSVGDocumentReference;
-    RefPtr<FilterEffect> m_filterEffect;
 };
 
 // GRAYSCALE, SEPIA, SATURATE and HUE_ROTATE are variations on a basic color matrix effect.
@@ -232,7 +229,7 @@ private:
     {
     }
 
-    bool transformColor(FloatComponents&) const override;
+    bool transformColor(SRGBA<float>&) const override;
 
     double m_amount;
 };
@@ -267,7 +264,7 @@ private:
     {
     }
 
-    bool transformColor(FloatComponents&) const override;
+    bool transformColor(SRGBA<float>&) const override;
 
     double m_amount;
 };
@@ -294,8 +291,8 @@ private:
     {
     }
 
-    bool transformColor(FloatComponents&) const final;
-    bool inverseTransformColor(FloatComponents&) const final;
+    bool transformColor(SRGBA<float>&) const final;
+    bool inverseTransformColor(SRGBA<float>&) const final;
 };
 
 class WEBCORE_EXPORT BlurFilterOperation : public FilterOperation {
@@ -386,3 +383,27 @@ SPECIALIZE_TYPE_TRAITS_FILTEROPERATION(InvertLightnessFilterOperation, type() ==
 SPECIALIZE_TYPE_TRAITS_FILTEROPERATION(BlurFilterOperation, type() == WebCore::FilterOperation::BLUR)
 SPECIALIZE_TYPE_TRAITS_FILTEROPERATION(DropShadowFilterOperation, type() == WebCore::FilterOperation::DROP_SHADOW)
 
+namespace WTF {
+
+template<> struct EnumTraits<WebCore::FilterOperation::OperationType> {
+    using values = EnumValues<
+        WebCore::FilterOperation::OperationType,
+        WebCore::FilterOperation::OperationType::REFERENCE,
+        WebCore::FilterOperation::OperationType::GRAYSCALE,
+        WebCore::FilterOperation::OperationType::SEPIA,
+        WebCore::FilterOperation::OperationType::SATURATE,
+        WebCore::FilterOperation::OperationType::HUE_ROTATE,
+        WebCore::FilterOperation::OperationType::INVERT,
+        WebCore::FilterOperation::OperationType::APPLE_INVERT_LIGHTNESS,
+        WebCore::FilterOperation::OperationType::OPACITY,
+        WebCore::FilterOperation::OperationType::BRIGHTNESS,
+        WebCore::FilterOperation::OperationType::CONTRAST,
+        WebCore::FilterOperation::OperationType::BLUR,
+        WebCore::FilterOperation::OperationType::DROP_SHADOW,
+        WebCore::FilterOperation::OperationType::PASSTHROUGH,
+        WebCore::FilterOperation::OperationType::DEFAULT,
+        WebCore::FilterOperation::OperationType::NONE
+    >;
+};
+
+} // namespace WTF

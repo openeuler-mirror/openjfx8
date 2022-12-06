@@ -27,6 +27,7 @@ package javafx.scene.control;
 
 
 import com.sun.javafx.css.StyleManager;
+import com.sun.javafx.scene.NodeHelper;
 import com.sun.javafx.css.converters.BooleanConverter;
 import com.sun.javafx.css.converters.EnumConverter;
 import com.sun.javafx.css.converters.InsetsConverter;
@@ -350,6 +351,7 @@ public abstract class Labeled extends Control {
                     final Font oldValue = get();
                     if (value != null ? !value.equals(oldValue) : oldValue != null) {
                         super.set(value);
+                        NodeHelper.recalculateRelativeSizeProperties(Labeled.this, value);
                     }
 
                 }

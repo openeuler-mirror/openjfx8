@@ -46,13 +46,13 @@ public:
     void deleteInlineBoxWrapper();
     void replaceInlineBoxWrapper(InlineElementBox&);
     void dirtyLineBoxes(bool fullLayout);
-    void deleteLineBoxesBeforeSimpleLineLayout();
 
     IntRect linesBoundingBox() const;
+    IntRect boundingBoxForRenderTreeDump() const;
 
     void absoluteRects(Vector<IntRect>&, const LayoutPoint& accumulatedOffset) const override;
     void absoluteQuads(Vector<FloatQuad>&, bool* wasFixed) const override;
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
 void collectSelectionRects(Vector<SelectionRect>&, unsigned startOffset = 0, unsigned endOffset = std::numeric_limits<unsigned>::max()) override;
 #endif
     void ensureLineBoxes();
@@ -68,7 +68,7 @@ private:
     int caretMaxOffset() const override;
     bool canBeSelectionLeaf() const override;
     LayoutRect localCaretRect(InlineBox*, unsigned caretOffset, LayoutUnit* extraWidthToEndOfLine) override;
-    void setSelectionState(SelectionState) override;
+    void setSelectionState(HighlightState) override;
 
     LayoutUnit lineHeight(bool firstLine, LineDirectionMode, LinePositionMode) const override;
     int baselinePosition(FontBaseline, bool firstLine, LineDirectionMode, LinePositionMode) const override;

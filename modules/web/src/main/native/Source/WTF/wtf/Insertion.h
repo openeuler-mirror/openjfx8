@@ -23,13 +23,13 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef Insertion_h
-#define Insertion_h
+#pragma once
 
 namespace WTF {
 
 template<typename T>
 class Insertion {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     Insertion() { }
 
@@ -81,5 +81,3 @@ size_t executeInsertions(TargetVectorType& target, InsertionVectorType& insertio
 
 using WTF::Insertion;
 using WTF::executeInsertions;
-
-#endif // Insertion_h

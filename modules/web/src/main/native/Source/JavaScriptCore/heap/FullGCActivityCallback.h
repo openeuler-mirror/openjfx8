@@ -29,24 +29,24 @@
 
 namespace JSC {
 
-class JS_EXPORT_PRIVATE FullGCActivityCallback : public GCActivityCallback {
+class JS_EXPORT_PRIVATE FullGCActivityCallback final : public GCActivityCallback {
 public:
     FullGCActivityCallback(Heap*);
 
-    void doCollection(VM&) override;
+    void doCollection(VM&) final;
 
     bool didGCRecently() const { return m_didGCRecently; }
     void setDidGCRecently() { m_didGCRecently = true; }
 
-protected:
-    Seconds lastGCLength(Heap&) override;
-    double gcTimeSlice(size_t bytes) override;
-    double deathRate(Heap&) override;
+private:
+    Seconds lastGCLength(Heap&) final;
+    double gcTimeSlice(size_t bytes) final;
+    double deathRate(Heap&) final;
 
     bool m_didGCRecently { false };
 };
 
-inline RefPtr<FullGCActivityCallback> GCActivityCallback::createFullTimer(Heap* heap)
+inline RefPtr<FullGCActivityCallback> GCActivityCallback::tryCreateFullTimer(Heap* heap)
 {
     return s_shouldCreateGCTimer ? adoptRef(new FullGCActivityCallback(heap)) : nullptr;
 }
