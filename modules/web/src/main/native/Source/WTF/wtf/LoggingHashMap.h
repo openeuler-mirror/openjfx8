@@ -34,7 +34,7 @@ namespace WTF {
 
 template<
     const char* typeArguments,
-    typename KeyArg, typename MappedArg, typename HashArg = typename DefaultHash<KeyArg>::Hash,
+    typename KeyArg, typename MappedArg, typename HashArg = DefaultHash<KeyArg>,
     typename KeyTraitsArg = HashTraits<KeyArg>, typename MappedTraitsArg = HashTraits<MappedArg>,
     typename LoggingKeyTraits = LoggingHashKeyTraits<KeyArg>,
     typename LoggingValueTraits = LoggingHashValueTraits<MappedArg>>
@@ -51,6 +51,11 @@ public:
     typedef typename HashMap::iterator iterator;
     typedef typename HashMap::const_iterator const_iterator;
     typedef typename HashMap::AddResult AddResult;
+
+private:
+    typedef typename HashMap::MappedTraits::PeekType MappedPeekType;
+
+public:
 
     LoggingHashMap()
     {
@@ -102,10 +107,13 @@ public:
     const_iterator begin() const { return m_map.begin(); }
     const_iterator end() const { return m_map.end(); }
 
+    iterator random() { return m_map.random(); }
+    const_iterator random() const { return m_map.random(); }
+
     auto keys() { return m_map.keys(); }
-    const auto keys() const { return m_map.keys(); }
+    auto keys() const { return m_map.keys(); }
     auto values() { return m_map.values(); }
-    const auto values() const { return m_map.values(); }
+    auto values() const { return m_map.values(); }
 
     iterator find(const KeyType& key)
     {

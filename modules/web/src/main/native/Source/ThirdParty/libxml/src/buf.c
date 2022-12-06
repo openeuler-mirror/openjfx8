@@ -30,10 +30,6 @@
 #include <libxml/parserInternals.h> /* for XML_MAX_TEXT_LENGTH */
 #include "buf.h"
 
-#ifndef SIZE_MAX
-#define SIZE_MAX ((size_t) -1)
-#endif
-
 #define WITH_BUFFER_COMPAT
 
 /**
@@ -160,8 +156,6 @@ xmlBufPtr
 xmlBufCreateSize(size_t size) {
     xmlBufPtr ret;
 
-    if (size == SIZE_MAX)
-        return(NULL);
     ret = (xmlBufPtr) xmlMalloc(sizeof(xmlBuf));
     if (ret == NULL) {
         xmlBufMemoryError(NULL, "creating buffer");
@@ -172,8 +166,8 @@ xmlBufCreateSize(size_t size) {
     ret->error = 0;
     ret->buffer = NULL;
     ret->alloc = xmlBufferAllocScheme;
-    ret->size = (size ? size + 1 : 0);         /* +1 for ending null */
-    ret->compat_size = (ret->size > INT_MAX ? INT_MAX : ret->size);
+    ret->size = (size ? size+2 : 0);         /* +1 for ending null */
+    ret->compat_size = (int) ret->size;
     if (ret->size){
         ret->content = (xmlChar *) xmlMallocAtomic(ret->size * sizeof(xmlChar));
         if (ret->content == NULL) {
@@ -448,17 +442,23 @@ xmlBufGrowInternal(xmlBufPtr buf, size_t len) {
     CHECK_COMPAT(buf)
 
     if (buf->alloc == XML_BUFFER_ALLOC_IMMUTABLE) return(0);
-    if (len < buf->size - buf->use)
+    if (buf->use + len < buf->size)
         return(buf->size - buf->use);
-    if (len > SIZE_MAX - buf->use)
-        return(0);
 
-    if (buf->size > (size_t) len) {
-        size = buf->size > SIZE_MAX / 2 ? SIZE_MAX : buf->size * 2;
-    } else {
-        size = buf->use + len;
-        size = size > SIZE_MAX - 100 ? SIZE_MAX : size + 100;
-    }
+    /*
+     * Windows has a BIG problem on realloc timing, so we try to double
+     * the buffer size (if that's enough) (bug 146697)
+     * Apparently BSD too, and it's probably best for linux too
+     * On an embedded system this may be something to change
+     */
+#if 1
+    if (buf->size > (size_t) len)
+        size = buf->size * 2;
+    else
+        size = buf->use + len + 100;
+#else
+    size = buf->use + len + 100;
+#endif
 
     if (buf->alloc == XML_BUFFER_ALLOC_BOUNDED) {
         /*
@@ -744,7 +744,7 @@ xmlBufIsEmpty(const xmlBufPtr buf)
 int
 xmlBufResize(xmlBufPtr buf, size_t size)
 {
-    size_t newSize;
+    unsigned int newSize;
     xmlChar* rebuf = NULL;
     size_t start_buf;
 
@@ -772,13 +772,9 @@ xmlBufResize(xmlBufPtr buf, size_t size)
         case XML_BUFFER_ALLOC_IO:
         case XML_BUFFER_ALLOC_DOUBLEIT:
             /*take care of empty case*/
-            if (buf->size == 0) {
-                newSize = (size > SIZE_MAX - 10 ? SIZE_MAX : size + 10);
-            } else {
-                newSize = buf->size;
-            }
+            newSize = (buf->size ? buf->size*2 : size + 10);
             while (size > newSize) {
-                if (newSize > SIZE_MAX / 2) {
+                if (newSize > UINT_MAX / 2) {
                     xmlBufMemoryError(buf, "growing buffer");
                     return 0;
                 }
@@ -786,15 +782,15 @@ xmlBufResize(xmlBufPtr buf, size_t size)
             }
             break;
         case XML_BUFFER_ALLOC_EXACT:
-            newSize = (size > SIZE_MAX - 10 ? SIZE_MAX : size + 10);
+            newSize = size+10;
             break;
         case XML_BUFFER_ALLOC_HYBRID:
             if (buf->use < BASE_BUFFER_SIZE)
                 newSize = size;
             else {
-                newSize = buf->size;
+                newSize = buf->size * 2;
                 while (size > newSize) {
-                    if (newSize > SIZE_MAX / 2) {
+                    if (newSize > UINT_MAX / 2) {
                         xmlBufMemoryError(buf, "growing buffer");
                         return 0;
                     }
@@ -804,7 +800,7 @@ xmlBufResize(xmlBufPtr buf, size_t size)
             break;
 
         default:
-            newSize = (size > SIZE_MAX - 10 ? SIZE_MAX : size + 10);
+            newSize = size+10;
             break;
     }
 
@@ -870,7 +866,7 @@ xmlBufResize(xmlBufPtr buf, size_t size)
  */
 int
 xmlBufAdd(xmlBufPtr buf, const xmlChar *str, int len) {
-    size_t needSize;
+    unsigned int needSize;
 
     if ((str == NULL) || (buf == NULL) || (buf->error))
         return -1;
@@ -892,10 +888,8 @@ xmlBufAdd(xmlBufPtr buf, const xmlChar *str, int len) {
     if (len < 0) return -1;
     if (len == 0) return 0;
 
-    if ((size_t) len >= buf->size - buf->use) {
-        if ((size_t) len >= SIZE_MAX - buf->use)
-            return(-1);
-        needSize = buf->use + len + 1;
+    needSize = buf->use + len + 2;
+    if (needSize > buf->size){
         if (buf->alloc == XML_BUFFER_ALLOC_BOUNDED) {
             /*
              * Used to provide parsing limits
@@ -1031,7 +1025,31 @@ xmlBufCat(xmlBufPtr buf, const xmlChar *str) {
  */
 int
 xmlBufCCat(xmlBufPtr buf, const char *str) {
-    return xmlBufCat(buf, (const xmlChar *) str);
+    const char *cur;
+
+    if ((buf == NULL) || (buf->error))
+        return(-1);
+    CHECK_COMPAT(buf)
+    if (buf->alloc == XML_BUFFER_ALLOC_IMMUTABLE) return -1;
+    if (str == NULL) {
+#ifdef DEBUG_BUFFER
+        xmlGenericError(xmlGenericErrorContext,
+                "xmlBufCCat: str == NULL\n");
+#endif
+        return -1;
+    }
+    for (cur = str;*cur != 0;cur++) {
+        if (buf->use  + 10 >= buf->size) {
+            if (!xmlBufResize(buf, buf->use+10)){
+                xmlBufMemoryError(buf, "growing buffer");
+                return XML_ERR_NO_MEMORY;
+            }
+        }
+        buf->content[buf->use++] = *cur;
+    }
+    buf->content[buf->use] = 0;
+    UPDATE_COMPAT(buf)
+    return 0;
 }
 
 /**

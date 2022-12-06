@@ -36,9 +36,9 @@
 
 namespace WebCore {
 
-CachedScript::CachedScript(CachedResourceRequest&& request, PAL::SessionID sessionID)
-    : CachedResource(WTFMove(request), Type::Script, sessionID)
-    , m_decoder(TextResourceDecoder::create("application/javascript"_s, request.charset()))
+CachedScript::CachedScript(CachedResourceRequest&& request, const PAL::SessionID& sessionID, const CookieJar* cookieJar)
+    : CachedResource(WTFMove(request), Type::Script, sessionID, cookieJar)
+    , m_decoder(TextResourceDecoder::create("text/javascript"_s, request.charset()))
 {
 }
 
@@ -57,7 +57,7 @@ String CachedScript::encoding() const
 StringView CachedScript::script()
 {
     if (!m_data)
-        return { };
+        return emptyString();
 
     if (m_decodingState == NeverDecoded
         && TextEncoding(encoding()).isByteBasedEncoding()
@@ -96,11 +96,11 @@ unsigned CachedScript::scriptHash()
     return m_scriptHash;
 }
 
-void CachedScript::finishLoading(SharedBuffer* data)
+void CachedScript::finishLoading(SharedBuffer* data, const NetworkLoadMetrics& metrics)
 {
     m_data = data;
     setEncodedSize(data ? data->size() : 0);
-    CachedResource::finishLoading(data);
+    CachedResource::finishLoading(data, metrics);
 }
 
 void CachedScript::destroyDecodedData()

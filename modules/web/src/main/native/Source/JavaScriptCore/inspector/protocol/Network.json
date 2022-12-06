@@ -1,7 +1,8 @@
 {
     "domain": "Network",
     "description": "Network domain allows tracking network activities of the page. It exposes information about http, file, data and other requests and responses, their headers, bodies, timing, etc.",
-    "availability": ["web", "service-worker"],
+    "debuggableTypes": ["itml", "page", "service-worker", "web-page"],
+    "targetTypes": ["itml", "page", "service-worker"],
     "types": [
         {
             "id": "LoaderId",
@@ -38,14 +39,18 @@
             "type": "object",
             "description": "Timing information for the request.",
             "properties": [
-                { "name": "startTime", "type": "number", "description": "Timing's startTime is a baseline in seconds, while the other numbers are ticks in milliseconds relatively to this." },
-                { "name": "domainLookupStart", "type": "number", "description": "Started DNS address resolve." },
-                { "name": "domainLookupEnd", "type": "number", "description": "Finished DNS address resolve." },
-                { "name": "connectStart", "type": "number", "description": "Started connecting to the remote host." },
-                { "name": "connectEnd", "type": "number", "description": "Connected to the remote host." },
-                { "name": "secureConnectionStart", "type": "number", "description": "Started SSL handshake." },
-                { "name": "requestStart", "type": "number", "description": "Started sending request." },
-                { "name": "responseStart", "type": "number", "description": "Started receiving response headers." }
+                { "name": "startTime", "$ref": "Timestamp", "description": "Request is initiated" },
+                { "name": "redirectStart", "$ref": "Timestamp", "description": "Started redirect resolution." },
+                { "name": "redirectEnd", "$ref": "Timestamp", "description": "Finished redirect resolution." },
+                { "name": "fetchStart", "$ref": "Timestamp", "description": "Resource fetching started." },
+                { "name": "domainLookupStart", "type": "number", "description": "Started DNS address resolve in milliseconds relative to fetchStart." },
+                { "name": "domainLookupEnd", "type": "number", "description": "Finished DNS address resolve in milliseconds relative to fetchStart." },
+                { "name": "connectStart", "type": "number", "description": "Started connecting to the remote host in milliseconds relative to fetchStart." },
+                { "name": "connectEnd", "type": "number", "description": "Connected to the remote host in milliseconds relative to fetchStart." },
+                { "name": "secureConnectionStart", "type": "number", "description": "Started SSL handshake in milliseconds relative to fetchStart." },
+                { "name": "requestStart", "type": "number", "description": "Started sending request in milliseconds relative to fetchStart." },
+                { "name": "responseStart", "type": "number", "description": "Started receiving response headers in milliseconds relative to fetchStart." },
+                { "name": "responseEnd", "type": "number", "description": "Finished receiving response headers in milliseconds relative to fetchStart." }
             ]
         },
         {
@@ -68,12 +73,11 @@
                 { "name": "status", "type": "integer", "description": "HTTP response status code." },
                 { "name": "statusText", "type": "string", "description": "HTTP response status text." },
                 { "name": "headers", "$ref": "Headers", "description": "HTTP response headers." },
-                { "name": "headersText", "type": "string", "optional": true, "description": "HTTP response headers text." },
                 { "name": "mimeType", "type": "string", "description": "Resource mimeType as determined by the browser." },
-                { "name": "source", "type": "string", "enum": ["unknown", "network", "memory-cache", "disk-cache", "service-worker"], "description": "Specifies where the response came from." },
+                { "name": "source", "type": "string", "enum": ["unknown", "network", "memory-cache", "disk-cache", "service-worker", "inspector-override"], "description": "Specifies where the response came from." },
                 { "name": "requestHeaders", "$ref": "Headers", "optional": true, "description": "Refined HTTP request headers that were actually transmitted over the network." },
-                { "name": "requestHeadersText", "type": "string", "optional": true, "description": "HTTP request headers text." },
-                { "name": "timing", "$ref": "ResourceTiming", "optional": true, "description": "Timing information for the given request." }
+                { "name": "timing", "$ref": "ResourceTiming", "optional": true, "description": "Timing information for the given request." },
+                { "name": "security", "$ref": "Security.Security", "optional": true, "description": "The security information for the given request." }
             ]
         },
         {
@@ -90,7 +94,8 @@
                 { "name": "requestBodyBytesSent", "type": "number", "optional": true, "description": "Total HTTP request body bytes sent over the network." },
                 { "name": "responseHeaderBytesReceived", "type": "number", "optional": true, "description": "Total HTTP response header bytes received over the network." },
                 { "name": "responseBodyBytesReceived", "type": "number", "optional": true, "description": "Total HTTP response body bytes received over the network." },
-                { "name": "responseBodyDecodedSize", "type": "number", "optional": true, "description": "Total decoded response body size in bytes." }
+                { "name": "responseBodyDecodedSize", "type": "number", "optional": true, "description": "Total decoded response body size in bytes." },
+                { "name": "securityConnection", "$ref": "Security.Connection", "optional": true, "description": "Connection information for the completed request." }
             ]
         },
         {
@@ -118,7 +123,7 @@
             "properties": [
                 { "name": "opcode", "type": "number", "description": "WebSocket frame opcode." },
                 { "name": "mask", "type": "boolean", "description": "WebSocket frame mask." },
-                { "name": "payloadData", "type": "string", "description": "WebSocket frame payload data." },
+                { "name": "payloadData", "type": "string", "description": "WebSocket frame payload data, binary frames (opcode = 2) are base64-encoded." },
                 { "name": "payloadLength", "type": "number", "description": "WebSocket frame payload length in bytes." }
             ]
         },
@@ -142,8 +147,21 @@
                 { "name": "type", "type": "string", "enum": ["parser", "script", "other"], "description": "Type of this initiator." },
                 { "name": "stackTrace", "type": "array", "items": { "$ref": "Console.CallFrame" }, "optional": true, "description": "Initiator JavaScript stack trace, set for Script only." },
                 { "name": "url", "type": "string", "optional": true, "description": "Initiator URL, set for Parser type only." },
-                { "name": "lineNumber", "type": "number", "optional": true, "description": "Initiator line number, set for Parser type only." }
+                { "name": "lineNumber", "type": "number", "optional": true, "description": "Initiator line number, set for Parser type only." },
+                { "name": "nodeId", "$ref": "DOM.NodeId", "optional": true, "description": "Set if the load was triggered by a DOM node, in addition to the other initiator information." }
             ]
+        },
+        {
+            "id": "NetworkStage",
+            "type": "string",
+            "description": "Different stages of a network request.",
+            "enum": ["request", "response"]
+        },
+        {
+            "id": "ResourceErrorType",
+            "type": "string",
+            "description": "Different stages of a network request.",
+            "enum": ["General", "AccessControl", "Cancellation", "Timeout"]
         }
     ],
     "commands": [
@@ -158,6 +176,7 @@
         {
             "name": "setExtraHTTPHeaders",
             "description": "Specifies whether to always send extra HTTP headers with the requests from this page.",
+            "targetTypes": ["page"],
             "parameters": [
                 { "name": "headers", "$ref": "Headers", "description": "Map with extra HTTP headers." }
             ]
@@ -183,6 +202,7 @@
         {
             "name": "loadResource",
             "description": "Loads a resource in the context of a frame on the inspected page without cross origin checks.",
+            "targetTypes": ["page"],
             "async": true,
             "parameters": [
                 { "name": "frameId", "$ref": "FrameId", "description": "Frame to load the resource from." },
@@ -195,14 +215,111 @@
             ]
         },
         {
+            "name": "getSerializedCertificate",
+            "description": "Fetches a serialized secure certificate for the given requestId to be displayed via InspectorFrontendHost.showCertificate.",
+            "targetTypes": ["page"],
+            "parameters": [
+                { "name": "requestId", "$ref": "RequestId" }
+            ],
+            "returns": [
+                { "name": "serializedCertificate", "type": "string", "description": "Represents a base64 encoded WebCore::CertificateInfo object." }
+            ]
+        },
+        {
             "name": "resolveWebSocket",
             "description": "Resolves JavaScript WebSocket object for given request id.",
+            "targetTypes": ["page"],
             "parameters": [
                 { "name": "requestId", "$ref": "RequestId", "description": "Identifier of the WebSocket resource to resolve." },
                 { "name": "objectGroup", "type": "string", "optional": true, "description": "Symbolic group name that can be used to release multiple objects." }
             ],
             "returns": [
                 { "name": "object", "$ref": "Runtime.RemoteObject", "description": "JavaScript object wrapper for given node." }
+            ]
+        },
+        {
+            "name": "setInterceptionEnabled",
+            "description": "Enable interception of network requests.",
+            "targetTypes": ["page"],
+            "parameters": [
+                { "name": "enabled", "type": "boolean" }
+            ]
+        },
+        {
+            "name": "addInterception",
+            "description": "Add an interception.",
+            "targetTypes": ["page"],
+            "parameters": [
+                { "name": "url", "type": "string", "description": "URL pattern to intercept, intercept everything if not specified or empty" },
+                { "name": "stage", "$ref": "NetworkStage", "description": "Stage to intercept." },
+                { "name": "caseSensitive", "type": "boolean", "optional": true, "description": "If false, ignores letter casing of `url` parameter." },
+                { "name": "isRegex", "type": "boolean", "optional": true, "description": "If true, treats `url` parameter as a regular expression." }
+            ]
+        },
+        {
+            "name": "removeInterception",
+            "description": "Remove an interception.",
+            "targetTypes": ["page"],
+            "parameters": [
+                { "name": "url", "type": "string" },
+                { "name": "stage", "$ref": "NetworkStage", "description": "Stage to intercept." },
+                { "name": "caseSensitive", "type": "boolean", "optional": true, "description": "If false, ignores letter casing of `url` parameter." },
+                { "name": "isRegex", "type": "boolean", "optional": true, "description": "If true, treats `url` parameter as a regular expression." }
+            ]
+        },
+        {
+            "name": "interceptContinue",
+            "description": "Continue request or response without modifications.",
+            "targetTypes": ["page"],
+            "parameters": [
+                { "name": "requestId", "$ref": "RequestId", "description": "Identifier for the intercepted Network request or response to continue." },
+                { "name": "stage", "$ref": "NetworkStage", "description": "Stage to continue." }
+            ]
+        },
+        {
+            "name": "interceptWithRequest",
+            "description": "Replace intercepted request with the provided one.",
+            "parameters": [
+                { "name": "requestId", "$ref": "RequestId", "description": "Identifier for the intercepted Network request or response to continue." },
+                { "name": "url", "type": "string", "optional": true,"description": "HTTP request url." },
+                { "name": "method", "type": "string", "optional": true,"description": "HTTP request method." },
+                { "name": "headers", "$ref": "Headers", "optional": true, "description": "HTTP response headers. Pass through original values if unmodified." },
+                { "name": "postData", "type": "string", "optional": true, "description": "HTTP POST request data, base64-encoded." }
+            ]
+        },
+        {
+            "name": "interceptWithResponse",
+            "description": "Provide response content for an intercepted response.",
+            "targetTypes": ["page"],
+            "parameters": [
+                { "name": "requestId", "$ref": "RequestId", "description": "Identifier for the intercepted Network response to modify." },
+                { "name": "content", "type": "string" },
+                { "name": "base64Encoded", "type": "boolean", "description": "True, if content was sent as base64." },
+                { "name": "mimeType", "type": "string", "optional": true, "description": "MIME Type for the data." },
+                { "name": "status", "type": "integer", "optional": true, "description": "HTTP response status code. Pass through original values if unmodified." },
+                { "name": "statusText", "type": "string", "optional": true, "description": "HTTP response status text. Pass through original values if unmodified." },
+                { "name": "headers", "$ref": "Headers", "optional": true, "description": "HTTP response headers. Pass through original values if unmodified." }
+            ]
+        },
+        {
+            "name": "interceptRequestWithResponse",
+            "description": "Provide response for an intercepted request. Request completely bypasses the network in this case and is immediately fulfilled with the provided data.",
+            "parameters": [
+                { "name": "requestId", "$ref": "RequestId", "description": "Identifier for the intercepted Network response to modify." },
+                { "name": "content", "type": "string" },
+                { "name": "base64Encoded", "type": "boolean", "description": "True, if content was sent as base64." },
+                { "name": "mimeType", "type": "string", "description": "MIME Type for the data." },
+                { "name": "status", "type": "integer", "description": "HTTP response status code." },
+                { "name": "statusText", "type": "string", "description": "HTTP response status text." },
+                { "name": "headers", "$ref": "Headers", "description": "HTTP response headers." }
+            ]
+        },
+        {
+            "name": "interceptRequestWithError",
+            "description": "Fail request with given error type.",
+            "parameters": [
+                { "name": "requestId", "$ref": "RequestId", "description": "Identifier for the intercepted Network request to fail." },
+                { "name": "errorType", "$ref": "ResourceErrorType", "description": "Deliver error reason for the request failure." }
             ]
         }
     ],
@@ -280,8 +397,26 @@
             ]
         },
         {
+            "name": "requestIntercepted",
+            "description": "Fired when HTTP request has been intercepted. The frontend must respond with <code>Network.interceptContinue</code>, <code>Network.interceptWithRequest</code>` or <code>Network.interceptWithResponse</code>` to resolve this request.",
+            "parameters": [
+                { "name": "requestId", "$ref": "RequestId", "description": "Identifier for this intercepted network. Corresponds with an earlier <code>Network.requestWillBeSent</code>." },
+                { "name": "request", "$ref": "Request", "description": "Original request content that would proceed if this is continued." }
+            ]
+        },
+        {
+            "name": "responseIntercepted",
+            "description": "Fired when HTTP response has been intercepted. The frontend must response with <code>Network.interceptContinue</code> or <code>Network.interceptWithResponse</code>` to continue this response.",
+            "targetTypes": ["page"],
+            "parameters": [
+                { "name": "requestId", "$ref": "RequestId", "description": "Identifier for this intercepted network. Corresponds with an earlier <code>Network.requestWillBeSent</code>." },
+                { "name": "response", "$ref": "Response", "description": "Original response content that would proceed if this is continued." }
+            ]
+        },
+        {
             "name": "webSocketWillSendHandshakeRequest",
             "description": "Fired when WebSocket is about to initiate handshake.",
+            "targetTypes": ["page"],
             "parameters": [
                 { "name": "requestId", "$ref": "RequestId", "description": "Request identifier." },
                 { "name": "timestamp", "$ref": "Timestamp" },
@@ -292,6 +427,7 @@
         {
             "name": "webSocketHandshakeResponseReceived",
             "description": "Fired when WebSocket handshake response becomes available.",
+            "targetTypes": ["page"],
             "parameters": [
                 { "name": "requestId", "$ref": "RequestId", "description": "Request identifier." },
                 { "name": "timestamp", "$ref": "Timestamp" },
@@ -301,6 +437,7 @@
         {
             "name": "webSocketCreated",
             "description": "Fired upon WebSocket creation.",
+            "targetTypes": ["page"],
             "parameters": [
                 { "name": "requestId", "$ref": "RequestId", "description": "Request identifier." },
                 { "name": "url", "type": "string", "description": "WebSocket request URL." }
@@ -309,6 +446,7 @@
         {
             "name": "webSocketClosed",
             "description": "Fired when WebSocket is closed.",
+            "targetTypes": ["page"],
             "parameters": [
                 { "name": "requestId", "$ref": "RequestId", "description": "Request identifier." },
                 { "name": "timestamp", "$ref": "Timestamp", "description": "Timestamp." }
@@ -317,6 +455,7 @@
         {
             "name": "webSocketFrameReceived",
             "description": "Fired when WebSocket frame is received.",
+            "targetTypes": ["page"],
             "parameters": [
                 { "name": "requestId", "$ref": "RequestId", "description": "Request identifier." },
                 { "name": "timestamp", "$ref": "Timestamp", "description": "Timestamp." },
@@ -326,6 +465,7 @@
         {
             "name": "webSocketFrameError",
             "description": "Fired when WebSocket frame error occurs.",
+            "targetTypes": ["page"],
             "parameters": [
                 { "name": "requestId", "$ref": "RequestId", "description": "Request identifier." },
                 { "name": "timestamp", "$ref": "Timestamp", "description": "Timestamp." },
@@ -335,6 +475,7 @@
         {
             "name": "webSocketFrameSent",
             "description": "Fired when WebSocket frame is sent.",
+            "targetTypes": ["page"],
             "parameters": [
                 { "name": "requestId", "$ref": "RequestId", "description": "Request identifier." },
                 { "name": "timestamp", "$ref": "Timestamp", "description": "Timestamp." },

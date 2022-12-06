@@ -28,12 +28,14 @@ import sys
 is_3 = sys.version_info >= (3, 0)
 if is_3:
     import io
+    python_text_type = str
 else:
-    import io
+    import StringIO
     try:
-        import io
+        import cStringIO
     except ImportError:
         cStringIO = None
+    python_text_type = basestring
 
 
 __all__ = ['jsmin', 'JavascriptMinify']
@@ -45,12 +47,12 @@ def jsmin(js):
     returns a minified version of the javascript string
     """
     if not is_3:
-        if cStringIO and not isinstance(js, str):
+        if cStringIO and not isinstance(js, unicode):
             # strings can use cStringIO for a 3x performance
             # improvement, but unicode (in python2) cannot
-            klass = io.StringIO
+            klass = cStringIO.StringIO
         else:
-            klass = io.StringIO
+            klass = StringIO.StringIO
     else:
         klass = io.StringIO
     ins = klass(js)
@@ -82,11 +84,15 @@ class JavascriptMinify(object):
             if str(char) in 'return':
                 self.return_buf += char
                 self.is_return = self.return_buf == 'return'
-            self.outs.write(str(char))
+            self.outs.write(char)
             if self.is_return:
                 self.return_buf = ''
 
-        read = self.ins.read
+        def read(n):
+            char = self.ins.read(n)
+            if not isinstance(char, python_text_type):
+                raise ValueError("ERROR: The script jsmin.py can only handle text input, but it received input of type %s" % type(char))
+            return char
 
         space_strings = "abcdefghijklmnopqrstuvwxyz"\
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$\\"
@@ -143,7 +149,7 @@ class JavascriptMinify(object):
                     doing_multi_comment = False
                     next2 = read(1)
             elif doing_single_comment:
-                if str(next1) in '\r\n':
+                if next1 in '\r\n':
                     doing_single_comment = False
                     while next2 in '\r\n':
                         next2 = read(1)
@@ -166,7 +172,7 @@ class JavascriptMinify(object):
                     if numslashes % 2 == 0:
                         in_quote = ''
                         write(''.join(quote_buf))
-            elif next1 in '\r\n':
+            elif str(next1) in '\r\n':
                 if previous_non_space in newlineend_strings \
                     or previous_non_space > '~':
                     while 1:

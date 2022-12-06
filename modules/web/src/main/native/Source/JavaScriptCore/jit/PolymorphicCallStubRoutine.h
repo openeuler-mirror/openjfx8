@@ -38,7 +38,7 @@ namespace JSC {
 
 class CallLinkInfo;
 
-class PolymorphicCallNode : public BasicRawSentinelNode<PolymorphicCallNode> {
+class PolymorphicCallNode : public PackedRawSentinelNode<PolymorphicCallNode> {
     WTF_MAKE_NONCOPYABLE(PolymorphicCallNode);
 public:
     PolymorphicCallNode(CallLinkInfo* info)
@@ -50,11 +50,11 @@ public:
 
     void unlink(VM&);
 
-    bool hasCallLinkInfo(CallLinkInfo* info) { return m_callLinkInfo == info; }
+    bool hasCallLinkInfo(CallLinkInfo* info) { return m_callLinkInfo.get() == info; }
     void clearCallLinkInfo();
 
 private:
-    CallLinkInfo* m_callLinkInfo;
+    PackedPtr<CallLinkInfo> m_callLinkInfo;
 };
 
 class PolymorphicCallCase {
@@ -80,14 +80,14 @@ private:
     CodeBlock* m_codeBlock;
 };
 
-class PolymorphicCallStubRoutine : public GCAwareJITStubRoutine {
+class PolymorphicCallStubRoutine final : public GCAwareJITStubRoutine {
 public:
     PolymorphicCallStubRoutine(
         const MacroAssemblerCodeRef<JITStubRoutinePtrTag>&, VM&, const JSCell* owner,
-        ExecState* callerFrame, CallLinkInfo&, const Vector<PolymorphicCallCase>&,
+        CallFrame* callerFrame, CallLinkInfo&, const Vector<PolymorphicCallCase>&,
         UniqueArray<uint32_t>&& fastCounts);
 
-    virtual ~PolymorphicCallStubRoutine();
+    ~PolymorphicCallStubRoutine() final;
 
     CallVariantList variants() const;
     bool hasEdges() const;
@@ -95,12 +95,18 @@ public:
 
     void clearCallNodesFor(CallLinkInfo*);
 
-    bool visitWeak(VM&) override;
+    template<typename Functor>
+    void forEachDependentCell(const Functor& functor)
+    {
+        for (auto& variant : m_variants)
+            functor(variant.get());
+    }
 
-protected:
-    void markRequiredObjectsInternal(SlotVisitor&) override;
+    bool visitWeak(VM&) final;
 
 private:
+    void markRequiredObjectsInternal(SlotVisitor&) final;
+
     Vector<WriteBarrier<JSCell>, 2> m_variants;
     UniqueArray<uint32_t> m_fastCounts;
     Bag<PolymorphicCallNode> m_callNodes;

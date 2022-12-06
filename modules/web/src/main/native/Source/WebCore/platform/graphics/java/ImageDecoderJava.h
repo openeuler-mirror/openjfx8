@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2017, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -60,7 +60,7 @@ public:
     size_t frameCount() const final;
 
     RepetitionCount repetitionCount() const final;
-    std::optional<IntPoint> hotSpot() const final;
+    Optional<IntPoint> hotSpot() const final;
 
     IntSize frameSizeAtIndex(size_t, SubsamplingLevel = SubsamplingLevel::Default) const final;
     bool frameIsCompleteAtIndex(size_t) const final;

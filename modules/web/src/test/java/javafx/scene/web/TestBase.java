@@ -25,6 +25,7 @@
 
 package javafx.scene.web;
 
+import java.awt.Color;
 import java.io.File;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -285,5 +286,20 @@ public class TestBase implements ChangeListener, InvalidationListener {
 
     public void waitLoadFinished() {
         wait(LOCK, getLoadTimeOut());
+    }
+
+    // Color comparison algorithm is based on WebKit's Tools/ImageDiff/PlaformImage.cpp#PlatformImage::difference implemenation.
+    // https://trac.webkit.org/browser/webkit/trunk/Tools/ImageDiff/PlatformImage.cpp
+    protected static float getColorDifference(final Color base, final Color c) {
+        final float red = (c.getRed() - base.getRed()) / Math.max(255.0f - base.getRed(), base.getRed());
+        final float green = (c.getGreen() - base.getGreen()) / Math.max(255.0f - base.getGreen(), base.getGreen());
+        final float blue = (c.getBlue() - base.getBlue()) / Math.max(255.0f - base.getBlue(), base.getBlue());
+        final float alpha = (c.getAlpha() - base.getAlpha()) / Math.max(255.0f - base.getAlpha(), base.getAlpha());
+        final float distance = ((float) Math.sqrt(red * red + green * green + blue * blue + alpha * alpha)) / 2.0f;
+        return distance >= (1 / 255.0f) ? distance * 100.0f : 0;
+    }
+
+    protected static boolean isColorsSimilar(final Color base, final Color c, float toleranceInPercentage) {
+        return toleranceInPercentage >= getColorDifference(base, c);
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2015, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -297,10 +297,9 @@ public abstract class Application {
      * </p>
      *
      * @param primaryStage the primary stage for this application, onto which
-     * the application scene can be set. The primary stage will be embedded in
-     * the browser if the application was launched as an applet.
+     * the application scene can be set.
      * Applications may create other stages, if needed, but they will not be
-     * primary stages and will not be embedded in the browser.
+     * primary stages.
      */
     public abstract void start(Stage primaryStage) throws Exception;
 
@@ -324,7 +323,7 @@ public abstract class Application {
     /**
      * Gets the HostServices provider for this application. This provides
      * the ability to get the code base and document base for this application,
-     * and to access the enclosing web page.
+     * and to show a web page in a browser.
      *
      * @return the HostServices provider
      */
@@ -339,8 +338,7 @@ public abstract class Application {
 
     /**
      * Retrieves the parameters for this Application, including any arguments
-     * passed on the command line and any parameters specified in a JNLP file
-     * for an applet or WebStart application.
+     * passed on the command line.
      *
      * <p>
      * NOTE: this method should not be called from the Application constructor,
@@ -382,8 +380,7 @@ public abstract class Application {
 
     /**
      * Encapsulates the set of parameters for an application. This includes
-     * arguments passed on the command line, unnamed parameters specified
-     * in a JNLP file, and &lt;name,value&gt; pairs specified in a JNLP file.
+     * arguments passed on the command line.
      *
      * <p>
      * Note that the application and the preloader both get the same set
@@ -403,8 +400,8 @@ public abstract class Application {
          * Retrieves a read-only list of the raw arguments. This list
          * may be empty, but is never null. In the case of a standalone
          * application, it is the ordered list of arguments specified on the
-         * command line. In the case of an applet or WebStart application,
-         * it includes unnamed parameters as well as named parameters. For
+         * command line.
+         * For
          * named parameters, each &lt;name,value&gt; pair is represented as
          * a single argument of the form: "--name=value".
          *
@@ -425,8 +422,7 @@ public abstract class Application {
         /**
          * Retrieves a read-only map of the named parameters. It may be
          * empty, but is never null.
-         * Named parameters include those &lt;name,value&gt; pairs explicitly
-         * specified in a JNLP file. It also includes any command line
+         * Named parameters include any command line
          * arguments of the form: "--name=value".
          *
          * @return a read-only map of named parameters.

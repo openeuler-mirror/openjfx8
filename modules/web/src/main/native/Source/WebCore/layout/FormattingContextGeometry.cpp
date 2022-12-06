@@ -24,18 +24,154 @@
  */
 
 #include "config.h"
-#include "FloatingState.h"
 #include "FormattingContext.h"
-#include "FormattingState.h"
 
 #if ENABLE(LAYOUT_FORMATTING_CONTEXT)
+
+#include "BlockFormattingState.h"
+#include "FloatingState.h"
+#include "InlineFormattingState.h"
+#include "LayoutContext.h"
+#include "LayoutInitialContainingBlock.h"
+#include "LayoutReplacedBox.h"
+#include "Logging.h"
+#include "TableFormattingState.h"
 
 namespace WebCore {
 namespace Layout {
 
-static LayoutUnit contentHeightForFormattingContextRoot(LayoutContext& layoutContext, const Box& layoutBox)
+static inline bool isHeightAuto(const Box& layoutBox)
 {
-    ASSERT(layoutBox.style().logicalHeight().isAuto() && (layoutBox.establishesFormattingContext() || layoutBox.isDocumentBox()));
+    // 10.5 Content height: the 'height' property
+    //
+    // The percentage is calculated with respect to the height of the generated box's containing block.
+    // If the height of the containing block is not specified explicitly (i.e., it depends on content height),
+    // and this element is not absolutely positioned, the used height is calculated as if 'auto' was specified.
+
+    auto height = layoutBox.style().logicalHeight();
+    if (height.isAuto())
+        return true;
+
+    if (height.isPercent()) {
+        if (layoutBox.isOutOfFlowPositioned())
+            return false;
+
+        return !layoutBox.containingBlock().style().logicalHeight().isFixed();
+    }
+
+    return false;
+}
+
+Optional<LayoutUnit> FormattingContext::Geometry::computedHeightValue(const Box& layoutBox, HeightType heightType, Optional<LayoutUnit> containingBlockHeight) const
+{
+    auto& style = layoutBox.style();
+    auto height = heightType == HeightType::Normal ? style.logicalHeight() : heightType == HeightType::Min ? style.logicalMinHeight() : style.logicalMaxHeight();
+    if (height.isUndefined() || height.isAuto())
+        return { };
+
+    if (height.isFixed())
+        return LayoutUnit { height.value() };
+
+    if (!containingBlockHeight) {
+        // Containing block's height is already computed since we layout the out-of-flow boxes as the last step.
+        ASSERT(!layoutBox.isOutOfFlowPositioned());
+        if (layoutState().inQuirksMode())
+            containingBlockHeight = formattingContext().quirks().heightValueOfNearestContainingBlockWithFixedHeight(layoutBox);
+        else {
+            auto nonAnonymousContainingBlockLogicalHeight = [&] {
+                // When the block level box is a direct child of an inline level box (<span><div></div></span>) and we wrap it into a continuation,
+                // the containing block (anonymous wrapper) is not the box we need to check for fixed height.
+                auto& initialContainingBlock = layoutBox.initialContainingBlock();
+                for (auto* containingBlock = &layoutBox.containingBlock(); containingBlock != &initialContainingBlock; containingBlock = &containingBlock->containingBlock()) {
+                    if (containingBlock->isAnonymous())
+                        continue;
+                    return containingBlock->style().logicalHeight();
+                }
+                return initialContainingBlock.style().logicalHeight();
+            };
+            containingBlockHeight = fixedValue(nonAnonymousContainingBlockLogicalHeight());
+        }
+    }
+
+    if (!containingBlockHeight)
+        return { };
+
+    return valueForLength(height, *containingBlockHeight);
+}
+
+Optional<LayoutUnit> FormattingContext::Geometry::computedHeight(const Box& layoutBox, Optional<LayoutUnit> containingBlockHeight) const
+{
+    if (auto height = computedHeightValue(layoutBox, HeightType::Normal, containingBlockHeight)) {
+        if (layoutBox.style().boxSizing() == BoxSizing::ContentBox)
+            return height;
+        auto& boxGeometry = formattingContext().geometryForBox(layoutBox);
+        return *height - (boxGeometry.verticalBorder() + boxGeometry.verticalPadding().valueOr(0));
+    }
+    return { };
+}
+
+Optional<LayoutUnit> FormattingContext::Geometry::computedWidthValue(const Box& layoutBox, WidthType widthType, LayoutUnit containingBlockWidth)
+{
+    // Applies to: all elements except non-replaced inlines (out-of-flow check is required for positioned <br> as for some reason we don't blockify them).
+    ASSERT(!layoutBox.isInlineBox() || layoutBox.isOutOfFlowPositioned());
+
+    auto width = [&] {
+        auto& style = layoutBox.style();
+        switch (widthType) {
+        case WidthType::Normal:
+            return style.logicalWidth();
+        case WidthType::Min:
+            return style.logicalMinWidth();
+        case WidthType::Max:
+            return style.logicalMaxWidth();
+        }
+        ASSERT_NOT_REACHED();
+        return style.logicalWidth();
+    }();
+    if (auto computedValue = this->computedValue(width, containingBlockWidth))
+        return computedValue;
+
+    if (width.isMinContent() || width.isMaxContent() || width.isFitContent()) {
+        if (!is<ContainerBox>(layoutBox))
+            return { };
+        auto& containerBox = downcast<ContainerBox>(layoutBox);
+        // FIXME: Consider splitting up computedIntrinsicWidthConstraints so that we could computed the min and max values separately.
+        auto intrinsicWidthConstraints = [&] {
+            if (!containerBox.hasInFlowOrFloatingChild())
+                return IntrinsicWidthConstraints { 0_lu, containingBlockWidth };
+            ASSERT(containerBox.establishesFormattingContext());
+            auto& formattingState = layoutState().ensureFormattingState(containerBox);
+            if (auto intrinsicWidthConstraints = formattingState.intrinsicWidthConstraints())
+                return *intrinsicWidthConstraints;
+            return LayoutContext::createFormattingContext(containerBox, layoutState())->computedIntrinsicWidthConstraints();
+        }();
+        if (width.isMinContent())
+            return intrinsicWidthConstraints.minimum;
+        if (width.isMaxContent())
+            return intrinsicWidthConstraints.maximum;
+        ASSERT(width.isFitContent());
+        // If the available space in a given axis is definite, equal to min(max-content size,
+        // max(min-content size, stretch-fit size)). Otherwise, equal to the max-content size in that axis.
+        // FIXME: We don't yet have indefinite available size.
+        return std::min(intrinsicWidthConstraints.maximum, std::max(intrinsicWidthConstraints.minimum, containingBlockWidth));
+    }
+    return { };
+}
+
+Optional<LayoutUnit> FormattingContext::Geometry::computedWidth(const Box& layoutBox, LayoutUnit containingBlockWidth)
+{
+    if (auto computedWidth = computedWidthValue(layoutBox, WidthType::Normal, containingBlockWidth)) {
+        if (layoutBox.style().boxSizing() == BoxSizing::ContentBox)
+            return computedWidth;
+        auto& boxGeometry = formattingContext().geometryForBox(layoutBox);
+        return *computedWidth - (boxGeometry.horizontalBorder() + boxGeometry.horizontalPadding().valueOr(0));
+    }
+    return { };
+}
+
+LayoutUnit FormattingContext::Geometry::contentHeightForFormattingContextRoot(const Box& layoutBox) const
+{
+    ASSERT((isHeightAuto(layoutBox) || layoutBox.establishesTableFormattingContext() || layoutBox.isTableCell()) && (layoutBox.establishesFormattingContext() || layoutBox.isDocumentBox()));
 
     // 10.6.7 'Auto' heights for block formatting context roots
 
@@ -46,49 +182,93 @@ static LayoutUnit contentHeightForFormattingContextRoot(LayoutContext& layoutCon
     // In addition, if the element has any floating descendants whose bottom margin edge is below the element's bottom content edge,
     // then the height is increased to include those edges. Only floats that participate in this block formatting context are taken
     // into account, e.g., floats inside absolutely positioned descendants or other floats are not.
-    if (!is<Container>(layoutBox) || !downcast<Container>(layoutBox).hasInFlowOrFloatingChild())
-        return 0;
+    if (!is<ContainerBox>(layoutBox) || !downcast<ContainerBox>(layoutBox).hasInFlowOrFloatingChild())
+        return { };
 
-    auto& formattingRootContainer = downcast<Container>(layoutBox);
-    if (formattingRootContainer.establishesInlineFormattingContext())
-        return 0;
+    auto& layoutState = this->layoutState();
+    auto& formattingContext = this->formattingContext();
+    auto& boxGeometry = formattingContext.geometryForBox(layoutBox);
+    auto borderAndPaddingTop = boxGeometry.borderTop() + boxGeometry.paddingTop().valueOr(0);
+    auto top = borderAndPaddingTop;
+    auto bottom = borderAndPaddingTop;
+    auto& formattingRootContainer = downcast<ContainerBox>(layoutBox);
+    if (formattingRootContainer.establishesInlineFormattingContext()) {
+        auto& lineBoxes = layoutState.establishedInlineFormattingState(formattingRootContainer).displayInlineContent()->lineBoxes;
+        // Even empty containers generate one line.
+        ASSERT(!lineBoxes.isEmpty());
+        top = lineBoxes.first().top();
+        bottom = lineBoxes.last().bottom();
+    } else if (formattingRootContainer.establishesBlockFormattingContext() || formattingRootContainer.establishesTableFormattingContext() || formattingRootContainer.isDocumentBox()) {
+        if (formattingRootContainer.hasInFlowChild()) {
+            auto& firstBoxGeometry = formattingContext.geometryForBox(*formattingRootContainer.firstInFlowChild(), EscapeReason::NeedsGeometryFromEstablishedFormattingContext);
+            auto& lastBoxGeometry = formattingContext.geometryForBox(*formattingRootContainer.lastInFlowChild(), EscapeReason::NeedsGeometryFromEstablishedFormattingContext);
+            top = firstBoxGeometry.rectWithMargin().top();
+            bottom = lastBoxGeometry.rectWithMargin().bottom();
+        }
+    } else
+        ASSERT_NOT_REACHED();
 
-    auto* firstDisplayBox = layoutContext.displayBoxForLayoutBox(*formattingRootContainer.firstInFlowChild());
-    auto* lastDisplayBox = layoutContext.displayBoxForLayoutBox(*formattingRootContainer.lastInFlowChild());
-    auto top = firstDisplayBox->rectWithMargin().top();
-    auto bottom = lastDisplayBox->rectWithMargin().bottom();
-
-    auto* formattingContextRoot = &layoutBox;
+    auto* formattingContextRoot = &formattingRootContainer;
     // TODO: The document renderer is not a formatting context root by default at all. Need to find out what it is.
     if (!layoutBox.establishesFormattingContext()) {
         ASSERT(layoutBox.isDocumentBox());
         formattingContextRoot = &layoutBox.formattingContextRoot();
     }
 
-    auto floatsBottom = layoutContext.establishedFormattingState(*formattingContextRoot).floatingState().bottom(*formattingContextRoot);
-    if (floatsBottom)
-        bottom = std::max(*floatsBottom, bottom);
+    auto& floatingState = layoutState.establishedFormattingState(*formattingContextRoot).floatingState();
+    auto floatBottom = floatingState.bottom(*formattingContextRoot);
+    if (floatBottom) {
+        bottom = std::max<LayoutUnit>(*floatBottom, bottom);
+        auto floatTop = floatingState.top(*formattingContextRoot);
+        ASSERT(floatTop);
+        top = std::min<LayoutUnit>(*floatTop, top);
+    }
 
     auto computedHeight = bottom - top;
     LOG_WITH_STREAM(FormattingContextLayout, stream << "[Height] -> content height for formatting context root -> height(" << computedHeight << "px) layoutBox("<< &layoutBox << ")");
     return computedHeight;
 }
 
-std::optional<LayoutUnit> FormattingContext::Geometry::computedValueIfNotAuto(const Length& geometryProperty, LayoutUnit containingBlockWidth)
+Optional<LayoutUnit> FormattingContext::Geometry::computedValue(const Length& geometryProperty, LayoutUnit containingBlockWidth) const
 {
-    if (geometryProperty.isAuto())
-        return std::nullopt;
-    return valueForLength(geometryProperty, containingBlockWidth);
+    //  In general, the computed value resolves the specified value as far as possible without laying out the content.
+    if (geometryProperty.isFixed() || geometryProperty.isPercent() || geometryProperty.isCalculated())
+        return valueForLength(geometryProperty, containingBlockWidth);
+    return { };
 }
 
-std::optional<LayoutUnit> FormattingContext::Geometry::fixedValue(const Length& geometryProperty)
+Optional<LayoutUnit> FormattingContext::Geometry::fixedValue(const Length& geometryProperty) const
 {
     if (!geometryProperty.isFixed())
-        return std::nullopt;
-    return { geometryProperty.value() };
+        return { };
+    return LayoutUnit { geometryProperty.value() };
 }
 
-static LayoutUnit staticVerticalPositionForOutOfFlowPositioned(const LayoutContext& layoutContext, const Box& layoutBox)
+// https://www.w3.org/TR/CSS22/visudet.html#min-max-heights
+// Specifies a percentage for determining the used value. The percentage is calculated with respect to the height of the generated box's containing block.
+// If the height of the containing block is not specified explicitly (i.e., it depends on content height), and this element is not absolutely positioned,
+// the percentage value is treated as '0' (for 'min-height') or 'none' (for 'max-height').
+Optional<LayoutUnit> FormattingContext::Geometry::computedMaxHeight(const Box& layoutBox, Optional<LayoutUnit> containingBlockHeight) const
+{
+    return computedHeightValue(layoutBox, HeightType::Max, containingBlockHeight);
+}
+
+Optional<LayoutUnit> FormattingContext::Geometry::computedMinHeight(const Box& layoutBox, Optional<LayoutUnit> containingBlockHeight) const
+{
+    return computedHeightValue(layoutBox, HeightType::Min, containingBlockHeight);
+}
+
+Optional<LayoutUnit> FormattingContext::Geometry::computedMinWidth(const Box& layoutBox, LayoutUnit containingBlockWidth)
+{
+    return computedWidthValue(layoutBox, WidthType::Min, containingBlockWidth);
+}
+
+Optional<LayoutUnit> FormattingContext::Geometry::computedMaxWidth(const Box& layoutBox, LayoutUnit containingBlockWidth)
+{
+    return computedWidthValue(layoutBox, WidthType::Max, containingBlockWidth);
+}
+
+LayoutUnit FormattingContext::Geometry::staticVerticalPositionForOutOfFlowPositioned(const Box& layoutBox, const VerticalConstraints& verticalConstraints) const
 {
     ASSERT(layoutBox.isOutOfFlowPositioned());
 
@@ -99,52 +279,59 @@ static LayoutUnit staticVerticalPositionForOutOfFlowPositioned(const LayoutConte
     // computed value for 'display'.) The value is negative if the hypothetical box is above the containing block.
 
     // Start with this box's border box offset from the parent's border box.
+    auto& formattingContext = this->formattingContext();
     LayoutUnit top;
-    if (auto* previousInFlowSibling = layoutBox.previousInFlowSibling()) {
+    if (layoutBox.previousInFlowSibling() && layoutBox.previousInFlowSibling()->isBlockLevelBox()) {
         // Add sibling offset
-        auto& previousInFlowDisplayBox = *layoutContext.displayBoxForLayoutBox(*previousInFlowSibling);
-        top += previousInFlowDisplayBox.bottom() + previousInFlowDisplayBox.nonCollapsedMarginBottom();
-    } else {
-        ASSERT(layoutBox.parent());
-        top = layoutContext.displayBoxForLayoutBox(*layoutBox.parent())->contentBoxTop();
-    }
+        auto& previousInFlowSibling = *layoutBox.previousInFlowSibling();
+        auto& previousInFlowBoxGeometry = formattingContext.geometryForBox(previousInFlowSibling, EscapeReason::OutOfFlowBoxNeedsInFlowGeometry);
+        auto& formattingState = downcast<BlockFormattingState>(layoutState().formattingStateForBox(previousInFlowSibling));
+        auto usedVerticalMarginForPreviousBox = formattingState.usedVerticalMargin(previousInFlowSibling);
+
+        top += previousInFlowBoxGeometry.bottom() + usedVerticalMarginForPreviousBox.nonCollapsedValues.after;
+    } else
+        top = formattingContext.geometryForBox(layoutBox.parent(), EscapeReason::OutOfFlowBoxNeedsInFlowGeometry).contentBoxTop();
 
     // Resolve top all the way up to the containing block.
-    auto* containingBlock = layoutBox.containingBlock();
-    for (auto* container = layoutBox.parent(); container != containingBlock; container = container->containingBlock()) {
-        auto& displayBox = *layoutContext.displayBoxForLayoutBox(*container);
+    auto& containingBlock = layoutBox.containingBlock();
+    // Start with the parent since we pretend that this box is normal flow.
+    for (auto* ancestor = &layoutBox.parent(); ancestor != &containingBlock; ancestor = &ancestor->containingBlock()) {
+        auto& boxGeometry = formattingContext.geometryForBox(*ancestor, EscapeReason::OutOfFlowBoxNeedsInFlowGeometry);
         // Display::Box::top is the border box top position in its containing block's coordinate system.
-        top += displayBox.top();
-        ASSERT(!container->isPositioned());
+        top += boxGeometry.top();
+        ASSERT(!ancestor->isPositioned() || layoutBox.isFixedPositioned());
     }
-    // FIXME: floatings need to be taken into account.
-    return top;
+    // Move the static position relative to the padding box. This is very specific to abolutely positioned boxes.
+    return top - verticalConstraints.logicalTop;
 }
 
-static LayoutUnit staticHorizontalPositionForOutOfFlowPositioned(const LayoutContext& layoutContext, const Box& layoutBox)
+LayoutUnit FormattingContext::Geometry::staticHorizontalPositionForOutOfFlowPositioned(const Box& layoutBox, const HorizontalConstraints& horizontalConstraints) const
 {
     ASSERT(layoutBox.isOutOfFlowPositioned());
     // See staticVerticalPositionForOutOfFlowPositioned for the definition of the static position.
 
     // Start with this box's border box offset from the parent's border box.
-    ASSERT(layoutBox.parent());
-    auto left = layoutContext.displayBoxForLayoutBox(*layoutBox.parent())->contentBoxLeft();
+    auto& formattingContext = this->formattingContext();
+    auto left = formattingContext.geometryForBox(layoutBox.parent(), EscapeReason::OutOfFlowBoxNeedsInFlowGeometry).contentBoxLeft();
 
     // Resolve left all the way up to the containing block.
-    auto* containingBlock = layoutBox.containingBlock();
-    for (auto* container = layoutBox.parent(); container != containingBlock; container = container->containingBlock()) {
-        auto& displayBox = *layoutContext.displayBoxForLayoutBox(*container);
+    auto& containingBlock = layoutBox.containingBlock();
+    // Start with the parent since we pretend that this box is normal flow.
+    for (auto* ancestor = &layoutBox.parent(); ancestor != &containingBlock; ancestor = &ancestor->containingBlock()) {
+        auto& boxGeometry = formattingContext.geometryForBox(*ancestor, EscapeReason::OutOfFlowBoxNeedsInFlowGeometry);
         // Display::Box::left is the border box left position in its containing block's coordinate system.
-        left += displayBox.left();
-        ASSERT(!container->isPositioned());
+        left += boxGeometry.left();
+        ASSERT(!ancestor->isPositioned() || layoutBox.isFixedPositioned());
     }
-    // FIXME: floatings need to be taken into account.
-    return left;
+    // Move the static position relative to the padding box. This is very specific to abolutely positioned boxes.
+    return left - horizontalConstraints.logicalLeft;
 }
 
-LayoutUnit FormattingContext::Geometry::shrinkToFitWidth(LayoutContext& layoutContext, const FormattingContext& formattingContext, const Box& layoutBox)
+LayoutUnit FormattingContext::Geometry::shrinkToFitWidth(const Box& formattingRoot, LayoutUnit availableWidth)
 {
-    LOG_WITH_STREAM(FormattingContextLayout, stream << "[Width] -> shrink to fit -> unsupported -> width(" << LayoutUnit { } << "px) layoutBox: " << &layoutBox << ")");
+    LOG_WITH_STREAM(FormattingContextLayout, stream << "[Width] -> shrink to fit -> unsupported -> width(" << LayoutUnit { } << "px) layoutBox: " << &formattingRoot << ")");
+    ASSERT(formattingRoot.establishesFormattingContext());
+
     // Calculation of the shrink-to-fit width is similar to calculating the width of a table cell using the automatic table layout algorithm.
     // Roughly: calculate the preferred width by formatting the content without breaking lines other than where explicit line breaks occur,
     // and also calculate the preferred minimum width, e.g., by trying all possible line breaks. CSS 2.2 does not define the exact algorithm.
@@ -152,14 +339,23 @@ LayoutUnit FormattingContext::Geometry::shrinkToFitWidth(LayoutContext& layoutCo
     // 'padding-left', 'padding-right', 'border-right-width', 'margin-right', and the widths of any relevant scroll bars.
 
     // Then the shrink-to-fit width is: min(max(preferred minimum width, available width), preferred width).
-    auto availableWidth = layoutContext.displayBoxForLayoutBox(*layoutBox.containingBlock())->width();
-    auto instrinsicWidthConstraints = formattingContext.instrinsicWidthConstraints(layoutContext, layoutBox);
-    return std::min(std::max(instrinsicWidthConstraints.minimum, availableWidth), instrinsicWidthConstraints.maximum);
+    auto intrinsicWidthConstraints = IntrinsicWidthConstraints { };
+    if (is<ContainerBox>(formattingRoot) && downcast<ContainerBox>(formattingRoot).hasInFlowOrFloatingChild()) {
+        auto& root = downcast<ContainerBox>(formattingRoot);
+        auto& formattingStateForRoot = layoutState().ensureFormattingState(root);
+        auto precomputedIntrinsicWidthConstraints = formattingStateForRoot.intrinsicWidthConstraints();
+        if (!precomputedIntrinsicWidthConstraints)
+            intrinsicWidthConstraints = LayoutContext::createFormattingContext(root, layoutState())->computedIntrinsicWidthConstraints();
+        else
+            intrinsicWidthConstraints = *precomputedIntrinsicWidthConstraints;
+    }
+    return std::min(std::max(intrinsicWidthConstraints.minimum, availableWidth), intrinsicWidthConstraints.maximum);
 }
 
-VerticalGeometry FormattingContext::Geometry::outOfFlowNonReplacedVerticalGeometry(LayoutContext& layoutContext, const Box& layoutBox)
+VerticalGeometry FormattingContext::Geometry::outOfFlowNonReplacedVerticalGeometry(const Box& layoutBox, const HorizontalConstraints& horizontalConstraints, const VerticalConstraints& verticalConstraints, const OverrideVerticalValues& overrideVerticalValues) const
 {
-    ASSERT(layoutBox.isOutOfFlowPositioned() && !layoutBox.replaced());
+    ASSERT(layoutBox.isOutOfFlowPositioned() && !layoutBox.isReplacedBox());
+    ASSERT(verticalConstraints.logicalHeight);
 
     // 10.6.4 Absolutely positioned, non-replaced elements
     //
@@ -185,97 +381,99 @@ VerticalGeometry FormattingContext::Geometry::outOfFlowNonReplacedVerticalGeomet
     // 5. 'height' is 'auto', 'top' and 'bottom' are not 'auto', then 'auto' values for 'margin-top' and 'margin-bottom' are set to 0 and solve for 'height'
     // 6. 'bottom' is 'auto', 'top' and 'height' are not 'auto', then set 'auto' values for 'margin-top' and 'margin-bottom' to 0 and solve for 'bottom'
 
+    auto& formattingContext = this->formattingContext();
     auto& style = layoutBox.style();
-    auto& displayBox = *layoutContext.displayBoxForLayoutBox(layoutBox);
-    auto& containingBlockDisplayBox = *layoutContext.displayBoxForLayoutBox(*layoutBox.containingBlock());
-    auto containingBlockHeight = containingBlockDisplayBox.height();
-    auto containingBlockWidth = containingBlockDisplayBox.width();
+    auto& boxGeometry = formattingContext.geometryForBox(layoutBox);
+    auto containingBlockHeight = *verticalConstraints.logicalHeight;
+    auto containingBlockWidth = horizontalConstraints.logicalWidth;
 
-    auto top = computedValueIfNotAuto(style.logicalTop(), containingBlockWidth);
-    auto bottom = computedValueIfNotAuto(style.logicalBottom(), containingBlockWidth);
-    auto height = computedValueIfNotAuto(style.logicalHeight(), containingBlockHeight);
-    auto marginTop = computedValueIfNotAuto(style.marginTop(), containingBlockWidth);
-    auto marginBottom = computedValueIfNotAuto(style.marginBottom(), containingBlockWidth);
-    auto paddingTop = displayBox.paddingTop().value_or(0);
-    auto paddingBottom = displayBox.paddingBottom().value_or(0);
-    auto borderTop = displayBox.borderTop();
-    auto borderBottom = displayBox.borderBottom();
+    auto top = computedValue(style.logicalTop(), containingBlockWidth);
+    auto bottom = computedValue(style.logicalBottom(), containingBlockWidth);
+    auto height = overrideVerticalValues.height ? overrideVerticalValues.height.value() : computedHeight(layoutBox, containingBlockHeight);
+    auto computedVerticalMargin = Geometry::computedVerticalMargin(layoutBox, horizontalConstraints);
+    UsedVerticalMargin::NonCollapsedValues usedVerticalMargin;
+    auto paddingTop = boxGeometry.paddingTop().valueOr(0);
+    auto paddingBottom = boxGeometry.paddingBottom().valueOr(0);
+    auto borderTop = boxGeometry.borderTop();
+    auto borderBottom = boxGeometry.borderBottom();
 
     if (!top && !height && !bottom)
-        top = staticVerticalPositionForOutOfFlowPositioned(layoutContext, layoutBox);
+        top = staticVerticalPositionForOutOfFlowPositioned(layoutBox, verticalConstraints);
 
     if (top && height && bottom) {
-        if (!marginTop && !marginBottom) {
-            auto marginTopAndBottom = containingBlockHeight - (*top + borderTop + paddingTop + *height + paddingBottom + borderBottom + *bottom);
-            marginTop = marginBottom = marginTopAndBottom / 2;
-        } else if (!marginTop)
-            marginTop = containingBlockHeight - (*top + borderTop + paddingTop + *height + paddingBottom + borderBottom + *marginBottom + *bottom);
-        else
-            marginBottom = containingBlockHeight - (*top + *marginTop + borderTop + paddingTop + *height + paddingBottom + borderBottom + *bottom);
+        if (!computedVerticalMargin.before && !computedVerticalMargin.after) {
+            auto marginBeforeAndAfter = containingBlockHeight - (*top + borderTop + paddingTop + *height + paddingBottom + borderBottom + *bottom);
+            usedVerticalMargin = { marginBeforeAndAfter / 2, marginBeforeAndAfter / 2 };
+        } else if (!computedVerticalMargin.before) {
+            usedVerticalMargin.after = *computedVerticalMargin.after;
+            usedVerticalMargin.before = containingBlockHeight - (*top + borderTop + paddingTop + *height + paddingBottom + borderBottom + usedVerticalMargin.after + *bottom);
+        } else if (!computedVerticalMargin.after) {
+            usedVerticalMargin.before = *computedVerticalMargin.before;
+            usedVerticalMargin.after = containingBlockHeight - (*top + usedVerticalMargin.before + borderTop + paddingTop + *height + paddingBottom + borderBottom + *bottom);
+        } else
+            usedVerticalMargin = { *computedVerticalMargin.before, *computedVerticalMargin.after };
         // Over-constrained?
-        auto boxHeight = *top + *marginTop + borderTop + paddingTop + *height + paddingBottom + borderBottom + *marginBottom + *bottom;
-        if (boxHeight > containingBlockHeight)
-            bottom = containingBlockHeight - (*top + *marginTop + borderTop + paddingTop + *height + paddingBottom + borderBottom + *marginBottom);
+        auto boxHeight = *top + usedVerticalMargin.before + borderTop + paddingTop + *height + paddingBottom + borderBottom + usedVerticalMargin.after + *bottom;
+        if (boxHeight != containingBlockHeight)
+            bottom = containingBlockHeight - (*top + usedVerticalMargin.before + borderTop + paddingTop + *height + paddingBottom + borderBottom + usedVerticalMargin.after);
     }
 
     if (!top && !height && bottom) {
         // #1
-        height = contentHeightForFormattingContextRoot(layoutContext, layoutBox);
-        marginTop = marginTop.value_or(0);
-        marginBottom = marginBottom.value_or(0);
-        top = containingBlockHeight - (*marginTop + borderTop + paddingTop + *height + paddingBottom + borderBottom + *marginBottom + *bottom);
+        height = contentHeightForFormattingContextRoot(layoutBox);
+        usedVerticalMargin = { computedVerticalMargin.before.valueOr(0), computedVerticalMargin.after.valueOr(0) };
+        top = containingBlockHeight - (usedVerticalMargin.before + borderTop + paddingTop + *height + paddingBottom + borderBottom + usedVerticalMargin.after + *bottom);
     }
 
     if (!top && !bottom && height) {
         // #2
-        top = staticVerticalPositionForOutOfFlowPositioned(layoutContext, layoutBox);
-        marginTop = marginTop.value_or(0);
-        marginBottom = marginBottom.value_or(0);
-        bottom = containingBlockHeight - (*top + *marginTop + borderTop + paddingTop + *height + paddingBottom + borderBottom + *marginBottom);
+        top = staticVerticalPositionForOutOfFlowPositioned(layoutBox, verticalConstraints);
+        usedVerticalMargin = { computedVerticalMargin.before.valueOr(0), computedVerticalMargin.after.valueOr(0) };
+        bottom = containingBlockHeight - (*top + usedVerticalMargin.before + borderTop + paddingTop + *height + paddingBottom + borderBottom + usedVerticalMargin.after);
     }
 
     if (!height && !bottom && top) {
         // #3
-        height = contentHeightForFormattingContextRoot(layoutContext, layoutBox);
-        marginTop = marginTop.value_or(0);
-        marginBottom = marginBottom.value_or(0);
-        bottom = containingBlockHeight - (*top + *marginTop + borderTop + paddingTop + *height + paddingBottom + borderBottom + *marginBottom);
+        height = contentHeightForFormattingContextRoot(layoutBox);
+        usedVerticalMargin = { computedVerticalMargin.before.valueOr(0), computedVerticalMargin.after.valueOr(0) };
+        bottom = containingBlockHeight - (*top + usedVerticalMargin.before + borderTop + paddingTop + *height + paddingBottom + borderBottom + usedVerticalMargin.after);
     }
 
     if (!top && height && bottom) {
         // #4
-        marginTop = marginTop.value_or(0);
-        marginBottom = marginBottom.value_or(0);
-        top = containingBlockHeight - (*marginTop + borderTop + paddingTop + *height + paddingBottom + borderBottom + *marginBottom + *bottom);
+        usedVerticalMargin = { computedVerticalMargin.before.valueOr(0), computedVerticalMargin.after.valueOr(0) };
+        top = containingBlockHeight - (usedVerticalMargin.before + borderTop + paddingTop + *height + paddingBottom + borderBottom + usedVerticalMargin.after + *bottom);
     }
 
     if (!height && top && bottom) {
         // #5
-        marginTop = marginTop.value_or(0);
-        marginBottom = marginBottom.value_or(0);
-        height = containingBlockHeight - (*top + *marginTop + borderTop + paddingTop + paddingBottom + borderBottom + *marginBottom + *bottom);
+        usedVerticalMargin = { computedVerticalMargin.before.valueOr(0), computedVerticalMargin.after.valueOr(0) };
+        height = containingBlockHeight - (*top + usedVerticalMargin.before + borderTop + paddingTop + paddingBottom + borderBottom + usedVerticalMargin.after + *bottom);
     }
 
     if (!bottom && top && height) {
         // #6
-        marginTop = marginTop.value_or(0);
-        marginBottom = marginBottom.value_or(0);
-        bottom = containingBlockHeight - (*top + *marginTop + borderTop + paddingTop + *height + paddingBottom + borderBottom + *marginBottom);
+        usedVerticalMargin = { computedVerticalMargin.before.valueOr(0), computedVerticalMargin.after.valueOr(0) };
+        bottom = containingBlockHeight - (*top + usedVerticalMargin.before + borderTop + paddingTop + *height + paddingBottom + borderBottom + usedVerticalMargin.after);
     }
 
     ASSERT(top);
     ASSERT(bottom);
     ASSERT(height);
-    ASSERT(marginTop);
-    ASSERT(marginBottom);
 
-    LOG_WITH_STREAM(FormattingContextLayout, stream << "[Position][Height][Margin] -> out-of-flow non-replaced -> top(" << *top << "px) bottom("  << *bottom << "px) height(" << *height << "px) margin(" << *marginTop << "px, "  << *marginBottom << "px) layoutBox(" << &layoutBox << ")");
-    return { *top, *bottom, { *height, { *marginTop, *marginBottom }, { } } };
+    // For out-of-flow elements the containing block is formed by the padding edge of the ancestor.
+    // At this point the positioned value is in the coordinate system of the padding box. Let's convert it to border box coordinate system.
+    auto containingBlockPaddingVerticalEdge = verticalConstraints.logicalTop;
+    *top += containingBlockPaddingVerticalEdge;
+    *bottom += containingBlockPaddingVerticalEdge;
+
+    LOG_WITH_STREAM(FormattingContextLayout, stream << "[Position][Height][Margin] -> out-of-flow non-replaced -> top(" << *top << "px) bottom("  << *bottom << "px) height(" << *height << "px) margin(" << usedVerticalMargin.before << "px, "  << usedVerticalMargin.after << "px) layoutBox(" << &layoutBox << ")");
+    return { *top, *bottom, { *height, usedVerticalMargin } };
 }
 
-HorizontalGeometry FormattingContext::Geometry::outOfFlowNonReplacedHorizontalGeometry(LayoutContext& layoutContext, const FormattingContext& formattingContext, const Box& layoutBox)
+HorizontalGeometry FormattingContext::Geometry::outOfFlowNonReplacedHorizontalGeometry(const Box& layoutBox, const HorizontalConstraints& horizontalConstraints, const OverrideHorizontalValues& overrideHorizontalValues)
 {
-    ASSERT(layoutBox.isOutOfFlowPositioned() && !layoutBox.replaced());
+    ASSERT(layoutBox.isOutOfFlowPositioned() && !layoutBox.isReplacedBox());
 
     // 10.3.7 Absolutely positioned, non-replaced elements
     //
@@ -303,30 +501,28 @@ HorizontalGeometry FormattingContext::Geometry::outOfFlowNonReplacedHorizontalGe
     // 5. 'width' is 'auto', 'left' and 'right' are not 'auto', then solve for 'width'
     // 6. 'right' is 'auto', 'left' and 'width' are not 'auto', then solve for 'right'
 
+    auto& formattingContext = this->formattingContext();
     auto& style = layoutBox.style();
-    auto& displayBox = *layoutContext.displayBoxForLayoutBox(layoutBox);
-    auto& containingBlock = *layoutBox.containingBlock();
-    auto containingBlockWidth = layoutContext.displayBoxForLayoutBox(containingBlock)->contentBoxWidth();
-    auto isLeftToRightDirection = containingBlock.style().isLeftToRightDirection();
+    auto& boxGeometry = formattingContext.geometryForBox(layoutBox);
+    auto containingBlockWidth = horizontalConstraints.logicalWidth;
+    auto isLeftToRightDirection = layoutBox.containingBlock().style().isLeftToRightDirection();
 
-    auto left = computedValueIfNotAuto(style.logicalLeft(), containingBlockWidth);
-    auto right = computedValueIfNotAuto(style.logicalRight(), containingBlockWidth);
-    auto width = computedValueIfNotAuto(style.logicalWidth(), containingBlockWidth);
-    auto marginLeft = computedValueIfNotAuto(style.marginLeft(), containingBlockWidth);
-    auto marginRight = computedValueIfNotAuto(style.marginRight(), containingBlockWidth);
-    auto paddingLeft = displayBox.paddingLeft().value_or(0);
-    auto paddingRight = displayBox.paddingRight().value_or(0);
-    auto borderLeft = displayBox.borderLeft();
-    auto borderRight = displayBox.borderRight();
-
+    auto left = computedValue(style.logicalLeft(), containingBlockWidth);
+    auto right = computedValue(style.logicalRight(), containingBlockWidth);
+    auto width = overrideHorizontalValues.width ? overrideHorizontalValues.width : computedWidth(layoutBox, containingBlockWidth);
+    auto computedHorizontalMargin = Geometry::computedHorizontalMargin(layoutBox, horizontalConstraints);
+    UsedHorizontalMargin usedHorizontalMargin;
+    auto paddingLeft = boxGeometry.paddingLeft().valueOr(0);
+    auto paddingRight = boxGeometry.paddingRight().valueOr(0);
+    auto borderLeft = boxGeometry.borderLeft();
+    auto borderRight = boxGeometry.borderRight();
     if (!left && !width && !right) {
         // If all three of 'left', 'width', and 'right' are 'auto': First set any 'auto' values for 'margin-left' and 'margin-right' to 0.
         // Then, if the 'direction' property of the element establishing the static-position containing block is 'ltr' set 'left' to the static
         // position and apply rule number three below; otherwise, set 'right' to the static position and apply rule number one below.
-        marginLeft = marginLeft.value_or(0);
-        marginRight = marginRight.value_or(0);
+        usedHorizontalMargin = { computedHorizontalMargin.start.valueOr(0), computedHorizontalMargin.end.valueOr(0) };
 
-        auto staticHorizontalPosition = staticHorizontalPositionForOutOfFlowPositioned(layoutContext, layoutBox);
+        auto staticHorizontalPosition = staticHorizontalPositionForOutOfFlowPositioned(layoutBox, horizontalConstraints);
         if (isLeftToRightDirection)
             left = staticHorizontalPosition;
         else
@@ -337,89 +533,91 @@ HorizontalGeometry FormattingContext::Geometry::outOfFlowNonReplacedHorizontalGe
         // solve for 'margin-right' ('margin-left'). If one of 'margin-left' or 'margin-right' is 'auto', solve the equation for that value.
         // If the values are over-constrained, ignore the value for 'left' (in case the 'direction' property of the containing block is 'rtl') or 'right'
         // (in case 'direction' is 'ltr') and solve for that value.
-        if (!marginLeft && !marginRight) {
-            auto marginLeftAndRight = containingBlockWidth - (*left + borderLeft + paddingLeft + *width + paddingRight + borderRight + *right);
-            if (marginLeftAndRight >= 0)
-                marginLeft = marginRight = marginLeftAndRight / 2;
+        if (!computedHorizontalMargin.start && !computedHorizontalMargin.end) {
+            auto marginStartAndEnd = containingBlockWidth - (*left + borderLeft + paddingLeft + *width + paddingRight + borderRight + *right);
+            if (marginStartAndEnd >= 0)
+                usedHorizontalMargin = { marginStartAndEnd / 2, marginStartAndEnd / 2 };
             else {
                 if (isLeftToRightDirection) {
-                    marginLeft = LayoutUnit { 0 };
-                    marginRight = containingBlockWidth - (*left + *marginLeft + borderLeft + paddingLeft + *width + paddingRight + borderRight + *right);
+                    usedHorizontalMargin.start = 0_lu;
+                    usedHorizontalMargin.end = containingBlockWidth - (*left + usedHorizontalMargin.start + borderLeft + paddingLeft + *width + paddingRight + borderRight + *right);
                 } else {
-                    marginRight = LayoutUnit { 0 };
-                    marginLeft = containingBlockWidth - (*left + borderLeft + paddingLeft + *width + paddingRight + borderRight + *marginRight + *right);
+                    usedHorizontalMargin.end = 0_lu;
+                    usedHorizontalMargin.start = containingBlockWidth - (*left + borderLeft + paddingLeft + *width + paddingRight + borderRight + usedHorizontalMargin.end + *right);
                 }
             }
-        } else if (!marginLeft) {
-            marginLeft = containingBlockWidth - (*left + borderLeft + paddingLeft + *width + paddingRight + borderRight + *marginRight + *right);
+        } else if (!computedHorizontalMargin.start) {
+            usedHorizontalMargin.end = *computedHorizontalMargin.end;
+            usedHorizontalMargin.start = containingBlockWidth - (*left + borderLeft + paddingLeft + *width + paddingRight + borderRight + usedHorizontalMargin.end + *right);
+        } else if (!computedHorizontalMargin.end) {
+            usedHorizontalMargin.start = *computedHorizontalMargin.start;
+            usedHorizontalMargin.end = containingBlockWidth - (*left + usedHorizontalMargin.start + borderLeft + paddingLeft + *width + paddingRight + borderRight + *right);
+        } else {
+            usedHorizontalMargin = { *computedHorizontalMargin.start, *computedHorizontalMargin.end };
             // Overconstrained? Ignore right (left).
-            if (*marginLeft < 0) {
-                if (isLeftToRightDirection)
-                    marginLeft = containingBlockWidth - (*left + borderLeft + paddingLeft + *width + paddingRight + borderRight + *marginRight);
-                else
-                    marginLeft = containingBlockWidth - (borderLeft + paddingLeft + *width + paddingRight + borderRight + *marginRight + *right);
-            }
-        } else if (!marginRight) {
-            marginRight = containingBlockWidth - (*left + *marginLeft + borderLeft + paddingLeft + *width + paddingRight + borderRight + *right);
-            // Overconstrained? Ignore right (left).
-            if (*marginRight < 0) {
-                if (isLeftToRightDirection)
-                    marginRight = containingBlockWidth - (*left + *marginLeft + borderLeft + paddingLeft + *width + paddingRight + borderRight);
-                else
-                    marginRight = containingBlockWidth - (*marginLeft + borderLeft + paddingLeft + *width + paddingRight + borderRight + *right);
-            }
+            if (isLeftToRightDirection)
+                right = containingBlockWidth - (usedHorizontalMargin.start + *left + borderLeft + paddingLeft + *width + paddingRight + borderRight + usedHorizontalMargin.end);
+            else
+                left = containingBlockWidth - (usedHorizontalMargin.start + borderLeft + paddingLeft + *width + paddingRight + borderRight + usedHorizontalMargin.end + *right);
         }
     } else {
         // Otherwise, set 'auto' values for 'margin-left' and 'margin-right' to 0, and pick the one of the following six rules that applies.
-        marginLeft = marginLeft.value_or(0);
-        marginRight = marginRight.value_or(0);
+        usedHorizontalMargin = { computedHorizontalMargin.start.valueOr(0), computedHorizontalMargin.end.valueOr(0) };
     }
-
-    ASSERT(marginLeft);
-    ASSERT(marginRight);
 
     if (!left && !width && right) {
         // #1
-        width = shrinkToFitWidth(layoutContext, formattingContext, layoutBox);
-        left = containingBlockWidth - (*marginLeft + borderLeft + paddingLeft + *width + paddingRight  + borderRight + *marginRight + *right);
+        // Calculate the available width by solving for 'width' after setting 'left' (in case 1) to 0
+        left = LayoutUnit { 0 };
+        auto availableWidth = containingBlockWidth - (*left + usedHorizontalMargin.start + borderLeft + paddingLeft + paddingRight + borderRight + usedHorizontalMargin.end + *right);
+        width = shrinkToFitWidth(layoutBox, availableWidth);
+        left = containingBlockWidth - (usedHorizontalMargin.start + borderLeft + paddingLeft + *width + paddingRight  + borderRight + usedHorizontalMargin.end + *right);
     } else if (!left && !right && width) {
         // #2
-        auto staticHorizontalPosition = staticHorizontalPositionForOutOfFlowPositioned(layoutContext, layoutBox);
+        auto staticHorizontalPosition = staticHorizontalPositionForOutOfFlowPositioned(layoutBox, horizontalConstraints);
         if (isLeftToRightDirection) {
             left = staticHorizontalPosition;
-            right = containingBlockWidth - (*left + *marginLeft + borderLeft + paddingLeft + *width + paddingRight + borderRight + *marginRight);
+            right = containingBlockWidth - (*left + usedHorizontalMargin.start + borderLeft + paddingLeft + *width + paddingRight + borderRight + usedHorizontalMargin.end);
         } else {
             right = staticHorizontalPosition;
-            left = containingBlockWidth - (*marginLeft + borderLeft + paddingLeft + *width + paddingRight + borderRight + *marginRight + *right);
+            left = containingBlockWidth - (usedHorizontalMargin.start + borderLeft + paddingLeft + *width + paddingRight + borderRight + usedHorizontalMargin.end + *right);
         }
     } else if (!width && !right && left) {
         // #3
-        width = shrinkToFitWidth(layoutContext, formattingContext, layoutBox);
-        right = containingBlockWidth - (*left + *marginLeft + borderLeft + paddingLeft + *width + paddingRight + borderRight + *marginRight);
+        // Calculate the available width by solving for 'width' after setting 'right' (in case 3) to 0
+        right = LayoutUnit { 0 };
+        auto availableWidth = containingBlockWidth - (*left + usedHorizontalMargin.start + borderLeft + paddingLeft + paddingRight + borderRight + usedHorizontalMargin.end + *right);
+        width = shrinkToFitWidth(layoutBox, availableWidth);
+        right = containingBlockWidth - (*left + usedHorizontalMargin.start + borderLeft + paddingLeft + *width + paddingRight + borderRight + usedHorizontalMargin.end);
     } else if (!left && width && right) {
         // #4
-        left = containingBlockWidth - (*marginLeft + borderLeft + paddingLeft + *width + paddingRight + borderRight + *marginRight + *right);
+        left = containingBlockWidth - (usedHorizontalMargin.start + borderLeft + paddingLeft + *width + paddingRight + borderRight + usedHorizontalMargin.end + *right);
     } else if (!width && left && right) {
         // #5
-        width = containingBlockWidth - (*left + *marginLeft + borderLeft + paddingLeft + paddingRight  + borderRight + *marginRight + *right);
+        width = containingBlockWidth - (*left + usedHorizontalMargin.start + borderLeft + paddingLeft + paddingRight + borderRight + usedHorizontalMargin.end + *right);
     } else if (!right && left && width) {
         // #6
-        right = containingBlockWidth - (*left + *marginLeft + borderLeft + paddingLeft + *width + paddingRight + borderRight + *marginRight);
+        right = containingBlockWidth - (*left + usedHorizontalMargin.start + borderLeft + paddingLeft + *width + paddingRight + borderRight + usedHorizontalMargin.end);
     }
 
     ASSERT(left);
     ASSERT(right);
     ASSERT(width);
-    ASSERT(marginLeft);
-    ASSERT(marginRight);
 
-    LOG_WITH_STREAM(FormattingContextLayout, stream << "[Position][Width][Margin] -> out-of-flow non-replaced -> left(" << *left << "px) right("  << *right << "px) width(" << *width << "px) margin(" << *marginLeft << "px, "  << *marginRight << "px) layoutBox(" << &layoutBox << ")");
-    return { *left, *right, { *width, { *marginLeft, *marginRight } } };
+    // For out-of-flow elements the containing block is formed by the padding edge of the ancestor.
+    // At this point the positioned value is in the coordinate system of the padding box. Let's convert it to border box coordinate system.
+    auto containingBlockPaddingVerticalEdge = horizontalConstraints.logicalLeft;
+    *left += containingBlockPaddingVerticalEdge;
+    *right += containingBlockPaddingVerticalEdge;
+
+    LOG_WITH_STREAM(FormattingContextLayout, stream << "[Position][Width][Margin] -> out-of-flow non-replaced -> left(" << *left << "px) right("  << *right << "px) width(" << *width << "px) margin(" << usedHorizontalMargin.start << "px, "  << usedHorizontalMargin.end << "px) layoutBox(" << &layoutBox << ")");
+    return { *left, *right, { *width, usedHorizontalMargin } };
 }
 
-VerticalGeometry FormattingContext::Geometry::outOfFlowReplacedVerticalGeometry(LayoutContext& layoutContext, const Box& layoutBox)
+VerticalGeometry FormattingContext::Geometry::outOfFlowReplacedVerticalGeometry(const ReplacedBox& replacedBox, const HorizontalConstraints& horizontalConstraints, const VerticalConstraints& verticalConstraints, const OverrideVerticalValues& overrideVerticalValues) const
 {
-    ASSERT(layoutBox.isOutOfFlowPositioned() && layoutBox.replaced());
+    ASSERT(replacedBox.isOutOfFlowPositioned());
+    ASSERT(verticalConstraints.logicalHeight);
 
     // 10.6.5 Absolutely positioned, replaced elements
     //
@@ -431,64 +629,76 @@ VerticalGeometry FormattingContext::Geometry::outOfFlowReplacedVerticalGeometry(
     // 4. If at this point there is only one 'auto' left, solve the equation for that value.
     // 5. If at this point the values are over-constrained, ignore the value for 'bottom' and solve for that value.
 
-    auto& style = layoutBox.style();
-    auto& displayBox = *layoutContext.displayBoxForLayoutBox(layoutBox);
-    auto& containingBlockDisplayBox = *layoutContext.displayBoxForLayoutBox(*layoutBox.containingBlock());
-    auto containingBlockHeight = containingBlockDisplayBox.height();
-    auto containingBlockWidth = containingBlockDisplayBox.width();
+    auto& formattingContext = this->formattingContext();
+    auto& style = replacedBox.style();
+    auto& boxGeometry = formattingContext.geometryForBox(replacedBox);
+    auto containingBlockHeight = *verticalConstraints.logicalHeight;
+    auto containingBlockWidth = horizontalConstraints.logicalWidth;
 
-    auto top = computedValueIfNotAuto(style.logicalTop(), containingBlockWidth);
-    auto bottom = computedValueIfNotAuto(style.logicalBottom(), containingBlockWidth);
-    auto height = inlineReplacedHeightAndMargin(layoutContext, layoutBox).height;
-    auto marginTop = computedValueIfNotAuto(style.marginTop(), containingBlockWidth);
-    auto marginBottom = computedValueIfNotAuto(style.marginBottom(), containingBlockWidth);
-    auto paddingTop = displayBox.paddingTop().value_or(0);
-    auto paddingBottom = displayBox.paddingBottom().value_or(0);
-    auto borderTop = displayBox.borderTop();
-    auto borderBottom = displayBox.borderBottom();
+    auto top = computedValue(style.logicalTop(), containingBlockWidth);
+    auto bottom = computedValue(style.logicalBottom(), containingBlockWidth);
+    auto height = inlineReplacedHeightAndMargin(replacedBox, horizontalConstraints, verticalConstraints, overrideVerticalValues).contentHeight;
+    auto computedVerticalMargin = Geometry::computedVerticalMargin(replacedBox, horizontalConstraints);
+    Optional<LayoutUnit> usedMarginBefore = computedVerticalMargin.before;
+    Optional<LayoutUnit> usedMarginAfter = computedVerticalMargin.after;
+    auto paddingTop = boxGeometry.paddingTop().valueOr(0);
+    auto paddingBottom = boxGeometry.paddingBottom().valueOr(0);
+    auto borderTop = boxGeometry.borderTop();
+    auto borderBottom = boxGeometry.borderBottom();
 
     if (!top && !bottom) {
         // #1
-        top = staticVerticalPositionForOutOfFlowPositioned(layoutContext, layoutBox);
+        top = staticVerticalPositionForOutOfFlowPositioned(replacedBox, verticalConstraints);
     }
 
     if (!bottom) {
         // #2
-        marginTop = marginTop.value_or(0);
-        marginBottom = marginBottom.value_or(0);
+        usedMarginBefore = computedVerticalMargin.before.valueOr(0);
+        usedMarginAfter = usedMarginBefore;
     }
 
-    if (!marginTop && !marginBottom) {
+    if (!usedMarginBefore && !usedMarginAfter) {
         // #3
-        auto marginTopAndBottom = containingBlockHeight - (*top + borderTop + paddingTop + height + paddingBottom + borderBottom + *bottom);
-        marginTop = marginBottom = marginTopAndBottom / 2;
+        auto marginBeforeAndAfter = containingBlockHeight - (*top + borderTop + paddingTop + height + paddingBottom + borderBottom + *bottom);
+        usedMarginBefore = marginBeforeAndAfter / 2;
+        usedMarginAfter = usedMarginBefore;
     }
 
     // #4
     if (!top)
-        top = containingBlockHeight - (*marginTop + borderTop + paddingTop + height + paddingBottom + borderBottom + *marginBottom + *bottom);
+        top = containingBlockHeight - (*usedMarginBefore + borderTop + paddingTop + height + paddingBottom + borderBottom + *usedMarginAfter + *bottom);
 
     if (!bottom)
-        bottom = containingBlockHeight - (*top + *marginTop + borderTop + paddingTop + height + paddingBottom + borderBottom + *marginBottom);
+        bottom = containingBlockHeight - (*top + *usedMarginBefore + borderTop + paddingTop + height + paddingBottom + borderBottom + *usedMarginAfter);
 
-    if (!marginTop)
-        marginTop = containingBlockHeight - (*top + borderTop + paddingTop + height + paddingBottom + borderBottom + *marginBottom + *bottom);
+    if (!usedMarginBefore)
+        usedMarginBefore = containingBlockHeight - (*top + borderTop + paddingTop + height + paddingBottom + borderBottom + *usedMarginAfter + *bottom);
 
-    if (!marginBottom)
-        marginBottom = containingBlockHeight - (*top + *marginTop + borderTop + paddingTop + height + paddingBottom + borderBottom + *bottom);
+    if (!usedMarginAfter)
+        usedMarginAfter = containingBlockHeight - (*top + *usedMarginBefore + borderTop + paddingTop + height + paddingBottom + borderBottom + *bottom);
 
     // #5
-    auto boxHeight = *top + *marginTop + borderTop + paddingTop + height + paddingBottom + borderBottom + *marginBottom + *bottom;
+    auto boxHeight = *top + *usedMarginBefore + borderTop + paddingTop + height + paddingBottom + borderBottom + *usedMarginAfter + *bottom;
     if (boxHeight > containingBlockHeight)
-        bottom = containingBlockHeight - (*top + *marginTop + borderTop + paddingTop + height + paddingBottom + borderBottom + *marginBottom);
+        bottom = containingBlockHeight - (*top + *usedMarginBefore + borderTop + paddingTop + height + paddingBottom + borderBottom + *usedMarginAfter);
 
-    LOG_WITH_STREAM(FormattingContextLayout, stream << "[Position][Height][Margin] -> out-of-flow replaced -> top(" << *top << "px) bottom("  << *bottom << "px) height(" << height << "px) margin(" << *marginTop << "px, "  << *marginBottom << "px) layoutBox(" << &layoutBox << ")");
-    return { *top, *bottom, { height, { *marginTop, *marginBottom }, { } } };
+    // For out-of-flow elements the containing block is formed by the padding edge of the ancestor.
+    // At this point the positioned value is in the coordinate system of the padding box. Let's convert it to border box coordinate system.
+    auto containingBlockPaddingVerticalEdge = verticalConstraints.logicalTop;
+    *top += containingBlockPaddingVerticalEdge;
+    *bottom += containingBlockPaddingVerticalEdge;
+
+    ASSERT(top);
+    ASSERT(bottom);
+    ASSERT(usedMarginBefore);
+    ASSERT(usedMarginAfter);
+    LOG_WITH_STREAM(FormattingContextLayout, stream << "[Position][Height][Margin] -> out-of-flow replaced -> top(" << *top << "px) bottom("  << *bottom << "px) height(" << height << "px) margin(" << *usedMarginBefore << "px, "  << *usedMarginAfter << "px) layoutBox(" << &replacedBox << ")");
+    return { *top, *bottom, { height, { *usedMarginBefore, *usedMarginAfter } } };
 }
 
-HorizontalGeometry FormattingContext::Geometry::outOfFlowReplacedHorizontalGeometry(LayoutContext& layoutContext, const Box& layoutBox)
+HorizontalGeometry FormattingContext::Geometry::outOfFlowReplacedHorizontalGeometry(const ReplacedBox& replacedBox, const HorizontalConstraints& horizontalConstraints, const VerticalConstraints& verticalConstraints, const OverrideHorizontalValues& overrideHorizontalValues)
 {
-    ASSERT(layoutBox.isOutOfFlowPositioned() && layoutBox.replaced());
+    ASSERT(replacedBox.isOutOfFlowPositioned());
 
     // 10.3.8 Absolutely positioned, replaced elements
     // In this case, section 10.3.7 applies up through and including the constraint equation, but the rest of section 10.3.7 is replaced by the following rules:
@@ -504,25 +714,26 @@ HorizontalGeometry FormattingContext::Geometry::outOfFlowReplacedHorizontalGeome
     // 5. If at this point the values are over-constrained, ignore the value for either 'left' (in case the 'direction' property of the containing block is 'rtl') or
     //   'right' (in case 'direction' is 'ltr') and solve for that value.
 
-    auto& style = layoutBox.style();
-    auto& displayBox = *layoutContext.displayBoxForLayoutBox(layoutBox);
-    auto& containingBlock = *layoutBox.containingBlock();
-    auto containingBlockWidth = layoutContext.displayBoxForLayoutBox(containingBlock)->contentBoxWidth();
-    auto isLeftToRightDirection = containingBlock.style().isLeftToRightDirection();
+    auto& formattingContext = this->formattingContext();
+    auto& style = replacedBox.style();
+    auto& boxGeometry = formattingContext.geometryForBox(replacedBox);
+    auto containingBlockWidth = horizontalConstraints.logicalWidth;
+    auto isLeftToRightDirection = replacedBox.containingBlock().style().isLeftToRightDirection();
 
-    auto left = computedValueIfNotAuto(style.logicalLeft(), containingBlockWidth);
-    auto right = computedValueIfNotAuto(style.logicalRight(), containingBlockWidth);
-    auto marginLeft = computedValueIfNotAuto(style.marginLeft(), containingBlockWidth);
-    auto marginRight = computedValueIfNotAuto(style.marginRight(), containingBlockWidth);
-    auto width = inlineReplacedWidthAndMargin(layoutContext, layoutBox).width;
-    auto paddingLeft = displayBox.paddingLeft().value_or(0);
-    auto paddingRight = displayBox.paddingRight().value_or(0);
-    auto borderLeft = displayBox.borderLeft();
-    auto borderRight = displayBox.borderRight();
+    auto left = computedValue(style.logicalLeft(), containingBlockWidth);
+    auto right = computedValue(style.logicalRight(), containingBlockWidth);
+    auto computedHorizontalMargin = Geometry::computedHorizontalMargin(replacedBox, horizontalConstraints);
+    Optional<LayoutUnit> usedMarginStart = computedHorizontalMargin.start;
+    Optional<LayoutUnit> usedMarginEnd = computedHorizontalMargin.end;
+    auto width = inlineReplacedWidthAndMargin(replacedBox, horizontalConstraints, verticalConstraints, overrideHorizontalValues).contentWidth;
+    auto paddingLeft = boxGeometry.paddingLeft().valueOr(0);
+    auto paddingRight = boxGeometry.paddingRight().valueOr(0);
+    auto borderLeft = boxGeometry.borderLeft();
+    auto borderRight = boxGeometry.borderRight();
 
     if (!left && !right) {
         // #1
-        auto staticHorizontalPosition = staticHorizontalPositionForOutOfFlowPositioned(layoutContext, layoutBox);
+        auto staticHorizontalPosition = staticHorizontalPositionForOutOfFlowPositioned(replacedBox, horizontalConstraints);
         if (isLeftToRightDirection)
             left = staticHorizontalPosition;
         else
@@ -531,62 +742,69 @@ HorizontalGeometry FormattingContext::Geometry::outOfFlowReplacedHorizontalGeome
 
     if (!left || !right) {
         // #2
-        marginLeft = marginLeft.value_or(0);
-        marginRight = marginRight.value_or(0);
+        usedMarginStart = computedHorizontalMargin.start.valueOr(0);
+        usedMarginEnd = computedHorizontalMargin.end.valueOr(0);
     }
 
-    if (!marginLeft && !marginRight) {
+    if (!usedMarginStart && !usedMarginEnd) {
         // #3
-        auto marginLeftAndRight = containingBlockWidth - (*left + borderLeft + paddingLeft + width + paddingRight + borderRight + *right);
-        if (marginLeftAndRight >= 0)
-            marginLeft = marginRight = marginLeftAndRight / 2;
-        else {
+        auto marginStartAndEnd = containingBlockWidth - (*left + borderLeft + paddingLeft + width + paddingRight + borderRight + *right);
+        if (marginStartAndEnd >= 0) {
+            usedMarginStart = marginStartAndEnd / 2;
+            usedMarginEnd = usedMarginStart;
+        } else {
             if (isLeftToRightDirection) {
-                marginLeft = LayoutUnit { 0 };
-                marginRight = containingBlockWidth - (*left + *marginLeft + borderLeft + paddingLeft + width + paddingRight + borderRight + *right);
+                usedMarginStart = 0_lu;
+                usedMarginEnd = containingBlockWidth - (*left + *usedMarginStart + borderLeft + paddingLeft + width + paddingRight + borderRight + *right);
             } else {
-                marginRight = LayoutUnit { 0 };
-                marginLeft = containingBlockWidth - (*left + borderLeft + paddingLeft + width + paddingRight + borderRight + *marginRight + *right);
+                usedMarginEnd = 0_lu;
+                usedMarginStart = containingBlockWidth - (*left + borderLeft + paddingLeft + width + paddingRight + borderRight + *usedMarginEnd + *right);
             }
         }
     }
 
     // #4
     if (!left)
-        left = containingBlockWidth - (*marginLeft + borderLeft + paddingLeft + width + paddingRight + borderRight + *marginRight + *right);
+        left = containingBlockWidth - (*usedMarginStart + borderLeft + paddingLeft + width + paddingRight + borderRight + *usedMarginEnd + *right);
 
     if (!right)
-        right = containingBlockWidth - (*left + *marginLeft + borderLeft + paddingLeft + width + paddingRight + borderRight + *marginRight);
+        right = containingBlockWidth - (*left + *usedMarginStart + borderLeft + paddingLeft + width + paddingRight + borderRight + *usedMarginEnd);
 
-    if (!marginLeft)
-        marginLeft = containingBlockWidth - (*left + borderLeft + paddingLeft + width + paddingRight + borderRight + *marginRight + *right);
+    if (!usedMarginStart)
+        usedMarginStart = containingBlockWidth - (*left + borderLeft + paddingLeft + width + paddingRight + borderRight + *usedMarginEnd + *right);
 
-    if (!marginRight)
-        marginRight = containingBlockWidth - (*left + *marginLeft + borderLeft + paddingLeft + width + paddingRight + borderRight + *right);
+    if (!usedMarginEnd)
+        usedMarginEnd = containingBlockWidth - (*left + *usedMarginStart + borderLeft + paddingLeft + width + paddingRight + borderRight + *right);
 
-    auto boxWidth = (*left + *marginLeft + borderLeft + paddingLeft + width + paddingRight + borderRight + *marginRight + *right);
+    auto boxWidth = (*left + *usedMarginStart + borderLeft + paddingLeft + width + paddingRight + borderRight + *usedMarginEnd + *right);
     if (boxWidth > containingBlockWidth) {
         // #5 Over-constrained?
         if (isLeftToRightDirection)
-            right = containingBlockWidth - (*left + *marginLeft + borderLeft + paddingLeft + width + paddingRight + borderRight + *marginRight);
+            right = containingBlockWidth - (*left + *usedMarginStart + borderLeft + paddingLeft + width + paddingRight + borderRight + *usedMarginEnd);
         else
-            left = containingBlockWidth - (*marginLeft + borderLeft + paddingLeft + width + paddingRight + borderRight + *marginRight + *right);
+            left = containingBlockWidth - (*usedMarginStart + borderLeft + paddingLeft + width + paddingRight + borderRight + *usedMarginEnd + *right);
     }
 
     ASSERT(left);
     ASSERT(right);
-    ASSERT(marginLeft);
-    ASSERT(marginRight);
+    ASSERT(usedMarginStart);
+    ASSERT(usedMarginEnd);
 
-    LOG_WITH_STREAM(FormattingContextLayout, stream << "[Position][Width][Margin] -> out-of-flow replaced -> left(" << *left << "px) right("  << *right << "px) width(" << width << "px) margin(" << *marginLeft << "px, "  << *marginRight << "px) layoutBox(" << &layoutBox << ")");
-    return { *left, *right, { width, { *marginLeft, *marginRight } } };
+    // For out-of-flow elements the containing block is formed by the padding edge of the ancestor.
+    // At this point the positioned value is in the coordinate system of the padding box. Let's convert it to border box coordinate system.
+    auto containingBlockPaddingVerticalEdge = horizontalConstraints.logicalLeft;
+    *left += containingBlockPaddingVerticalEdge;
+    *right += containingBlockPaddingVerticalEdge;
+
+    LOG_WITH_STREAM(FormattingContextLayout, stream << "[Position][Width][Margin] -> out-of-flow replaced -> left(" << *left << "px) right("  << *right << "px) width(" << width << "px) margin(" << *usedMarginStart << "px, "  << *usedMarginEnd << "px) layoutBox(" << &replacedBox << ")");
+    return { *left, *right, { width, { *usedMarginStart, *usedMarginEnd } } };
 }
 
-HeightAndMargin FormattingContext::Geometry::complicatedCases(LayoutContext& layoutContext, const Box& layoutBox)
+ContentHeightAndMargin FormattingContext::Geometry::complicatedCases(const Box& layoutBox, const HorizontalConstraints& horizontalConstraints, const OverrideVerticalValues& overrideVerticalValues) const
 {
-    ASSERT(!layoutBox.replaced());
+    ASSERT(!layoutBox.isReplacedBox());
     // TODO: Use complicated-case for document renderer for now (see BlockFormattingContext::Geometry::inFlowHeightAndMargin).
-    ASSERT((layoutBox.isBlockLevelBox() && layoutBox.isInFlow() && !layoutBox.isOverflowVisible()) || layoutBox.isInlineBlockBox() || layoutBox.isFloatingPositioned() || layoutBox.isDocumentBox());
+    ASSERT((layoutBox.isBlockLevelBox() && layoutBox.isInFlow() && !layoutBox.isOverflowVisible()) || layoutBox.isInlineBlockBox() || layoutBox.isFloatingPositioned() || layoutBox.isDocumentBox() || layoutBox.isTableBox());
 
     // 10.6.6 Complicated cases
     //
@@ -597,121 +815,107 @@ HeightAndMargin FormattingContext::Geometry::complicatedCases(LayoutContext& lay
     // 1. If 'margin-top', or 'margin-bottom' are 'auto', their used value is 0.
     // 2. If 'height' is 'auto', the height depends on the element's descendants per 10.6.7.
 
-    auto& style = layoutBox.style();
-    auto& containingBlock = *layoutBox.containingBlock();
-    auto& containingBlockDisplayBox = *layoutContext.displayBoxForLayoutBox(containingBlock);
-    auto containingBlockWidth = containingBlockDisplayBox.contentBoxWidth();
-
-    auto height = fixedValue(style.logicalHeight());
-    auto marginTop = computedValueIfNotAuto(style.marginTop(), containingBlockWidth);
-    auto marginBottom = computedValueIfNotAuto(style.marginBottom(), containingBlockWidth);
-
+    auto height = overrideVerticalValues.height ? overrideVerticalValues.height.value() : computedHeight(layoutBox);
+    auto computedVerticalMargin = Geometry::computedVerticalMargin(layoutBox, horizontalConstraints);
     // #1
-    marginTop = marginTop.value_or(0);
-    marginBottom = marginBottom.value_or(0);
+    auto usedVerticalMargin = UsedVerticalMargin::NonCollapsedValues { computedVerticalMargin.before.valueOr(0), computedVerticalMargin.after.valueOr(0) };
     // #2
     if (!height) {
-        if (style.logicalHeight().isAuto())
-            height = contentHeightForFormattingContextRoot(layoutContext, layoutBox);
-        else
-            ASSERT_NOT_IMPLEMENTED_YET();
+        ASSERT(isHeightAuto(layoutBox));
+        height = contentHeightForFormattingContextRoot(layoutBox);
     }
 
     ASSERT(height);
-    ASSERT(marginTop);
-    ASSERT(marginBottom);
 
-    LOG_WITH_STREAM(FormattingContextLayout, stream << "[Height][Margin] -> floating non-replaced -> height(" << *height << "px) margin(" << *marginTop << "px, " << *marginBottom << "px) -> layoutBox(" << &layoutBox << ")");
-    return HeightAndMargin { *height, { *marginTop, *marginBottom }, { } };
+    LOG_WITH_STREAM(FormattingContextLayout, stream << "[Height][Margin] -> floating non-replaced -> height(" << *height << "px) margin(" << usedVerticalMargin.before << "px, " << usedVerticalMargin.after << "px) -> layoutBox(" << &layoutBox << ")");
+    return ContentHeightAndMargin { *height, usedVerticalMargin };
 }
 
-WidthAndMargin FormattingContext::Geometry::floatingNonReplacedWidthAndMargin(LayoutContext& layoutContext, const FormattingContext& formattingContext, const Box& layoutBox)
+ContentWidthAndMargin FormattingContext::Geometry::floatingNonReplacedWidthAndMargin(const Box& layoutBox, const HorizontalConstraints& horizontalConstraints, const OverrideHorizontalValues& overrideHorizontalValues)
 {
-    ASSERT(layoutBox.isFloatingPositioned() && !layoutBox.replaced());
+    ASSERT(layoutBox.isFloatingPositioned() && !layoutBox.isReplacedBox());
 
     // 10.3.5 Floating, non-replaced elements
     //
     // 1. If 'margin-left', or 'margin-right' are computed as 'auto', their used value is '0'.
     // 2. If 'width' is computed as 'auto', the used value is the "shrink-to-fit" width.
 
-    auto& containingBlock = *layoutBox.containingBlock();
-    auto containingBlockWidth = layoutContext.displayBoxForLayoutBox(containingBlock)->contentBoxWidth();
+    auto computedHorizontalMargin = Geometry::computedHorizontalMargin(layoutBox, horizontalConstraints);
 
     // #1
-    auto margin = computedNonCollapsedHorizontalMarginValue(layoutContext, layoutBox);
-      // #2
-    auto width = computedValueIfNotAuto(layoutBox.style().logicalWidth(), containingBlockWidth);
+    auto usedHorizontallMargin = UsedHorizontalMargin { computedHorizontalMargin.start.valueOr(0), computedHorizontalMargin.end.valueOr(0) };
+    // #2
+    auto width = overrideHorizontalValues.width ? overrideHorizontalValues.width : computedWidth(layoutBox, horizontalConstraints.logicalWidth);
     if (!width)
-        width = shrinkToFitWidth(layoutContext, formattingContext, layoutBox);
+        width = shrinkToFitWidth(layoutBox, horizontalConstraints.logicalWidth);
 
-    LOG_WITH_STREAM(FormattingContextLayout, stream << "[Width][Margin] -> floating non-replaced -> width(" << *width << "px) margin(" << margin.left << "px, " << margin.right << "px) -> layoutBox(" << &layoutBox << ")");
-    return WidthAndMargin { *width, margin };
+    LOG_WITH_STREAM(FormattingContextLayout, stream << "[Width][Margin] -> floating non-replaced -> width(" << *width << "px) margin(" << usedHorizontallMargin.start << "px, " << usedHorizontallMargin.end << "px) -> layoutBox(" << &layoutBox << ")");
+    return ContentWidthAndMargin { *width, usedHorizontallMargin };
 }
 
-HeightAndMargin FormattingContext::Geometry::floatingReplacedHeightAndMargin(LayoutContext& layoutContext, const Box& layoutBox)
+ContentHeightAndMargin FormattingContext::Geometry::floatingReplacedHeightAndMargin(const ReplacedBox& replacedBox, const HorizontalConstraints& horizontalConstraints, const OverrideVerticalValues& overrideVerticalValues) const
 {
-    ASSERT(layoutBox.isFloatingPositioned() && layoutBox.replaced());
+    ASSERT(replacedBox.isFloatingPositioned());
 
     // 10.6.2 Inline replaced elements, block-level replaced elements in normal flow, 'inline-block'
     // replaced elements in normal flow and floating replaced elements
     LOG_WITH_STREAM(FormattingContextLayout, stream << "[Height][Margin] -> floating replaced -> redirected to inline replaced");
-    return inlineReplacedHeightAndMargin(layoutContext, layoutBox);
+    return inlineReplacedHeightAndMargin(replacedBox, horizontalConstraints, { }, overrideVerticalValues);
 }
 
-WidthAndMargin FormattingContext::Geometry::floatingReplacedWidthAndMargin(LayoutContext& layoutContext, const Box& layoutBox)
+ContentWidthAndMargin FormattingContext::Geometry::floatingReplacedWidthAndMargin(const ReplacedBox& replacedBox, const HorizontalConstraints& horizontalConstraints, const OverrideHorizontalValues& overrideHorizontalValues)
 {
-    ASSERT(layoutBox.isFloatingPositioned() && layoutBox.replaced());
+    ASSERT(replacedBox.isFloatingPositioned());
 
     // 10.3.6 Floating, replaced elements
     //
     // 1. If 'margin-left' or 'margin-right' are computed as 'auto', their used value is '0'.
     // 2. The used value of 'width' is determined as for inline replaced elements.
-    auto margin = computedNonCollapsedHorizontalMarginValue(layoutContext, layoutBox);
+    auto computedHorizontalMargin = Geometry::computedHorizontalMargin(replacedBox, horizontalConstraints);
 
     LOG_WITH_STREAM(FormattingContextLayout, stream << "[Height][Margin] -> floating replaced -> redirected to inline replaced");
-    return inlineReplacedWidthAndMargin(layoutContext, layoutBox, margin.left, margin.right);
+    auto usedMargin = UsedHorizontalMargin { computedHorizontalMargin.start.valueOr(0), computedHorizontalMargin.end.valueOr(0) };
+    return inlineReplacedWidthAndMargin(replacedBox, horizontalConstraints, { }, { overrideHorizontalValues.width, usedMargin });
 }
 
-VerticalGeometry FormattingContext::Geometry::outOfFlowVerticalGeometry(LayoutContext& layoutContext, const Box& layoutBox)
+VerticalGeometry FormattingContext::Geometry::outOfFlowVerticalGeometry(const Box& layoutBox, const HorizontalConstraints& horizontalConstraints, const VerticalConstraints& verticalConstraints, const OverrideVerticalValues& overrideVerticalValues) const
 {
     ASSERT(layoutBox.isOutOfFlowPositioned());
 
-    if (!layoutBox.replaced())
-        return outOfFlowNonReplacedVerticalGeometry(layoutContext, layoutBox);
-    return outOfFlowReplacedVerticalGeometry(layoutContext, layoutBox);
+    if (!layoutBox.isReplacedBox())
+        return outOfFlowNonReplacedVerticalGeometry(layoutBox, horizontalConstraints, verticalConstraints, overrideVerticalValues);
+    return outOfFlowReplacedVerticalGeometry(downcast<ReplacedBox>(layoutBox), horizontalConstraints, verticalConstraints, overrideVerticalValues);
 }
 
-HorizontalGeometry FormattingContext::Geometry::outOfFlowHorizontalGeometry(LayoutContext& layoutContext, const FormattingContext& formattingContext, const Box& layoutBox)
+HorizontalGeometry FormattingContext::Geometry::outOfFlowHorizontalGeometry(const Box& layoutBox, const HorizontalConstraints& horizontalConstraints, const VerticalConstraints& verticalConstraints, const OverrideHorizontalValues& overrideHorizontalValues)
 {
     ASSERT(layoutBox.isOutOfFlowPositioned());
 
-    if (!layoutBox.replaced())
-        return outOfFlowNonReplacedHorizontalGeometry(layoutContext, formattingContext, layoutBox);
-    return outOfFlowReplacedHorizontalGeometry(layoutContext, layoutBox);
+    if (!layoutBox.isReplacedBox())
+        return outOfFlowNonReplacedHorizontalGeometry(layoutBox, horizontalConstraints, overrideHorizontalValues);
+    return outOfFlowReplacedHorizontalGeometry(downcast<ReplacedBox>(layoutBox), horizontalConstraints, verticalConstraints, overrideHorizontalValues);
 }
 
-HeightAndMargin FormattingContext::Geometry::floatingHeightAndMargin(LayoutContext& layoutContext, const Box& layoutBox)
+ContentHeightAndMargin FormattingContext::Geometry::floatingHeightAndMargin(const Box& layoutBox, const HorizontalConstraints& horizontalConstraints, const OverrideVerticalValues& overrideVerticalValues) const
 {
     ASSERT(layoutBox.isFloatingPositioned());
 
-    if (!layoutBox.replaced())
-        return complicatedCases(layoutContext, layoutBox);
-    return floatingReplacedHeightAndMargin(layoutContext, layoutBox);
+    if (!layoutBox.isReplacedBox())
+        return complicatedCases(layoutBox, horizontalConstraints, overrideVerticalValues);
+    return floatingReplacedHeightAndMargin(downcast<ReplacedBox>(layoutBox), horizontalConstraints, overrideVerticalValues);
 }
 
-WidthAndMargin FormattingContext::Geometry::floatingWidthAndMargin(LayoutContext& layoutContext, const FormattingContext& formattingContext, const Box& layoutBox)
+ContentWidthAndMargin FormattingContext::Geometry::floatingWidthAndMargin(const Box& layoutBox, const HorizontalConstraints& horizontalConstraints, const OverrideHorizontalValues& overrideHorizontalValues)
 {
     ASSERT(layoutBox.isFloatingPositioned());
 
-    if (!layoutBox.replaced())
-        return floatingNonReplacedWidthAndMargin(layoutContext, formattingContext, layoutBox);
-    return floatingReplacedWidthAndMargin(layoutContext, layoutBox);
+    if (!layoutBox.isReplacedBox())
+        return floatingNonReplacedWidthAndMargin(layoutBox, horizontalConstraints, overrideHorizontalValues);
+    return floatingReplacedWidthAndMargin(downcast<ReplacedBox>(layoutBox), horizontalConstraints, overrideHorizontalValues);
 }
 
-HeightAndMargin FormattingContext::Geometry::inlineReplacedHeightAndMargin(LayoutContext& layoutContext, const Box& layoutBox)
+ContentHeightAndMargin FormattingContext::Geometry::inlineReplacedHeightAndMargin(const ReplacedBox& replacedBox, const HorizontalConstraints& horizontalConstraints, Optional<VerticalConstraints> verticalConstraints, const OverrideVerticalValues& overrideVerticalValues) const
 {
-    ASSERT((layoutBox.isOutOfFlowPositioned() || layoutBox.isFloatingPositioned() || layoutBox.isInFlow()) && layoutBox.replaced());
-
     // 10.6.2 Inline replaced elements, block-level replaced elements in normal flow, 'inline-block' replaced elements in normal flow and floating replaced elements
     //
     // 1. If 'margin-top', or 'margin-bottom' are 'auto', their used value is 0.
@@ -723,29 +927,25 @@ HeightAndMargin FormattingContext::Geometry::inlineReplacedHeightAndMargin(Layou
     //    the height of the largest rectangle that has a 2:1 ratio, has a height not greater than 150px, and has a width not greater than the device width.
 
     // #1
-    auto margin = computedNonCollapsedVerticalMarginValue(layoutContext, layoutBox);
+    auto& formattingContext = this->formattingContext();
+    auto computedVerticalMargin = Geometry::computedVerticalMargin(replacedBox, horizontalConstraints);
+    auto usedVerticalMargin = UsedVerticalMargin::NonCollapsedValues { computedVerticalMargin.before.valueOr(0), computedVerticalMargin.after.valueOr(0) };
+    auto& style = replacedBox.style();
 
-    auto& style = layoutBox.style();
-    auto replaced = layoutBox.replaced();
-    auto& containingBlockDisplayBox = *layoutContext.displayBoxForLayoutBox(*layoutBox.containingBlock());
-    auto containingBlockWidth = containingBlockDisplayBox.width();
+    auto height = overrideVerticalValues.height ? overrideVerticalValues.height.value() : computedHeight(replacedBox, verticalConstraints ? verticalConstraints->logicalHeight : WTF::nullopt);
+    auto heightIsAuto = !overrideVerticalValues.height && isHeightAuto(replacedBox);
+    auto widthIsAuto = style.logicalWidth().isAuto();
 
-    auto height = fixedValue(style.logicalHeight());
-    auto heightIsAuto = style.logicalHeight().isAuto();
-    auto width = computedValueIfNotAuto(style.logicalWidth(), containingBlockWidth);
-
-    if (!height && !heightIsAuto)
-        ASSERT_NOT_IMPLEMENTED_YET();
-
-    if (heightIsAuto && !width && replaced->hasIntrinsicHeight()) {
+    if (heightIsAuto && widthIsAuto && replacedBox.hasIntrinsicHeight()) {
         // #2
-        height = replaced->intrinsicHeight();
-    } else if (heightIsAuto && replaced->hasIntrinsicRatio()) {
+        height = replacedBox.intrinsicHeight();
+    } else if (heightIsAuto && replacedBox.hasIntrinsicRatio()) {
         // #3
-        height = *width / replaced->intrinsicRatio();
-    } else if (heightIsAuto && replaced->hasIntrinsicHeight()) {
+        auto usedWidth = formattingContext.geometryForBox(replacedBox).width();
+        height = usedWidth / replacedBox.intrinsicRatio();
+    } else if (heightIsAuto && replacedBox.hasIntrinsicHeight()) {
         // #4
-        height = replaced->intrinsicHeight();
+        height = replacedBox.intrinsicHeight();
     } else if (heightIsAuto) {
         // #5
         height = { 150 };
@@ -753,15 +953,12 @@ HeightAndMargin FormattingContext::Geometry::inlineReplacedHeightAndMargin(Layou
 
     ASSERT(height);
 
-    LOG_WITH_STREAM(FormattingContextLayout, stream << "[Height][Margin] -> inflow replaced -> height(" << *height << "px) margin(" << margin.top << "px, " << margin.bottom << "px) -> layoutBox(" << &layoutBox << ")");
-    return { *height, margin, { } };
+    LOG_WITH_STREAM(FormattingContextLayout, stream << "[Height][Margin] -> inflow replaced -> height(" << *height << "px) margin(" << usedVerticalMargin.before << "px, " << usedVerticalMargin.after << "px) -> layoutBox(" << &replacedBox << ")");
+    return { *height, usedVerticalMargin };
 }
 
-WidthAndMargin FormattingContext::Geometry::inlineReplacedWidthAndMargin(LayoutContext& layoutContext, const Box& layoutBox,
-    std::optional<LayoutUnit> precomputedMarginLeft, std::optional<LayoutUnit> precomputedMarginRight)
+ContentWidthAndMargin FormattingContext::Geometry::inlineReplacedWidthAndMargin(const ReplacedBox& replacedBox, const HorizontalConstraints& horizontalConstraints, Optional<VerticalConstraints> verticalConstraints, const OverrideHorizontalValues& overrideHorizontalValues)
 {
-    ASSERT((layoutBox.isOutOfFlowPositioned() || layoutBox.isFloatingPositioned() || layoutBox.isInFlow()) && layoutBox.replaced());
-
     // 10.3.2 Inline, replaced elements
     //
     // A computed value of 'auto' for 'margin-left' or 'margin-right' becomes a used value of '0'.
@@ -781,78 +978,140 @@ WidthAndMargin FormattingContext::Geometry::inlineReplacedWidthAndMargin(LayoutC
     // 5. Otherwise, if 'width' has a computed value of 'auto', but none of the conditions above are met, then the used value of 'width' becomes 300px.
     //    If 300px is too wide to fit the device, UAs should use the width of the largest rectangle that has a 2:1 ratio and fits the device instead.
 
-    auto& style = layoutBox.style();
-    auto& containingBlockDisplayBox = *layoutContext.displayBoxForLayoutBox(*layoutBox.containingBlock());
-    auto containingBlockWidth = containingBlockDisplayBox.width();
+    auto computedHorizontalMargin = Geometry::computedHorizontalMargin(replacedBox, horizontalConstraints);
 
-    auto computeMarginRight = [&]() {
-        if (precomputedMarginRight)
-            return precomputedMarginRight.value();
-        auto marginRight = computedValueIfNotAuto(style.marginRight(), containingBlockWidth);
-        return marginRight.value_or(LayoutUnit { 0 });
+    auto usedMarginStart = [&] {
+        if (overrideHorizontalValues.margin)
+            return overrideHorizontalValues.margin->start;
+        return computedHorizontalMargin.start.valueOr(0_lu);
     };
 
-    auto computeMarginLeft = [&]() {
-        if (precomputedMarginLeft)
-            return precomputedMarginLeft.value();
-        auto marginLeft = computedValueIfNotAuto(style.marginLeft(), containingBlockWidth);
-        return marginLeft.value_or(LayoutUnit { 0 });
+    auto usedMarginEnd = [&] {
+        if (overrideHorizontalValues.margin)
+            return overrideHorizontalValues.margin->end;
+        return computedHorizontalMargin.end.valueOr(0_lu);
     };
 
-    auto replaced = layoutBox.replaced();
-    ASSERT(replaced);
+    auto width = overrideHorizontalValues.width ? overrideHorizontalValues.width : computedWidth(replacedBox, horizontalConstraints.logicalWidth);
+    auto heightIsAuto = isHeightAuto(replacedBox);
+    auto height = computedHeight(replacedBox, verticalConstraints ? verticalConstraints->logicalHeight : WTF::nullopt);
 
-    auto marginLeft = computeMarginLeft();
-    auto marginRight = computeMarginRight();
-    auto width = computedValueIfNotAuto(style.logicalWidth(), containingBlockWidth);
-
-    auto heightIsAuto = style.logicalHeight().isAuto();
-    auto height = fixedValue(style.logicalHeight());
-    if (!height && !heightIsAuto)
-        ASSERT_NOT_IMPLEMENTED_YET();
-
-    if (!width && heightIsAuto && replaced->hasIntrinsicWidth()) {
+    if (!width && heightIsAuto && replacedBox.hasIntrinsicWidth()) {
         // #1
-        width = replaced->intrinsicWidth();
-    } else if ((!width && heightIsAuto && !replaced->hasIntrinsicWidth() && replaced->hasIntrinsicHeight() && replaced->hasIntrinsicRatio())
-        || (!width && height && replaced->hasIntrinsicRatio())) {
+        width = replacedBox.intrinsicWidth();
+    } else if ((!width && heightIsAuto && !replacedBox.hasIntrinsicWidth() && replacedBox.hasIntrinsicHeight() && replacedBox.hasIntrinsicRatio())
+        || (!width && height && replacedBox.hasIntrinsicRatio())) {
         // #2
-        width = height.value_or(replaced->hasIntrinsicHeight()) * replaced->intrinsicRatio();
-    } else if (!width && heightIsAuto && replaced->hasIntrinsicRatio() && !replaced->hasIntrinsicWidth() && !replaced->hasIntrinsicHeight()) {
+        width = height.valueOr(replacedBox.hasIntrinsicHeight()) * replacedBox.intrinsicRatio();
+    } else if (!width && heightIsAuto && replacedBox.hasIntrinsicRatio() && !replacedBox.hasIntrinsicWidth() && !replacedBox.hasIntrinsicHeight()) {
         // #3
         // FIXME: undefined but surely doable.
         ASSERT_NOT_IMPLEMENTED_YET();
-    } else if (!width && replaced->hasIntrinsicWidth()) {
+    } else if (!width && replacedBox.hasIntrinsicWidth()) {
         // #4
-        width = replaced->intrinsicWidth();
-    } else {
+        width = replacedBox.intrinsicWidth();
+    } else if (!width) {
         // #5
         width = { 300 };
     }
 
     ASSERT(width);
 
-    LOG_WITH_STREAM(FormattingContextLayout, stream << "[Width][Margin] -> inflow replaced -> width(" << *width << "px) margin(" << marginLeft << "px, " << marginRight << "px) -> layoutBox(" << &layoutBox << ")");
-    return { *width, { marginLeft, marginRight } };
+    LOG_WITH_STREAM(FormattingContextLayout, stream << "[Width][Margin] -> inflow replaced -> width(" << *width << "px) margin(" << usedMarginStart() << "px, " << usedMarginEnd() << "px) -> layoutBox(" << &replacedBox << ")");
+    return { *width, { usedMarginStart(), usedMarginEnd() } };
 }
 
-Edges FormattingContext::Geometry::computedBorder(LayoutContext&, const Box& layoutBox)
+LayoutSize FormattingContext::Geometry::inFlowPositionedPositionOffset(const Box& layoutBox, const HorizontalConstraints& horizontalConstraints) const
+{
+    ASSERT(layoutBox.isInFlowPositioned());
+
+    // 9.4.3 Relative positioning
+    //
+    // The 'top' and 'bottom' properties move relatively positioned element(s) up or down without changing their size.
+    // Top' moves the boxes down, and 'bottom' moves them up. Since boxes are not split or stretched as a result of 'top' or 'bottom', the used values are always: top = -bottom.
+    //
+    // 1. If both are 'auto', their used values are both '0'.
+    // 2. If one of them is 'auto', it becomes the negative of the other.
+    // 3. If neither is 'auto', 'bottom' is ignored (i.e., the used value of 'bottom' will be minus the value of 'top').
+
+    auto& style = layoutBox.style();
+    auto containingBlockWidth = horizontalConstraints.logicalWidth;
+
+    auto top = computedValue(style.logicalTop(), containingBlockWidth);
+    auto bottom = computedValue(style.logicalBottom(), containingBlockWidth);
+
+    if (!top && !bottom) {
+        // #1
+        top = bottom = { 0 };
+    } else if (!top) {
+        // #2
+        top = -*bottom;
+    } else if (!bottom) {
+        // #3
+        bottom = -*top;
+    } else {
+        // #4
+        bottom = WTF::nullopt;
+    }
+
+    // For relatively positioned elements, 'left' and 'right' move the box(es) horizontally, without changing their size.
+    // 'Left' moves the boxes to the right, and 'right' moves them to the left.
+    // Since boxes are not split or stretched as a result of 'left' or 'right', the used values are always: left = -right.
+    //
+    // 1. If both 'left' and 'right' are 'auto' (their initial values), the used values are '0' (i.e., the boxes stay in their original position).
+    // 2. If 'left' is 'auto', its used value is minus the value of 'right' (i.e., the boxes move to the left by the value of 'right').
+    // 3. If 'right' is specified as 'auto', its used value is minus the value of 'left'.
+    // 4. If neither 'left' nor 'right' is 'auto', the position is over-constrained, and one of them has to be ignored.
+    //    If the 'direction' property of the containing block is 'ltr', the value of 'left' wins and 'right' becomes -'left'.
+    //    If 'direction' of the containing block is 'rtl', 'right' wins and 'left' is ignored.
+
+    auto left = computedValue(style.logicalLeft(), containingBlockWidth);
+    auto right = computedValue(style.logicalRight(), containingBlockWidth);
+
+    if (!left && !right) {
+        // #1
+        left = right = { 0 };
+    } else if (!left) {
+        // #2
+        left = -*right;
+    } else if (!right) {
+        // #3
+        right = -*left;
+    } else {
+        // #4
+        auto isLeftToRightDirection = layoutBox.containingBlock().style().isLeftToRightDirection();
+        if (isLeftToRightDirection)
+            right = -*left;
+        else
+            left = WTF::nullopt;
+    }
+
+    ASSERT(!bottom || *top == -*bottom);
+    ASSERT(!left || *left == -*right);
+
+    auto topPositionOffset = *top;
+    auto leftPositionOffset = left.valueOr(-*right);
+
+    LOG_WITH_STREAM(FormattingContextLayout, stream << "[Position] -> positioned inflow -> top offset(" << topPositionOffset << "px) left offset(" << leftPositionOffset << "px) layoutBox(" << &layoutBox << ")");
+    return { leftPositionOffset, topPositionOffset };
+}
+
+Edges FormattingContext::Geometry::computedBorder(const Box& layoutBox) const
 {
     auto& style = layoutBox.style();
     LOG_WITH_STREAM(FormattingContextLayout, stream << "[Border] -> layoutBox: " << &layoutBox);
     return {
-        { style.borderLeft().boxModelWidth(), style.borderRight().boxModelWidth() },
-        { style.borderTop().boxModelWidth(), style.borderBottom().boxModelWidth() }
+        { LayoutUnit(style.borderLeft().boxModelWidth()), LayoutUnit(style.borderRight().boxModelWidth()) },
+        { LayoutUnit(style.borderTop().boxModelWidth()), LayoutUnit(style.borderBottom().boxModelWidth()) }
     };
 }
 
-std::optional<Edges> FormattingContext::Geometry::computedPadding(LayoutContext& layoutContext, const Box& layoutBox)
+Optional<Edges> FormattingContext::Geometry::computedPadding(const Box& layoutBox, const LayoutUnit containingBlockWidth) const
 {
     if (!layoutBox.isPaddingApplicable())
-        return std::nullopt;
+        return WTF::nullopt;
 
     auto& style = layoutBox.style();
-    auto containingBlockWidth = layoutContext.displayBoxForLayoutBox(*layoutBox.containingBlock())->contentBoxWidth();
     LOG_WITH_STREAM(FormattingContextLayout, stream << "[Padding] -> layoutBox: " << &layoutBox);
     return Edges {
         { valueForLength(style.paddingLeft(), containingBlockWidth), valueForLength(style.paddingRight(), containingBlockWidth) },
@@ -860,28 +1119,56 @@ std::optional<Edges> FormattingContext::Geometry::computedPadding(LayoutContext&
     };
 }
 
-HorizontalEdges FormattingContext::Geometry::computedNonCollapsedHorizontalMarginValue(const LayoutContext& layoutContext, const Box& layoutBox)
+ComputedHorizontalMargin FormattingContext::Geometry::computedHorizontalMargin(const Box& layoutBox, const HorizontalConstraints& horizontalConstraints) const
 {
     auto& style = layoutBox.style();
-    auto containingBlockWidth = layoutContext.displayBoxForLayoutBox(*layoutBox.containingBlock())->contentBoxWidth();
-
-    auto marginLeft = computedValueIfNotAuto(style.marginLeft(), containingBlockWidth).value_or(LayoutUnit { 0 });
-    auto marginRight = computedValueIfNotAuto(style.marginRight(), containingBlockWidth).value_or(LayoutUnit { 0 });
-
-    LOG_WITH_STREAM(FormattingContextLayout, stream << "[Margin] -> non collapsed horizontal -> margin(" << marginLeft << "px, " << marginRight << "px) -> layoutBox: " << &layoutBox);
-    return { marginLeft, marginRight };
+    auto containingBlockWidth = horizontalConstraints.logicalWidth;
+    return { computedValue(style.marginStart(), containingBlockWidth), computedValue(style.marginEnd(), containingBlockWidth) };
 }
 
-VerticalEdges FormattingContext::Geometry::computedNonCollapsedVerticalMarginValue(const LayoutContext& layoutContext, const Box& layoutBox)
+ComputedVerticalMargin FormattingContext::Geometry::computedVerticalMargin(const Box& layoutBox, const HorizontalConstraints& horizontalConstraints) const
 {
     auto& style = layoutBox.style();
-    auto containingBlockWidth = layoutContext.displayBoxForLayoutBox(*layoutBox.containingBlock())->contentBoxWidth();
+    auto containingBlockWidth = horizontalConstraints.logicalWidth;
+    return { computedValue(style.marginBefore(), containingBlockWidth), computedValue(style.marginAfter(), containingBlockWidth) };
+}
 
-    auto marginTop = computedValueIfNotAuto(style.marginTop(), containingBlockWidth).value_or(LayoutUnit { 0 });
-    auto marginBottom = computedValueIfNotAuto(style.marginBottom(), containingBlockWidth).value_or(LayoutUnit { 0 });
+FormattingContext::IntrinsicWidthConstraints FormattingContext::Geometry::constrainByMinMaxWidth(const Box& layoutBox, IntrinsicWidthConstraints intrinsicWidth) const
+{
+    auto& style = layoutBox.style();
+    auto minWidth = fixedValue(style.logicalMinWidth());
+    auto maxWidth = fixedValue(style.logicalMaxWidth());
+    if (!minWidth && !maxWidth)
+        return intrinsicWidth;
 
-    LOG_WITH_STREAM(FormattingContextLayout, stream << "[Margin] -> non collapsed vertical -> margin(" << marginTop << "px, " << marginBottom << "px) -> layoutBox: " << &layoutBox);
-    return { marginTop, marginBottom };
+    if (maxWidth) {
+        intrinsicWidth.minimum = std::min(*maxWidth, intrinsicWidth.minimum);
+        intrinsicWidth.maximum = std::min(*maxWidth, intrinsicWidth.maximum);
+    }
+
+    if (minWidth) {
+        intrinsicWidth.minimum = std::max(*minWidth, intrinsicWidth.minimum);
+        intrinsicWidth.maximum = std::max(*minWidth, intrinsicWidth.maximum);
+    }
+
+    ASSERT(intrinsicWidth.minimum <= intrinsicWidth.maximum);
+    return intrinsicWidth;
+}
+
+FormattingContext::ConstraintsForOutOfFlowContent FormattingContext::Geometry::constraintsForOutOfFlowContent(const ContainerBox& containerBox)
+{
+    auto& boxGeometry = formattingContext().geometryForBox(containerBox);
+    return {
+        { boxGeometry.paddingBoxLeft(), boxGeometry.paddingBoxWidth() },
+        { boxGeometry.paddingBoxTop(), boxGeometry.paddingBoxHeight() },
+        boxGeometry.contentBoxWidth() };
+}
+
+FormattingContext::ConstraintsForInFlowContent FormattingContext::Geometry::constraintsForInFlowContent(const ContainerBox& containerBox, Optional<EscapeReason> escapeReason)
+{
+    auto& boxGeometry = formattingContext().geometryForBox(containerBox, escapeReason);
+    // FIXME: Find out if min/max-height properties should also be taken into account here.
+    return { { boxGeometry.contentBoxLeft(), boxGeometry.contentBoxWidth() }, { boxGeometry.contentBoxTop(), computedHeight(containerBox) } };
 }
 
 }

@@ -28,15 +28,14 @@
 
 #if ENABLE(DFG_JIT)
 
-#include "DFGBasicBlockInlines.h"
 #include "DFGGraph.h"
-#include "DFGInsertionSet.h"
 #include "DFGPhase.h"
-#include "JSCInlines.h"
+#include "JSCJSValueInlines.h"
 
 namespace JSC { namespace DFG {
 
 class OSRAvailabilityAnalysisPhase : public Phase {
+    static constexpr bool verbose = false;
 public:
     OSRAvailabilityAnalysisPhase(Graph& graph)
         : Phase(graph, "OSR availability analysis")
@@ -63,6 +62,21 @@ public:
 
         // This could be made more efficient by processing blocks in reverse postorder.
 
+        auto dumpAvailability = [] (BasicBlock* block) {
+            dataLogLn(block->ssa->availabilityAtHead);
+            dataLogLn(block->ssa->availabilityAtTail);
+        };
+
+        auto dumpBytecodeLivenessAtHead = [&] (BasicBlock* block) {
+            dataLog("Live: ");
+            m_graph.forAllLiveInBytecode(
+                block->at(0)->origin.forExit,
+                [&] (Operand operand) {
+                    dataLog(operand, " ");
+                });
+            dataLogLn("");
+        };
+
         LocalOSRAvailabilityCalculator calculator(m_graph);
         bool changed;
         do {
@@ -73,6 +87,10 @@ public:
                 if (!block)
                     continue;
 
+                if (verbose) {
+                    dataLogLn("Before changing Block #", block->index);
+                    dumpAvailability(block);
+                }
                 calculator.beginBlock(block);
 
                 for (unsigned nodeIndex = 0; nodeIndex < block->size(); ++nodeIndex)
@@ -84,6 +102,11 @@ public:
                 block->ssa->availabilityAtTail = calculator.m_availability;
                 changed = true;
 
+                if (verbose) {
+                    dataLogLn("After changing Block #", block->index);
+                    dumpAvailability(block);
+                }
+
                 for (unsigned successorIndex = block->numSuccessors(); successorIndex--;) {
                     BasicBlock* successor = block->successor(successorIndex);
                     successor->ssa->availabilityAtHead.merge(calculator.m_availability);
@@ -93,6 +116,11 @@ public:
                     BasicBlock* successor = block->successor(successorIndex);
                     successor->ssa->availabilityAtHead.pruneByLiveness(
                         m_graph, successor->at(0)->origin.forExit);
+                    if (verbose) {
+                        dataLogLn("After pruning Block #", successor->index);
+                        dumpAvailability(successor);
+                        dumpBytecodeLivenessAtHead(successor);
+                    }
                 }
             }
         } while (changed);
@@ -176,28 +204,28 @@ void LocalOSRAvailabilityCalculator::executeNode(Node* node)
     switch (node->op()) {
     case PutStack: {
         StackAccessData* data = node->stackAccessData();
-        m_availability.m_locals.operand(data->local).setFlush(data->flushedAt());
+        m_availability.m_locals.operand(data->operand).setFlush(data->flushedAt());
         break;
     }
 
     case KillStack: {
-        m_availability.m_locals.operand(node->unlinkedLocal()).setFlush(FlushedAt(ConflictingFlush));
+        m_availability.m_locals.operand(node->unlinkedOperand()).setFlush(FlushedAt(ConflictingFlush));
         break;
     }
 
     case GetStack: {
         StackAccessData* data = node->stackAccessData();
-        m_availability.m_locals.operand(data->local) = Availability(node, data->flushedAt());
+        m_availability.m_locals.operand(data->operand) = Availability(node, data->flushedAt());
         break;
     }
 
     case MovHint: {
-        m_availability.m_locals.operand(node->unlinkedLocal()).setNode(node->child1().node());
+        m_availability.m_locals.operand(node->unlinkedOperand()).setNode(node->child1().node());
         break;
     }
 
     case ZombieHint: {
-        m_availability.m_locals.operand(node->unlinkedLocal()).setNodeUnavailable();
+        m_availability.m_locals.operand(node->unlinkedOperand()).setNodeUnavailable();
         break;
     }
 
@@ -205,20 +233,23 @@ void LocalOSRAvailabilityCalculator::executeNode(Node* node)
         unsigned entrypointIndex = node->entrypointIndex();
         const Vector<FlushFormat>& argumentFormats = m_graph.m_argumentFormats[entrypointIndex];
         for (unsigned argument = argumentFormats.size(); argument--; ) {
-            FlushedAt flushedAt = FlushedAt(argumentFormats[argument], virtualRegisterForArgument(argument));
+            FlushedAt flushedAt = FlushedAt(argumentFormats[argument], virtualRegisterForArgumentIncludingThis(argument));
             m_availability.m_locals.argument(argument) = Availability(flushedAt);
         }
+        break;
+    }
+
+    case VarargsLength: {
         break;
     }
 
     case LoadVarargs:
     case ForwardVarargs: {
         LoadVarargsData* data = node->loadVarargsData();
-        m_availability.m_locals.operand(data->count) =
-            Availability(FlushedAt(FlushedInt32, data->machineCount));
+        m_availability.m_locals.operand(data->count) = Availability(FlushedAt(FlushedInt32, data->machineCount));
         for (unsigned i = data->limit; i--;) {
-            m_availability.m_locals.operand(VirtualRegister(data->start.offset() + i)) =
-                Availability(FlushedAt(FlushedJSValue, VirtualRegister(data->machineStart.offset() + i)));
+            m_availability.m_locals.operand(data->start + i) =
+                Availability(FlushedAt(FlushedJSValue, data->machineStart + i));
         }
         break;
     }
@@ -226,7 +257,7 @@ void LocalOSRAvailabilityCalculator::executeNode(Node* node)
     case PhantomCreateRest:
     case PhantomDirectArguments:
     case PhantomClonedArguments: {
-        InlineCallFrame* inlineCallFrame = node->origin.semantic.inlineCallFrame;
+        InlineCallFrame* inlineCallFrame = node->origin.semantic.inlineCallFrame();
         if (!inlineCallFrame) {
             // We don't need to record anything about how the arguments are to be recovered. It's just a
             // given that we can read them from the stack.
@@ -240,20 +271,20 @@ void LocalOSRAvailabilityCalculator::executeNode(Node* node)
         if (inlineCallFrame->isVarargs()) {
             // Record how to read each argument and the argument count.
             Availability argumentCount =
-                m_availability.m_locals.operand(inlineCallFrame->stackOffset + CallFrameSlot::argumentCount);
+                m_availability.m_locals.operand(VirtualRegister(inlineCallFrame->stackOffset + CallFrameSlot::argumentCountIncludingThis));
 
             m_availability.m_heap.set(PromotedHeapLocation(ArgumentCountPLoc, node), argumentCount);
         }
 
         if (inlineCallFrame->isClosureCall) {
             Availability callee = m_availability.m_locals.operand(
-                inlineCallFrame->stackOffset + CallFrameSlot::callee);
+                VirtualRegister(inlineCallFrame->stackOffset + CallFrameSlot::callee));
             m_availability.m_heap.set(PromotedHeapLocation(ArgumentsCalleePLoc, node), callee);
         }
 
-        for (unsigned i = numberOfArgumentsToSkip; i < inlineCallFrame->argumentCountIncludingThis - 1; ++i) {
+        for (unsigned i = numberOfArgumentsToSkip; i < static_cast<unsigned>(inlineCallFrame->argumentCountIncludingThis - 1); ++i) {
             Availability argument = m_availability.m_locals.operand(
-                inlineCallFrame->stackOffset + CallFrame::argumentOffset(i));
+                VirtualRegister(inlineCallFrame->stackOffset + CallFrame::argumentOffset(i)));
 
             m_availability.m_heap.set(PromotedHeapLocation(ArgumentPLoc, node, i), argument);
         }

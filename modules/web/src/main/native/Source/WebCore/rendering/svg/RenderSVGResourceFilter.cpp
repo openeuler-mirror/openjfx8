@@ -45,6 +45,7 @@
 
 namespace WebCore {
 
+WTF_MAKE_ISO_ALLOCATED_IMPL(FilterData);
 WTF_MAKE_ISO_ALLOCATED_IMPL(RenderSVGResourceFilter);
 
 RenderSVGResourceFilter::RenderSVGResourceFilter(SVGFilterElement& element, RenderStyle&& style)
@@ -88,7 +89,7 @@ std::unique_ptr<SVGFilterBuilder> RenderSVGResourceFilter::buildPrimitives(SVGFi
     FloatRect targetBoundingBox = filter.targetBoundingBox();
 
     // Add effects to the builder
-    auto builder = std::make_unique<SVGFilterBuilder>(SourceGraphic::create(filter));
+    auto builder = makeUnique<SVGFilterBuilder>(SourceGraphic::create(filter));
     builder->setPrimitiveUnits(filterElement().primitiveUnits());
     builder->setTargetBoundingBox(targetBoundingBox);
 
@@ -102,7 +103,7 @@ std::unique_ptr<SVGFilterBuilder> RenderSVGResourceFilter::buildPrimitives(SVGFi
         element.setStandardAttributes(effect.get());
         effect->setEffectBoundaries(SVGLengthContext::resolveRectangle<SVGFilterPrimitiveStandardAttributes>(&element, filterElement().primitiveUnits(), targetBoundingBox));
         if (element.renderer())
-            effect->setOperatingColorSpace(element.renderer()->style().svgStyle().colorInterpolationFilters() == ColorInterpolation::LinearRGB ? ColorSpaceLinearRGB : ColorSpaceSRGB);
+            effect->setOperatingColorSpace(element.renderer()->style().svgStyle().colorInterpolationFilters() == ColorInterpolation::LinearRGB ? ColorSpace::LinearRGB : ColorSpace::SRGB);
         builder->add(element.result(), WTFMove(effect));
     }
     return builder;
@@ -111,7 +112,7 @@ std::unique_ptr<SVGFilterBuilder> RenderSVGResourceFilter::buildPrimitives(SVGFi
 bool RenderSVGResourceFilter::applyResource(RenderElement& renderer, const RenderStyle&, GraphicsContext*& context, OptionSet<RenderSVGResourceMode> resourceMode)
 {
     ASSERT(context);
-    ASSERT_UNUSED(resourceMode, resourceMode == RenderSVGResourceMode::ApplyToDefault);
+    ASSERT_UNUSED(resourceMode, !resourceMode);
 
     LOG(Filters, "RenderSVGResourceFilter %p applyResource renderer %p", this, &renderer);
 
@@ -122,7 +123,7 @@ bool RenderSVGResourceFilter::applyResource(RenderElement& renderer, const Rende
         return false; // Already built, or we're in a cycle, or we're marked for removal. Regardless, just do nothing more now.
     }
 
-    auto filterData = std::make_unique<FilterData>();
+    auto filterData = makeUnique<FilterData>();
     FloatRect targetBoundingBox = renderer.objectBoundingBox();
 
     filterData->boundaries = SVGLengthContext::resolveRectangle<SVGFilterElement>(&filterElement(), filterElement().filterUnits(), targetBoundingBox);
@@ -138,7 +139,6 @@ bool RenderSVGResourceFilter::applyResource(RenderElement& renderer, const Rende
     filterData->shearFreeAbsoluteTransform = AffineTransform(absoluteTransform.xScale(), 0, 0, absoluteTransform.yScale(), 0, 0);
 
     // Determine absolute boundaries of the filter and the drawing region.
-    FloatRect absoluteFilterBoundaries = filterData->shearFreeAbsoluteTransform.mapRect(filterData->boundaries);
     filterData->drawingRegion = renderer.strokeBoundingBox();
     filterData->drawingRegion.intersect(filterData->boundaries);
     FloatRect absoluteDrawingRegion = filterData->shearFreeAbsoluteTransform.mapRect(filterData->drawingRegion);
@@ -152,19 +152,9 @@ bool RenderSVGResourceFilter::applyResource(RenderElement& renderer, const Rende
     if (!filterData->builder)
         return false;
 
-    // Calculate the scale factor for the use of filterRes.
-    // Also see http://www.w3.org/TR/SVG/filters.html#FilterEffectsRegion
-    FloatSize scale(1, 1);
-    if (filterElement().hasAttribute(SVGNames::filterResAttr)) {
-        scale.setWidth(filterElement().filterResX() / absoluteFilterBoundaries.width());
-        scale.setHeight(filterElement().filterResY() / absoluteFilterBoundaries.height());
-    }
-
-    if (scale.isEmpty())
-        return false;
-
     // Determine scale factor for filter. The size of intermediate ImageBuffers shouldn't be bigger than kMaxFilterSize.
     FloatRect tempSourceRect = absoluteDrawingRegion;
+    FloatSize scale(1, 1);
     ImageBuffer::sizeNeedsClamping(tempSourceRect.size(), scale);
     tempSourceRect.scale(scale.width(), scale.height());
 
@@ -178,13 +168,13 @@ bool RenderSVGResourceFilter::applyResource(RenderElement& renderer, const Rende
 
     LOG_WITH_STREAM(Filters, stream << "RenderSVGResourceFilter::applyResource\n" << *filterData->builder->lastEffect());
 
-    RenderSVGResourceFilterPrimitive::determineFilterPrimitiveSubregion(*lastEffect);
+    lastEffect->determineFilterPrimitiveSubregion();
     FloatRect subRegion = lastEffect->maxEffectRect();
     // At least one FilterEffect has a too big image size,
     // recalculate the effect sizes with new scale factors.
     if (ImageBuffer::sizeNeedsClamping(subRegion.size(), scale)) {
         filterData->filter->setFilterResolution(scale);
-        RenderSVGResourceFilterPrimitive::determineFilterPrimitiveSubregion(*lastEffect);
+        lastEffect->determineFilterPrimitiveSubregion();
     }
 
     // If the drawingRegion is empty, we have something like <g filter=".."/>.
@@ -201,8 +191,8 @@ bool RenderSVGResourceFilter::applyResource(RenderElement& renderer, const Rende
     effectiveTransform.scale(scale.width(), scale.height());
     effectiveTransform.multiply(filterData->shearFreeAbsoluteTransform);
 
-    RenderingMode renderingMode = renderer.settings().acceleratedFiltersEnabled() ? Accelerated : Unaccelerated;
-    auto sourceGraphic = SVGRenderingContext::createImageBuffer(filterData->drawingRegion, effectiveTransform, ColorSpaceLinearRGB, renderingMode);
+    RenderingMode renderingMode = renderer.settings().acceleratedFiltersEnabled() ? RenderingMode::Accelerated : RenderingMode::Unaccelerated;
+    auto sourceGraphic = SVGRenderingContext::createImageBuffer(filterData->drawingRegion, effectiveTransform, ColorSpace::LinearRGB, renderingMode, context);
     if (!sourceGraphic) {
         ASSERT(!m_rendererFilterDataMap.contains(&renderer));
         filterData->savedContext = context;
@@ -229,7 +219,7 @@ bool RenderSVGResourceFilter::applyResource(RenderElement& renderer, const Rende
 void RenderSVGResourceFilter::postApplyResource(RenderElement& renderer, GraphicsContext*& context, OptionSet<RenderSVGResourceMode> resourceMode, const Path*, const RenderSVGShape*)
 {
     ASSERT(context);
-    ASSERT_UNUSED(resourceMode, resourceMode == RenderSVGResourceMode::ApplyToDefault);
+    ASSERT_UNUSED(resourceMode, !resourceMode);
 
     auto findResult = m_rendererFilterDataMap.find(&renderer);
     if (findResult == m_rendererFilterDataMap.end())
@@ -279,15 +269,15 @@ void RenderSVGResourceFilter::postApplyResource(RenderElement& renderer, Graphic
         // Always true if filterData is just built (filterData->state == FilterData::Built).
         if (!lastEffect->hasResult()) {
             filterData.state = FilterData::Applying;
-            lastEffect->applyAll();
+            lastEffect->apply();
             lastEffect->correctFilterResultIfNeeded();
-            lastEffect->transformResultColorSpace(ColorSpaceSRGB);
+            lastEffect->transformResultColorSpace(ColorSpace::SRGB);
         }
         filterData.state = FilterData::Built;
 
         ImageBuffer* resultImage = lastEffect->imageBufferResult();
         if (resultImage) {
-            context->concatCTM(filterData.shearFreeAbsoluteTransform.inverse().value_or(AffineTransform()));
+            context->concatCTM(filterData.shearFreeAbsoluteTransform.inverse().valueOr(AffineTransform()));
 
             context->scale(FloatSize(1 / filterData.filter->filterResolution().width(), 1 / filterData.filter->filterResolution().height()));
             context->drawImageBuffer(*resultImage, lastEffect->absolutePaintRect());
@@ -297,6 +287,8 @@ void RenderSVGResourceFilter::postApplyResource(RenderElement& renderer, Graphic
         }
     }
     filterData.sourceGraphicBuffer.reset();
+
+    LOG_WITH_STREAM(Filters, stream << "RenderSVGResourceFilter " << this << " postApplyResource done\n");
 }
 
 FloatRect RenderSVGResourceFilter::resourceBoundingBox(const RenderObject& object)

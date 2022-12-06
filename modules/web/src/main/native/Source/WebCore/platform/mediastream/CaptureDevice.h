@@ -25,14 +25,13 @@
 
 #pragma once
 
-#include <wtf/EnumTraits.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
 class CaptureDevice {
 public:
-    enum class DeviceType { Unknown, Microphone, Camera, Screen, Application, Window, Browser };
+    enum class DeviceType { Unknown, Microphone, Camera, Screen, Window };
 
     CaptureDevice(const String& persistentId, DeviceType type, const String& label, const String& groupId = emptyString())
         : m_persistentId(persistentId)
@@ -46,7 +45,15 @@ public:
 
     const String& persistentId() const { return m_persistentId; }
 
-    const String& label() const { return m_label; }
+    const String& label() const
+    {
+        static NeverDestroyed<String> airPods(MAKE_STATIC_STRING_IMPL("AirPods"));
+
+        if (m_type == DeviceType::Microphone && m_label.contains(airPods))
+            return airPods;
+
+        return m_label;
+    }
 
     const String& groupId() const { return m_groupId; }
 
@@ -65,38 +72,38 @@ public:
         encoder << m_label;
         encoder << m_groupId;
         encoder << m_enabled;
-        encoder.encodeEnum(m_type);
+        encoder << m_type;
     }
 
     template <class Decoder>
-    static std::optional<CaptureDevice> decode(Decoder& decoder)
+    static Optional<CaptureDevice> decode(Decoder& decoder)
     {
-        std::optional<String> persistentId;
+        Optional<String> persistentId;
         decoder >> persistentId;
         if (!persistentId)
-            return std::nullopt;
+            return WTF::nullopt;
 
-        std::optional<String> label;
+        Optional<String> label;
         decoder >> label;
         if (!label)
-            return std::nullopt;
+            return WTF::nullopt;
 
-        std::optional<String> groupId;
+        Optional<String> groupId;
         decoder >> groupId;
         if (!groupId)
-            return std::nullopt;
+            return WTF::nullopt;
 
-        std::optional<bool> enabled;
+        Optional<bool> enabled;
         decoder >> enabled;
         if (!enabled)
-            return std::nullopt;
+            return WTF::nullopt;
 
-        std::optional<CaptureDevice::DeviceType> type;
+        Optional<CaptureDevice::DeviceType> type;
         decoder >> type;
         if (!type)
-            return std::nullopt;
+            return WTF::nullopt;
 
-        std::optional<CaptureDevice> device = {{ WTFMove(*persistentId), WTFMove(*type), WTFMove(*label), WTFMove(*groupId) }};
+        Optional<CaptureDevice> device = {{ WTFMove(*persistentId), WTFMove(*type), WTFMove(*label), WTFMove(*groupId) }};
         device->setEnabled(*enabled);
         return device;
     }
@@ -122,9 +129,7 @@ template<> struct EnumTraits<WebCore::CaptureDevice::DeviceType> {
         WebCore::CaptureDevice::DeviceType::Microphone,
         WebCore::CaptureDevice::DeviceType::Camera,
         WebCore::CaptureDevice::DeviceType::Screen,
-        WebCore::CaptureDevice::DeviceType::Application,
-        WebCore::CaptureDevice::DeviceType::Window,
-        WebCore::CaptureDevice::DeviceType::Browser
+        WebCore::CaptureDevice::DeviceType::Window
     >;
 };
 

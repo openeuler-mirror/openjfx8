@@ -27,74 +27,50 @@
 
 #if ENABLE(LAYOUT_FORMATTING_CONTEXT)
 
-#include "FormattingContext.h"
-#include <wtf/HashMap.h>
-#include <wtf/HashSet.h>
 #include <wtf/IsoMalloc.h>
 #include <wtf/OptionSet.h>
 
 namespace WebCore {
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
+class GraphicsContext;
+class IntRect;
+class LayoutSize;
 class RenderView;
-#endif
-
-namespace Display {
-class Box;
-}
 
 namespace Layout {
 
-enum class StyleDiff;
-class Box;
-class Container;
-class FormattingState;
+class ContainerBox;
+class InvalidationState;
+class LayoutState;
+class FormattingContext;
 
-// LayoutContext is the entry point for layout. It takes a (formatting root)container which acts as the root of the layout context.
+// LayoutContext is the entry point for layout.
 // LayoutContext::layout() generates the display tree for the root container's subtree (it does not run layout on the root though).
-// Note, while the root container is suppposed to be the entry point for the initial layout, it does not necessarily need to be the entry point of any
+// Note, while the initial containing block is entry point for the initial layout, it does not necessarily need to be the entry point of any
 // subsequent layouts (subtree layout). A non-initial, subtree layout could be initiated on multiple formatting contexts.
 // Each formatting context has an entry point for layout, which potenitally means multiple entry points per layout frame.
-// LayoutContext also holds the formatting states. They cache formatting context specific data to enable performant incremental layouts.
 class LayoutContext {
     WTF_MAKE_ISO_ALLOCATED(LayoutContext);
 public:
-    LayoutContext();
+    LayoutContext(LayoutState&);
 
-    void initializeRoot(const Container&, const LayoutSize&);
-    void updateLayout();
-    void styleChanged(const Box&, StyleDiff);
-    void setInQuirksMode(bool inQuirksMode) { m_inQuirksMode = inQuirksMode; }
+    void layout(const LayoutSize& rootContentBoxSize, InvalidationState&);
+    void layoutWithPreparedRootGeometry(InvalidationState&);
 
-    enum class UpdateType {
-        Overflow = 1 << 0,
-        Position = 1 << 1,
-        Size     = 1 << 2,
-        All      = Overflow | Position | Size
-    };
-    void markNeedsUpdate(const Box&, OptionSet<UpdateType>);
-    bool needsUpdate(const Box&) const;
+    static std::unique_ptr<FormattingContext> createFormattingContext(const ContainerBox& formattingContextRoot, LayoutState&);
 
-    std::unique_ptr<FormattingContext> formattingContext(const Box& formattingContextRoot);
-
-    FormattingState& formattingStateForBox(const Box&) const;
-    FormattingState& establishedFormattingState(const Box& formattingRoot);
-
-    Display::Box& createDisplayBox(const Box&);
-    Display::Box* displayBoxForLayoutBox(const Box& layoutBox) const { return m_layoutToDisplayBox.get(&layoutBox); }
-
-    bool inQuirksMode() const { return m_inQuirksMode; }
+    // FIXME: This is temporary.
+    static void paint(const LayoutState&, GraphicsContext&, const IntRect& dirtyRect);
+#ifndef NDEBUG
     // For testing purposes only
-    void verifyAndOutputMismatchingLayoutTree(const RenderView&) const;
+    static void verifyAndOutputMismatchingLayoutTree(const LayoutState&, const RenderView&);
+#endif
 
 private:
-    void layoutFormattingContextSubtree(const Box&);
+    void layoutFormattingContextSubtree(const ContainerBox&, InvalidationState&);
+    LayoutState& layoutState() { return m_layoutState; }
 
-    WeakPtr<Container> m_root;
-    HashSet<const Container*> m_formattingContextRootListForLayout;
-    HashMap<const Box*, std::unique_ptr<FormattingState>> m_formattingStates;
-    HashMap<const Box*, std::unique_ptr<Display::Box>> m_layoutToDisplayBox;
-    bool m_inQuirksMode { false };
+    LayoutState& m_layoutState;
 };
 
 }

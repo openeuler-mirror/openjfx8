@@ -23,18 +23,19 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef WTF_SingleRootGraph_h
-#define WTF_SingleRootGraph_h
+#pragma once
 
 #include <wtf/FastMalloc.h>
 #include <wtf/GraphNodeWorklist.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/StringPrintStream.h>
 
 namespace WTF {
 
 template <typename Graph>
 class SingleRootGraphNode {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     // We use "#root" to refer to the synthetic root we have created.
     static const char* rootName() { return "#root"; };
@@ -83,6 +84,7 @@ private:
 
 template <typename Graph>
 class SingleRootGraphSet {
+    WTF_MAKE_FAST_ALLOCATED;
     using Node = SingleRootGraphNode<Graph>;
 public:
     SingleRootGraphSet() = default;
@@ -122,6 +124,7 @@ private:
 
 template<typename T, typename Graph>
 class SingleRootMap {
+    WTF_MAKE_FAST_ALLOCATED;
     using Node = SingleRootGraphNode<Graph>;
 public:
     SingleRootMap(Graph& graph)
@@ -283,7 +286,7 @@ public:
 private:
     ALWAYS_INLINE void assertIsConsistent() const
     {
-#if !ASSERT_DISABLED
+#if ASSERT_ENABLED
         // We expect the roots() function to be idempotent while we're alive so we can cache
         // the result in the constructor. If a user of this changes the result of its roots()
         // function, it's expected that the user will create a new instance of this class.
@@ -305,5 +308,3 @@ private:
 } // namespace WTF
 
 using WTF::SingleRootGraph;
-
-#endif // WTF_SingleRootGraph_h

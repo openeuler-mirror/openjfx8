@@ -27,7 +27,7 @@
 #ifndef FELightingNEON_h
 #define FELightingNEON_h
 
-#if CPU(ARM_NEON) && CPU(ARM_TRADITIONAL) && COMPILER(GCC_OR_CLANG)
+#if CPU(ARM_NEON) && CPU(ARM_TRADITIONAL) && COMPILER(GCC_COMPATIBLE)
 
 #include "FELighting.h"
 #include "PointLightSource.h"
@@ -111,9 +111,11 @@ inline void FELighting::platformApplyNeon(const LightingData& data, const LightS
     // Set light source arguments.
     floatArguments.constOne = 1;
 
-    floatArguments.colorRed = m_lightingColor.red();
-    floatArguments.colorGreen = m_lightingColor.green();
-    floatArguments.colorBlue = m_lightingColor.blue();
+    auto color = m_lightingColor.toSRGBALossy<uint8_t>();
+
+    floatArguments.colorRed = color.red;
+    floatArguments.colorGreen = color.green;
+    floatArguments.colorBlue = color.blue;
     floatArguments.padding4 = 0;
 
     if (m_lightSource->type() == LS_POINT) {
@@ -196,6 +198,6 @@ inline void FELighting::platformApplyNeon(const LightingData& data, const LightS
 
 } // namespace WebCore
 
-#endif // CPU(ARM_NEON) && COMPILER(GCC_OR_CLANG)
+#endif // CPU(ARM_NEON) && COMPILER(GCC_COMPATIBLE)
 
 #endif // FELightingNEON_h

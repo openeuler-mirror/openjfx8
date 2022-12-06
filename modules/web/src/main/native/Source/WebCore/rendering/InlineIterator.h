@@ -74,7 +74,7 @@ public:
         moveTo(object, 0);
     }
 
-    void moveTo(RenderObject& object, unsigned offset, std::optional<unsigned> nextBreak = std::optional<unsigned>())
+    void moveTo(RenderObject& object, unsigned offset, Optional<unsigned> nextBreak = Optional<unsigned>())
     {
         setRenderer(&object);
         setOffset(offset);
@@ -86,8 +86,8 @@ public:
     unsigned offset() const { return m_pos; }
     void setOffset(unsigned position);
     RenderElement* root() const { return m_root; }
-    std::optional<unsigned> nextBreakablePosition() const { return m_nextBreakablePosition; }
-    void setNextBreakablePosition(std::optional<unsigned> position) { m_nextBreakablePosition = position; }
+    Optional<unsigned> nextBreakablePosition() const { return m_nextBreakablePosition; }
+    void setNextBreakablePosition(Optional<unsigned> position) { m_nextBreakablePosition = position; }
     bool refersToEndOfPreviousNode() const { return m_refersToEndOfPreviousNode; }
     void setRefersToEndOfPreviousNode();
 
@@ -118,7 +118,7 @@ private:
     RenderElement* m_root { nullptr };
     RenderObject* m_renderer { nullptr };
 
-    std::optional<unsigned> m_nextBreakablePosition;
+    Optional<unsigned> m_nextBreakablePosition;
     unsigned m_pos { 0 };
 
     // There are a couple places where we want to decrement an InlineIterator.
@@ -493,7 +493,7 @@ static inline unsigned numberOfIsolateAncestors(const InlineIterator& iter)
 // of BidiResolver which knows nothing about RenderObjects.
 static inline void addPlaceholderRunForIsolatedInline(InlineBidiResolver& resolver, RenderObject& obj, unsigned pos, RenderElement& root)
 {
-    std::unique_ptr<BidiRun> isolatedRun = std::make_unique<BidiRun>(pos, pos, obj, resolver.context(), resolver.dir());
+    std::unique_ptr<BidiRun> isolatedRun = makeUnique<BidiRun>(pos, pos, obj, resolver.context(), resolver.dir());
     // FIXME: isolatedRuns() could be a hash of object->run and then we could cheaply
     // ASSERT here that we didn't create multiple objects for the same inline.
     resolver.setWhitespaceCollapsingTransitionForIsolatedRun(*isolatedRun, resolver.whitespaceCollapsingState().currentTransition());
@@ -537,7 +537,7 @@ public:
             addPlaceholderRunForIsolatedInline(resolver, obj, pos, root);
         }
         m_haveAddedFakeRunForRootIsolate = true;
-        RenderBlockFlow::appendRunsForObject(nullptr, pos, end, obj, resolver);
+        ComplexLineLayout::appendRunsForObject(nullptr, pos, end, obj, resolver);
     }
 
 private:
@@ -559,7 +559,7 @@ inline void InlineBidiResolver::appendRunInternal()
             if (isolateTracker.inIsolate())
                 isolateTracker.addFakeRunIfNecessary(*obj, start, obj->length(), *m_sor.root(), *this);
             else
-                RenderBlockFlow::appendRunsForObject(&m_runs, start, obj->length(), *obj, *this);
+                ComplexLineLayout::appendRunsForObject(&m_runs, start, obj->length(), *obj, *this);
             // FIXME: start/obj should be an InlineIterator instead of two separate variables.
             start = 0;
             obj = bidiNextSkippingEmptyInlines(*m_sor.root(), obj, &isolateTracker);
@@ -575,7 +575,7 @@ inline void InlineBidiResolver::appendRunInternal()
             if (isolateTracker.inIsolate())
                 isolateTracker.addFakeRunIfNecessary(*obj, start, obj->length(), *m_sor.root(), *this);
             else
-                RenderBlockFlow::appendRunsForObject(&m_runs, start, end, *obj, *this);
+                ComplexLineLayout::appendRunsForObject(&m_runs, start, end, *obj, *this);
         }
 
         m_eor.increment();

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,20 +27,20 @@
 
 #include "ClassInfo.h"
 #include "ConcurrentJSLock.h"
+#include "DeletePropertySlot.h"
 #include "IndexingType.h"
-#include "InferredTypeTable.h"
 #include "JSCJSValue.h"
 #include "JSCast.h"
 #include "JSType.h"
+#include "JSTypeInfo.h"
 #include "PropertyName.h"
 #include "PropertyNameArray.h"
 #include "PropertyOffset.h"
 #include "PutPropertySlot.h"
 #include "StructureIDBlob.h"
 #include "StructureRareData.h"
-#include "StructureRareDataInlines.h"
 #include "StructureTransitionTable.h"
-#include "JSTypeInfo.h"
+#include "TinyBloomFilter.h"
 #include "Watchpoint.h"
 #include "WriteBarrierInlines.h"
 #include <wtf/PrintStream.h>
@@ -63,27 +63,27 @@ class StructureShape;
 class SlotVisitor;
 class JSString;
 struct DumpContext;
+struct HashTable;
+struct HashTableValue;
 
 // The out-of-line property storage capacity to use when first allocating out-of-line
 // storage. Note that all objects start out without having any out-of-line storage;
 // this comes into play only on the first property store that exhausts inline storage.
-static const unsigned initialOutOfLineCapacity = 4;
+static constexpr unsigned initialOutOfLineCapacity = 4;
 
 // The factor by which to grow out-of-line storage when it is exhausted, after the
 // initial allocation.
-static const unsigned outOfLineGrowthFactor = 2;
+static constexpr unsigned outOfLineGrowthFactor = 2;
 
 struct PropertyMapEntry {
     UniquedStringImpl* key;
     PropertyOffset offset;
     uint8_t attributes;
-    bool hasInferredType; // This caches whether or not a property has an inferred type in the inferred type table, and is used for a fast check in JSObject::putDirectInternal().
 
     PropertyMapEntry()
         : key(nullptr)
         , offset(invalidOffset)
         , attributes(0)
-        , hasInferredType(false)
     {
     }
 
@@ -91,32 +91,31 @@ struct PropertyMapEntry {
         : key(key)
         , offset(offset)
         , attributes(attributes)
-        , hasInferredType(false)
     {
         ASSERT(this->attributes == attributes);
     }
 };
 
-class StructureFireDetail : public FireDetail {
+class StructureFireDetail final : public FireDetail {
 public:
     StructureFireDetail(const Structure* structure)
         : m_structure(structure)
     {
     }
 
-    void dump(PrintStream& out) const override;
+    void dump(PrintStream& out) const final;
 
 private:
     const Structure* m_structure;
 };
 
-class DeferredStructureTransitionWatchpointFire : public DeferredWatchpointFire {
+class DeferredStructureTransitionWatchpointFire final : public DeferredWatchpointFire {
     WTF_MAKE_NONCOPYABLE(DeferredStructureTransitionWatchpointFire);
 public:
     JS_EXPORT_PRIVATE DeferredStructureTransitionWatchpointFire(VM&, Structure*);
-    JS_EXPORT_PRIVATE ~DeferredStructureTransitionWatchpointFire();
+    JS_EXPORT_PRIVATE ~DeferredStructureTransitionWatchpointFire() final;
 
-    void dump(PrintStream& out) const override;
+    void dump(PrintStream& out) const final;
 
     const Structure* structure() const { return m_structure; }
 
@@ -125,11 +124,13 @@ private:
 };
 
 class Structure final : public JSCell {
+    static constexpr uint16_t shortInvalidOffset = std::numeric_limits<uint16_t>::max() - 1;
+    static constexpr uint16_t useRareDataFlag = std::numeric_limits<uint16_t>::max();
 public:
     friend class StructureTransitionTable;
 
     typedef JSCell Base;
-    static const unsigned StructureFlags = Base::StructureFlags | StructureIsImmortal;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | StructureIsImmortal;
 
     enum PolyProtoTag { PolyProto };
     static Structure* create(VM&, JSGlobalObject*, JSValue prototype, const TypeInfo&, const ClassInfo*, IndexingType = NonArray, unsigned inlineCapacity = 0);
@@ -137,17 +138,19 @@ public:
 
     ~Structure();
 
-    template<typename CellType>
+    template<typename CellType, SubspaceAccess>
     static IsoSubspace* subspaceFor(VM& vm)
     {
         return &vm.structureSpace;
     }
 
-protected:
+    JS_EXPORT_PRIVATE static bool isValidPrototype(JSValue);
+
+private:
     void finishCreation(VM& vm)
     {
         Base::finishCreation(vm);
-        ASSERT(m_prototype.get().isEmpty() || m_prototype.isObject() || m_prototype.isNull());
+        ASSERT(m_prototype.get().isEmpty() || isValidPrototype(m_prototype.get()));
     }
 
     void finishCreation(VM& vm, const Structure* previous)
@@ -170,6 +173,8 @@ protected:
         ASSERT(!vm.structureStructure);
     }
 
+    void validateFlags();
+
 public:
     StructureID id() const { return m_blob.structureID(); }
     int32_t objectInitializationBlob() const { return m_blob.blobExcludingStructureID(); }
@@ -187,11 +192,14 @@ public:
     JS_EXPORT_PRIVATE static Structure* addNewPropertyTransition(VM&, Structure*, PropertyName, unsigned attributes, PropertyOffset&, PutPropertySlot::Context = PutPropertySlot::UnknownContext, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* addPropertyTransitionToExistingStructureConcurrently(Structure*, UniquedStringImpl* uid, unsigned attributes, PropertyOffset&);
     JS_EXPORT_PRIVATE static Structure* addPropertyTransitionToExistingStructure(Structure*, PropertyName, unsigned attributes, PropertyOffset&);
-    static Structure* removePropertyTransition(VM&, Structure*, PropertyName, PropertyOffset&);
+    static Structure* removeNewPropertyTransition(VM&, Structure*, PropertyName, PropertyOffset&, DeferredStructureTransitionWatchpointFire* = nullptr);
+    static Structure* removePropertyTransition(VM&, Structure*, PropertyName, PropertyOffset&, DeferredStructureTransitionWatchpointFire* = nullptr);
+    static Structure* removePropertyTransitionFromExistingStructure(Structure*, PropertyName, PropertyOffset&);
+    static Structure* removePropertyTransitionFromExistingStructureConcurrently(Structure*, PropertyName, PropertyOffset&);
     static Structure* changePrototypeTransition(VM&, Structure*, JSValue prototype, DeferredStructureTransitionWatchpointFire&);
     JS_EXPORT_PRIVATE static Structure* attributeChangeTransition(VM&, Structure*, PropertyName, unsigned attributes);
     JS_EXPORT_PRIVATE static Structure* toCacheableDictionaryTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
-    static Structure* toUncacheableDictionaryTransition(VM&, Structure*);
+    static Structure* toUncacheableDictionaryTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* sealTransition(VM&, Structure*);
     JS_EXPORT_PRIVATE static Structure* freezeTransition(VM&, Structure*);
     static Structure* preventExtensionsTransition(VM&, Structure*);
@@ -204,7 +212,7 @@ public:
 
     JS_EXPORT_PRIVATE Structure* flattenDictionaryStructure(VM&, JSObject*);
 
-    static const bool needsDestruction = true;
+    static constexpr bool needsDestruction = true;
     static void destroy(JSCell*);
 
     // Versions that take a func will call it after making the change but while still holding
@@ -248,7 +256,7 @@ public:
         return typeInfo().isImmutablePrototypeExoticObject();
     }
 
-    // We use SlowPath in GetByIdStatus for structures that may get new impure properties later to prevent
+    // We use SlowPath in GetByStatus for structures that may get new impure properties later to prevent
     // DFG from inlining property accesses since structures don't transition when a new impure property appears.
     bool takesSlowPathInDFGForImpureProperty()
     {
@@ -295,7 +303,7 @@ public:
     JSValue prototypeForLookup(JSGlobalObject*) const;
     JSValue prototypeForLookup(JSGlobalObject*, JSCell* base) const;
     StructureChain* prototypeChain(VM&, JSGlobalObject*, JSObject* base) const;
-    StructureChain* prototypeChain(ExecState*, JSObject* base) const;
+    StructureChain* prototypeChain(JSGlobalObject*, JSObject* base) const;
     static void visitChildren(JSCell*, SlotVisitor&);
 
     // A Structure is cheap to mark during GC if doing so would only add a small and bounded amount
@@ -304,7 +312,7 @@ public:
     // increase in footprint because no other object refers to that global object. This method
     // returns true if all user-controlled (and hence unbounded in size) objects referenced from the
     // Structure are already marked.
-    bool isCheapDuringGC();
+    bool isCheapDuringGC(VM&);
 
     // Returns true if this structure is now marked.
     bool markIfCheap(SlotVisitor&);
@@ -326,6 +334,14 @@ public:
         return static_cast<const StructureRareData*>(m_previousOrRareData.get());
     }
 
+    const StructureRareData* rareDataConcurrently() const
+    {
+        JSCell* cell = m_previousOrRareData.get();
+        if (isRareData(cell))
+            return static_cast<StructureRareData*>(cell);
+        return nullptr;
+    }
+
     StructureRareData* ensureRareData(VM& vm)
     {
         if (!hasRareData())
@@ -345,13 +361,59 @@ public:
     }
     bool transitivelyTransitionedFrom(Structure* structureToFind);
 
-    PropertyOffset lastOffset() const { return m_offset; }
-
-    void setLastOffset(PropertyOffset offset) { m_offset = offset; }
-
-    static unsigned outOfLineCapacity(PropertyOffset lastOffset)
+    PropertyOffset maxOffset() const
     {
-        unsigned outOfLineSize = Structure::outOfLineSize(lastOffset);
+        uint16_t maxOffset = m_maxOffset;
+        if (maxOffset == shortInvalidOffset)
+            return invalidOffset;
+        if (maxOffset == useRareDataFlag)
+            return rareData()->m_maxOffset;
+        return maxOffset;
+    }
+
+    void setMaxOffset(VM& vm, PropertyOffset offset)
+    {
+        if (offset == invalidOffset)
+            m_maxOffset = shortInvalidOffset;
+        else if (offset < useRareDataFlag && offset < shortInvalidOffset)
+            m_maxOffset = offset;
+        else if (m_maxOffset == useRareDataFlag)
+            rareData()->m_maxOffset = offset;
+        else {
+            ensureRareData(vm)->m_maxOffset = offset;
+            WTF::storeStoreFence();
+            m_maxOffset = useRareDataFlag;
+        }
+    }
+
+    PropertyOffset transitionOffset() const
+    {
+        uint16_t transitionOffset = m_transitionOffset;
+        if (transitionOffset == shortInvalidOffset)
+            return invalidOffset;
+        if (transitionOffset == useRareDataFlag)
+            return rareData()->m_transitionOffset;
+        return transitionOffset;
+    }
+
+    void setTransitionOffset(VM& vm, PropertyOffset offset)
+    {
+        if (offset == invalidOffset)
+            m_transitionOffset = shortInvalidOffset;
+        else if (offset < useRareDataFlag && offset < shortInvalidOffset)
+            m_transitionOffset = offset;
+        else if (m_transitionOffset == useRareDataFlag)
+            rareData()->m_transitionOffset = offset;
+        else {
+            ensureRareData(vm)->m_transitionOffset = offset;
+            WTF::storeStoreFence();
+            m_transitionOffset = useRareDataFlag;
+        }
+    }
+
+    static unsigned outOfLineCapacity(PropertyOffset maxOffset)
+    {
+        unsigned outOfLineSize = Structure::outOfLineSize(maxOffset);
 
         // This algorithm completely determines the out-of-line property storage growth algorithm.
         // The JSObject code will only trigger a resize if the value returned by this algorithm
@@ -369,18 +431,18 @@ public:
         return WTF::roundUpToPowerOfTwo(outOfLineSize);
     }
 
-    static unsigned outOfLineSize(PropertyOffset lastOffset)
+    static unsigned outOfLineSize(PropertyOffset maxOffset)
     {
-        return numberOfOutOfLineSlotsForLastOffset(lastOffset);
+        return numberOfOutOfLineSlotsForMaxOffset(maxOffset);
     }
 
     unsigned outOfLineCapacity() const
     {
-        return outOfLineCapacity(m_offset);
+        return outOfLineCapacity(maxOffset());
     }
     unsigned outOfLineSize() const
     {
-        return outOfLineSize(m_offset);
+        return outOfLineSize(maxOffset());
     }
     bool hasInlineStorage() const
     {
@@ -392,11 +454,7 @@ public:
     }
     unsigned inlineSize() const
     {
-        return std::min<unsigned>(m_offset + 1, m_inlineCapacity);
-    }
-    unsigned totalStorageSize() const
-    {
-        return numberOfSlotsForLastOffset(m_offset, m_inlineCapacity);
+        return std::min<unsigned>(maxOffset() + 1, m_inlineCapacity);
     }
     unsigned totalStorageCapacity() const
     {
@@ -407,7 +465,7 @@ public:
     bool isValidOffset(PropertyOffset offset) const
     {
         return JSC::isValidOffset(offset)
-            && offset <= m_offset
+            && offset <= maxOffset()
             && (offset < m_inlineCapacity || offset >= firstOutOfLineOffset);
     }
 
@@ -423,12 +481,10 @@ public:
     }
 
     bool hasIndexingHeader(const JSCell*) const;
-
     bool masqueradesAsUndefined(JSGlobalObject* lexicalGlobalObject);
 
     PropertyOffset get(VM&, PropertyName);
     PropertyOffset get(VM&, PropertyName, unsigned& attributes);
-    PropertyOffset get(VM&, PropertyName, unsigned& attributes, bool& hasInferredType);
 
     // This is a somewhat internalish method. It will call your functor while possibly holding the
     // Structure's lock. There is no guarantee whether the lock is held or not in any particular
@@ -461,29 +517,28 @@ public:
             setHasReadOnlyOrGetterSetterPropertiesExcludingProto(true);
     }
 
-    bool isEmpty() const
-    {
-        ASSERT(checkOffsetConsistency());
-        return !JSC::isValidOffset(m_offset);
-    }
-
     void setCachedPropertyNameEnumerator(VM&, JSPropertyNameEnumerator*);
     JSPropertyNameEnumerator* cachedPropertyNameEnumerator() const;
-    bool canCachePropertyNameEnumerator() const;
+    bool canCachePropertyNameEnumerator(VM&) const;
     bool canAccessPropertiesQuicklyForEnumeration() const;
+
+    void setCachedOwnKeys(VM&, JSImmutableButterfly*);
+    JSImmutableButterfly* cachedOwnKeys() const;
+    JSImmutableButterfly* cachedOwnKeysIgnoringSentinel() const;
+    bool canCacheOwnKeys() const;
 
     void getPropertyNamesFromStructure(VM&, PropertyNameArray&, EnumerationMode);
 
     JSString* objectToStringValue()
     {
         if (!hasRareData())
-            return 0;
+            return nullptr;
         return rareData()->objectToStringValue();
     }
 
-    void setObjectToStringValue(ExecState*, VM&, JSString* value, PropertySlot toStringTagSymbolSlot);
+    void setObjectToStringValue(JSGlobalObject*, VM&, JSString* value, const PropertySlot& toStringTagSymbolSlot);
 
-    const ClassInfo* classInfo() const { return m_classInfo.unpoisoned(); }
+    const ClassInfo* classInfo() const { return m_classInfo; }
 
     static ptrdiff_t structureIDOffset()
     {
@@ -505,6 +560,11 @@ public:
         return OBJECT_OFFSETOF(Structure, m_classInfo);
     }
 
+    static ptrdiff_t outOfLineTypeFlagsOffset()
+    {
+        return OBJECT_OFFSETOF(Structure, m_outOfLineTypeFlags);
+    }
+
     static ptrdiff_t indexingModeIncludingHistoryOffset()
     {
         return OBJECT_OFFSETOF(Structure, m_blob) + StructureIDBlob::indexingModeIncludingHistoryOffset();
@@ -518,6 +578,11 @@ public:
     static ptrdiff_t inlineCapacityOffset()
     {
         return OBJECT_OFFSETOF(Structure, m_inlineCapacity);
+    }
+
+    static ptrdiff_t previousOrRareDataOffset()
+    {
+        return OBJECT_OFFSETOF(Structure, m_previousOrRareData);
     }
 
     static Structure* createStructure(VM&);
@@ -588,55 +653,6 @@ public:
         startWatchingInternalProperties(vm);
     }
 
-    bool hasInferredTypes() const
-    {
-        return !!m_inferredTypeTable;
-    }
-
-    InferredType* inferredTypeFor(UniquedStringImpl* uid)
-    {
-        if (InferredTypeTable* table = m_inferredTypeTable.get())
-            return table->get(uid);
-        return nullptr;
-    }
-
-    InferredType::Descriptor inferredTypeDescriptorFor(UniquedStringImpl* uid)
-    {
-        if (InferredType* result = inferredTypeFor(uid))
-            return result->descriptor();
-        return InferredType::Top;
-    }
-
-    // Call this when we know that this is a brand new property. Note that it's not enough for the
-    // property to be brand new to some object. It has to be brand new to the Structure.
-    ALWAYS_INLINE void willStoreValueForNewTransition(
-        VM& vm, PropertyName propertyName, JSValue value, bool shouldOptimize)
-    {
-        if (hasBeenDictionary() || (!shouldOptimize && !m_inferredTypeTable) || !VM::canUseJIT())
-            return;
-        willStoreValueSlow(vm, propertyName, value, shouldOptimize, InferredTypeTable::StoredPropertyAge::NewProperty);
-    }
-
-    // Call this when we know that this is a new property for the object, but not new for the
-    // structure. Therefore, under the InferredTypeTable's rules, absence of the property from the
-    // table means Top rather than Bottom.
-    ALWAYS_INLINE void willStoreValueForExistingTransition(
-        VM& vm, PropertyName propertyName, JSValue value, bool shouldOptimize)
-    {
-        if (hasBeenDictionary() || !m_inferredTypeTable || !VM::canUseJIT())
-            return;
-        willStoreValueSlow(vm, propertyName, value, shouldOptimize, InferredTypeTable::StoredPropertyAge::NewProperty);
-    }
-
-    // Call this when we know that the inferred type table exists and has an entry for this property.
-    ALWAYS_INLINE void willStoreValueForReplace(
-        VM& vm, PropertyName propertyName, JSValue value, bool shouldOptimize)
-    {
-        if (hasBeenDictionary() || !VM::canUseJIT())
-            return;
-        willStoreValueSlow(vm, propertyName, value, shouldOptimize, InferredTypeTable::StoredPropertyAge::OldProperty);
-    }
-
     Ref<StructureShape> toStructureShape(JSValue, bool& sawPolyProtoStructure);
 
     void dump(PrintStream&) const;
@@ -651,6 +667,12 @@ public:
 
     static bool shouldConvertToPolyProto(const Structure* a, const Structure* b);
 
+    struct PropertyHashEntry {
+        const HashTable* table;
+        const HashTableValue* value;
+    };
+    Optional<PropertyHashEntry> findPropertyHashEntry(PropertyName) const;
+
     DECLARE_EXPORT_INFO;
 
 private:
@@ -662,8 +684,9 @@ private:
 
 public:
 #define DEFINE_BITFIELD(type, lowerName, upperName, width, offset) \
-    static const uint32_t s_##lowerName##Shift = offset;\
-    static const uint32_t s_##lowerName##Mask = ((1 << (width - 1)) | ((1 << (width - 1)) - 1));\
+    static constexpr uint32_t s_##lowerName##Shift = offset;\
+    static constexpr uint32_t s_##lowerName##Mask = ((1 << (width - 1)) | ((1 << (width - 1)) - 1));\
+    static constexpr uint32_t s_bitWidthOf##upperName = width;\
     type lowerName() const { return static_cast<type>((m_bitField >> offset) & s_##lowerName##Mask); }\
     void set##upperName(type newValue) \
     {\
@@ -676,7 +699,7 @@ public:
     DEFINE_BITFIELD(bool, hasGetterSetterProperties, HasGetterSetterProperties, 1, 3);
     DEFINE_BITFIELD(bool, hasReadOnlyOrGetterSetterPropertiesExcludingProto, HasReadOnlyOrGetterSetterPropertiesExcludingProto, 1, 4);
     DEFINE_BITFIELD(bool, isQuickPropertyAccessAllowedForEnumeration, IsQuickPropertyAccessAllowedForEnumeration, 1, 5);
-    DEFINE_BITFIELD(unsigned, attributesInPrevious, AttributesInPrevious, 14, 6);
+    DEFINE_BITFIELD(unsigned, transitionPropertyAttributes, TransitionPropertyAttributes, 14, 6);
     DEFINE_BITFIELD(bool, didPreventExtensions, DidPreventExtensions, 1, 20);
     DEFINE_BITFIELD(bool, didTransition, DidTransition, 1, 21);
     DEFINE_BITFIELD(bool, staticPropertiesReified, StaticPropertiesReified, 1, 22);
@@ -685,8 +708,11 @@ public:
     DEFINE_BITFIELD(bool, didWatchInternalProperties, DidWatchInternalProperties, 1, 25);
     DEFINE_BITFIELD(bool, transitionWatchpointIsLikelyToBeFired, TransitionWatchpointIsLikelyToBeFired, 1, 26);
     DEFINE_BITFIELD(bool, hasBeenDictionary, HasBeenDictionary, 1, 27);
-    DEFINE_BITFIELD(bool, isAddingPropertyForTransition, IsAddingPropertyForTransition, 1, 28);
+    DEFINE_BITFIELD(bool, protectPropertyTableWhileTransitioning, ProtectPropertyTableWhileTransitioning, 1, 28);
     DEFINE_BITFIELD(bool, hasUnderscoreProtoPropertyExcludingOriginalProto, HasUnderscoreProtoPropertyExcludingOriginalProto, 1, 29);
+    DEFINE_BITFIELD(bool, isPropertyDeletionTransition, IsPropertyDeletionTransition, 1, 30);
+
+    static_assert(s_bitWidthOfTransitionPropertyAttributes <= sizeof(TransitionPropertyAttributes) * 8);
 
 private:
     friend class LLIntOffsetsExtractor;
@@ -698,6 +724,7 @@ private:
     static Structure* create(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
 
     static Structure* addPropertyTransitionToExistingStructureImpl(Structure*, UniquedStringImpl* uid, unsigned attributes, PropertyOffset&);
+    static Structure* removePropertyTransitionFromExistingStructureImpl(Structure*, PropertyName, unsigned attributes, PropertyOffset&);
 
     // This will return the structure that has a usable property table, that property table,
     // and the list of structures that we visited before we got to it. If it returns a
@@ -711,9 +738,9 @@ private:
     template<ShouldPin, typename Func>
     PropertyOffset add(VM&, PropertyName, unsigned attributes, const Func&);
     PropertyOffset add(VM&, PropertyName, unsigned attributes);
-    template<typename Func>
-    PropertyOffset remove(PropertyName, const Func&);
-    PropertyOffset remove(PropertyName);
+    template<ShouldPin, typename Func>
+    PropertyOffset remove(VM&, PropertyName, const Func&);
+    PropertyOffset remove(VM&, PropertyName);
 
     void checkConsistency();
 
@@ -758,10 +785,11 @@ private:
             m_previousOrRareData.clear();
     }
 
-    int transitionCount() const
+    int transitionCountEstimate() const
     {
-        // Since the number of transitions is always the same as m_offset, we keep the size of Structure down by not storing both.
-        return numberOfSlotsForLastOffset(m_offset, m_inlineCapacity);
+        // Since the number of transitions is often the same as the last offset (except if there are deletes)
+        // we keep the size of Structure down by not storing both.
+        return numberOfSlotsForMaxOffset(maxOffset(), m_inlineCapacity);
     }
 
     bool isValid(JSGlobalObject*, StructureChain* cachedPrototypeChain, JSObject* base) const;
@@ -783,11 +811,8 @@ private:
 
     void startWatchingInternalProperties(VM&);
 
-    JS_EXPORT_PRIVATE void willStoreValueSlow(
-        VM&, PropertyName, JSValue, bool, InferredTypeTable::StoredPropertyAge);
-
-    static const int s_maxTransitionLength = 64;
-    static const int s_maxTransitionLengthForNonEvalPutById = 512;
+    static constexpr int s_maxTransitionLength = 64;
+    static constexpr int s_maxTransitionLengthForNonEvalPutById = 512;
 
     // These need to be properly aligned at the beginning of the 'Structure'
     // part of the object.
@@ -806,9 +831,9 @@ private:
 
     WriteBarrier<JSCell> m_previousOrRareData;
 
-    RefPtr<UniquedStringImpl> m_nameInPrevious;
+    RefPtr<UniquedStringImpl> m_transitionPropertyName;
 
-    PoisonedClassInfoPtr m_classInfo;
+    const ClassInfo* m_classInfo;
 
     StructureTransitionTable m_transitionTable;
 
@@ -816,16 +841,18 @@ private:
     // During a Heap Snapshot GC we avoid clearing the table so it is safe to use.
     WriteBarrier<PropertyTable> m_propertyTableUnsafe;
 
-    WriteBarrier<InferredTypeTable> m_inferredTypeTable;
-
     mutable InlineWatchpointSet m_transitionWatchpointSet;
 
     COMPILE_ASSERT(firstOutOfLineOffset < 256, firstOutOfLineOffset_fits);
 
-    // m_offset does not account for anonymous slots
-    PropertyOffset m_offset;
+    uint16_t m_transitionOffset;
+    uint16_t m_maxOffset;
 
     uint32_t m_propertyHash;
+    TinyBloomFilter m_seenProperties;
+
+    friend class VMInspector;
+    friend class JSDollarVMHelper;
 };
 
 } // namespace JSC

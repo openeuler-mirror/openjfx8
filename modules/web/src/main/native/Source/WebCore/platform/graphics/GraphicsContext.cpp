@@ -53,12 +53,6 @@ public:
     {
     }
 
-    TextRunIterator(const TextRunIterator& other)
-        : m_textRun(other.m_textRun)
-        , m_offset(other.m_offset)
-    {
-    }
-
     unsigned offset() const { return m_offset; }
     void increment() { m_offset++; }
     bool atEnd() const { return !m_textRun || m_offset >= m_textRun->length(); }
@@ -78,23 +72,46 @@ private:
 };
 
 #define CHECK_FOR_CHANGED_PROPERTY(flag, property) \
-    if ((m_changeFlags & GraphicsContextState::flag) && (m_state.property != state.property)) \
-        changeFlags |= GraphicsContextState::flag;
+    if (m_changeFlags.contains(GraphicsContextState::flag) && (m_state.property != state.property)) \
+        changeFlags.add(GraphicsContextState::flag);
+
+GraphicsContextState::GraphicsContextState()
+    : shouldAntialias(true)
+    , shouldSmoothFonts(true)
+    , shouldSubpixelQuantizeFonts(true)
+    , shadowsIgnoreTransforms(false)
+#if USE(CG)
+    // Core Graphics incorrectly renders shadows with radius > 8px (<rdar://problem/8103442>),
+    // but we need to preserve this buggy behavior for canvas and -webkit-box-shadow.
+    , shadowsUseLegacyRadius(false)
+#endif
+#if PLATFORM(JAVA)
+    , clipBounds(FloatRect::infiniteRect())
+#endif
+    , drawLuminanceMask(false)
+{
+}
+
+GraphicsContextState::~GraphicsContextState() = default;
+GraphicsContextState::GraphicsContextState(const GraphicsContextState&) = default;
+GraphicsContextState::GraphicsContextState(GraphicsContextState&&) = default;
+GraphicsContextState& GraphicsContextState::operator=(const GraphicsContextState&) = default;
+GraphicsContextState& GraphicsContextState::operator=(GraphicsContextState&&) = default;
 
 GraphicsContextState::StateChangeFlags GraphicsContextStateChange::changesFromState(const GraphicsContextState& state) const
 {
-    GraphicsContextState::StateChangeFlags changeFlags = GraphicsContextState::NoChange;
+    GraphicsContextState::StateChangeFlags changeFlags;
 
     CHECK_FOR_CHANGED_PROPERTY(StrokeGradientChange, strokeGradient);
     CHECK_FOR_CHANGED_PROPERTY(StrokePatternChange, strokePattern);
     CHECK_FOR_CHANGED_PROPERTY(FillGradientChange, fillGradient);
     CHECK_FOR_CHANGED_PROPERTY(FillPatternChange, fillPattern);
 
-    if ((m_changeFlags & GraphicsContextState::ShadowChange)
+    if (m_changeFlags.contains(GraphicsContextState::ShadowChange)
         && (m_state.shadowOffset != state.shadowOffset
             || m_state.shadowBlur != state.shadowBlur
             || m_state.shadowColor != state.shadowColor))
-        changeFlags |= GraphicsContextState::ShadowChange;
+        changeFlags.add(GraphicsContextState::ShadowChange);
 
     CHECK_FOR_CHANGED_PROPERTY(StrokeThicknessChange, strokeThickness);
     CHECK_FOR_CHANGED_PROPERTY(TextDrawingModeChange, textDrawingMode);
@@ -104,9 +121,11 @@ GraphicsContextState::StateChangeFlags GraphicsContextStateChange::changesFromSt
     CHECK_FOR_CHANGED_PROPERTY(FillRuleChange, fillRule);
     CHECK_FOR_CHANGED_PROPERTY(AlphaChange, alpha);
 
-    if ((m_changeFlags & (GraphicsContextState::CompositeOperationChange | GraphicsContextState::BlendModeChange))
-        && (m_state.compositeOperator != state.compositeOperator || m_state.blendMode != state.blendMode))
-        changeFlags |= (GraphicsContextState::CompositeOperationChange | GraphicsContextState::BlendModeChange);
+    if (m_changeFlags.containsAny({ GraphicsContextState::CompositeOperationChange, GraphicsContextState::BlendModeChange })
+        && (m_state.compositeOperator != state.compositeOperator || m_state.blendMode != state.blendMode)) {
+        changeFlags.add(GraphicsContextState::CompositeOperationChange);
+        changeFlags.add(GraphicsContextState::BlendModeChange);
+    }
 
     CHECK_FOR_CHANGED_PROPERTY(ShouldAntialiasChange, shouldAntialias);
     CHECK_FOR_CHANGED_PROPERTY(ShouldSmoothFontsChange, shouldSmoothFonts);
@@ -115,93 +134,99 @@ GraphicsContextState::StateChangeFlags GraphicsContextStateChange::changesFromSt
     CHECK_FOR_CHANGED_PROPERTY(DrawLuminanceMaskChange, drawLuminanceMask);
     CHECK_FOR_CHANGED_PROPERTY(ImageInterpolationQualityChange, imageInterpolationQuality);
 
+#if HAVE(OS_DARK_MODE_SUPPORT)
+    CHECK_FOR_CHANGED_PROPERTY(UseDarkAppearanceChange, useDarkAppearance);
+#endif
+
     return changeFlags;
 }
 
 void GraphicsContextStateChange::accumulate(const GraphicsContextState& state, GraphicsContextState::StateChangeFlags flags)
 {
     // FIXME: This code should move to GraphicsContextState.
-    if (flags & GraphicsContextState::StrokeGradientChange)
+    if (flags.containsAny({ GraphicsContextState::StrokeColorChange, GraphicsContextState::StrokeGradientChange, GraphicsContextState::StrokePatternChange })) {
+        m_state.strokeColor = state.strokeColor;
         m_state.strokeGradient = state.strokeGradient;
-
-    if (flags & GraphicsContextState::StrokePatternChange)
         m_state.strokePattern = state.strokePattern;
+    }
 
-    if (flags & GraphicsContextState::FillGradientChange)
+    if (flags.containsAny({ GraphicsContextState::FillColorChange, GraphicsContextState::FillGradientChange, GraphicsContextState::FillPatternChange })) {
+        m_state.fillColor = state.fillColor;
         m_state.fillGradient = state.fillGradient;
-
-    if (flags & GraphicsContextState::FillPatternChange)
         m_state.fillPattern = state.fillPattern;
+    }
 
-    if (flags & GraphicsContextState::ShadowChange) {
+    if (flags.contains(GraphicsContextState::ShadowChange)) {
         // FIXME: Deal with state.shadowsUseLegacyRadius.
         m_state.shadowOffset = state.shadowOffset;
         m_state.shadowBlur = state.shadowBlur;
         m_state.shadowColor = state.shadowColor;
     }
 
-    if (flags & GraphicsContextState::StrokeThicknessChange)
+    if (flags.contains(GraphicsContextState::StrokeThicknessChange))
         m_state.strokeThickness = state.strokeThickness;
 
-    if (flags & GraphicsContextState::TextDrawingModeChange)
+    if (flags.contains(GraphicsContextState::TextDrawingModeChange))
         m_state.textDrawingMode = state.textDrawingMode;
 
-    if (flags & GraphicsContextState::StrokeColorChange)
-        m_state.strokeColor = state.strokeColor;
-
-    if (flags & GraphicsContextState::FillColorChange)
-        m_state.fillColor = state.fillColor;
-
-    if (flags & GraphicsContextState::StrokeStyleChange)
+    if (flags.contains(GraphicsContextState::StrokeStyleChange))
         m_state.strokeStyle = state.strokeStyle;
 
-    if (flags & GraphicsContextState::FillRuleChange)
+    if (flags.contains(GraphicsContextState::FillRuleChange))
         m_state.fillRule = state.fillRule;
 
-    if (flags & GraphicsContextState::AlphaChange)
+    if (flags.contains(GraphicsContextState::AlphaChange))
         m_state.alpha = state.alpha;
 
-    if (flags & (GraphicsContextState::CompositeOperationChange | GraphicsContextState::BlendModeChange)) {
+    if (flags.containsAny({ GraphicsContextState::CompositeOperationChange, GraphicsContextState::BlendModeChange })) {
         m_state.compositeOperator = state.compositeOperator;
         m_state.blendMode = state.blendMode;
     }
 
-    if (flags & GraphicsContextState::ShouldAntialiasChange)
+    if (flags.contains(GraphicsContextState::ShouldAntialiasChange))
         m_state.shouldAntialias = state.shouldAntialias;
 
-    if (flags & GraphicsContextState::ShouldSmoothFontsChange)
+    if (flags.contains(GraphicsContextState::ShouldSmoothFontsChange))
         m_state.shouldSmoothFonts = state.shouldSmoothFonts;
 
-    if (flags & GraphicsContextState::ShouldSubpixelQuantizeFontsChange)
+    if (flags.contains(GraphicsContextState::ShouldSubpixelQuantizeFontsChange))
         m_state.shouldSubpixelQuantizeFonts = state.shouldSubpixelQuantizeFonts;
 
-    if (flags & GraphicsContextState::ShadowsIgnoreTransformsChange)
+    if (flags.contains(GraphicsContextState::ShadowsIgnoreTransformsChange))
         m_state.shadowsIgnoreTransforms = state.shadowsIgnoreTransforms;
 
-    if (flags & GraphicsContextState::DrawLuminanceMaskChange)
+    if (flags.contains(GraphicsContextState::DrawLuminanceMaskChange))
         m_state.drawLuminanceMask = state.drawLuminanceMask;
 
-    if (flags & GraphicsContextState::ImageInterpolationQualityChange)
+    if (flags.contains(GraphicsContextState::ImageInterpolationQualityChange))
         m_state.imageInterpolationQuality = state.imageInterpolationQuality;
 
-    m_changeFlags |= flags;
+#if HAVE(OS_DARK_MODE_SUPPORT)
+    if (flags.contains(GraphicsContextState::UseDarkAppearanceChange))
+        m_state.useDarkAppearance = state.useDarkAppearance;
+#endif
+
+    m_changeFlags.add(flags);
 }
 
 void GraphicsContextStateChange::apply(GraphicsContext& context) const
 {
-    if (m_changeFlags & GraphicsContextState::StrokeGradientChange)
+    if (m_changeFlags.contains(GraphicsContextState::StrokeGradientChange))
         context.setStrokeGradient(*m_state.strokeGradient);
 
-    if (m_changeFlags & GraphicsContextState::StrokePatternChange)
+    if (m_changeFlags.contains(GraphicsContextState::StrokePatternChange))
         context.setStrokePattern(*m_state.strokePattern);
 
-    if (m_changeFlags & GraphicsContextState::FillGradientChange)
+    if (m_changeFlags.contains(GraphicsContextState::FillGradientChange))
         context.setFillGradient(*m_state.fillGradient);
 
-    if (m_changeFlags & GraphicsContextState::FillPatternChange)
+    if (m_changeFlags.contains(GraphicsContextState::FillPatternChange))
         context.setFillPattern(*m_state.fillPattern);
 
-    if (m_changeFlags & GraphicsContextState::ShadowChange) {
+    if (m_changeFlags.contains(GraphicsContextState::ShadowsIgnoreTransformsChange))
+        context.setShadowsIgnoreTransforms(m_state.shadowsIgnoreTransforms);
+
+    if (m_changeFlags.contains(GraphicsContextState::ShadowChange)) {
 #if USE(CG)
         if (m_state.shadowsUseLegacyRadius)
             context.setLegacyShadow(m_state.shadowOffset, m_state.shadowBlur, m_state.shadowColor);
@@ -210,66 +235,68 @@ void GraphicsContextStateChange::apply(GraphicsContext& context) const
             context.setShadow(m_state.shadowOffset, m_state.shadowBlur, m_state.shadowColor);
     }
 
-    if (m_changeFlags & GraphicsContextState::StrokeThicknessChange)
+    if (m_changeFlags.contains(GraphicsContextState::StrokeThicknessChange))
         context.setStrokeThickness(m_state.strokeThickness);
 
-    if (m_changeFlags & GraphicsContextState::TextDrawingModeChange)
+    if (m_changeFlags.contains(GraphicsContextState::TextDrawingModeChange))
         context.setTextDrawingMode(m_state.textDrawingMode);
 
-    if (m_changeFlags & GraphicsContextState::StrokeColorChange)
+    if (m_changeFlags.contains(GraphicsContextState::StrokeColorChange))
         context.setStrokeColor(m_state.strokeColor);
 
-    if (m_changeFlags & GraphicsContextState::FillColorChange)
+    if (m_changeFlags.contains(GraphicsContextState::FillColorChange))
         context.setFillColor(m_state.fillColor);
 
-    if (m_changeFlags & GraphicsContextState::StrokeStyleChange)
+    if (m_changeFlags.contains(GraphicsContextState::StrokeStyleChange))
         context.setStrokeStyle(m_state.strokeStyle);
 
-    if (m_changeFlags & GraphicsContextState::FillRuleChange)
+    if (m_changeFlags.contains(GraphicsContextState::FillRuleChange))
         context.setFillRule(m_state.fillRule);
 
-    if (m_changeFlags & GraphicsContextState::AlphaChange)
+    if (m_changeFlags.contains(GraphicsContextState::AlphaChange))
         context.setAlpha(m_state.alpha);
 
-    if (m_changeFlags & (GraphicsContextState::CompositeOperationChange | GraphicsContextState::BlendModeChange))
+    if (m_changeFlags.containsAny({ GraphicsContextState::CompositeOperationChange, GraphicsContextState::BlendModeChange }))
         context.setCompositeOperation(m_state.compositeOperator, m_state.blendMode);
 
-    if (m_changeFlags & GraphicsContextState::ShouldAntialiasChange)
+    if (m_changeFlags.contains(GraphicsContextState::ShouldAntialiasChange))
         context.setShouldAntialias(m_state.shouldAntialias);
 
-    if (m_changeFlags & GraphicsContextState::ShouldSmoothFontsChange)
+    if (m_changeFlags.contains(GraphicsContextState::ShouldSmoothFontsChange))
         context.setShouldSmoothFonts(m_state.shouldSmoothFonts);
 
-    if (m_changeFlags & GraphicsContextState::ShouldSubpixelQuantizeFontsChange)
+    if (m_changeFlags.contains(GraphicsContextState::ShouldSubpixelQuantizeFontsChange))
         context.setShouldSubpixelQuantizeFonts(m_state.shouldSubpixelQuantizeFonts);
 
-    if (m_changeFlags & GraphicsContextState::ShadowsIgnoreTransformsChange)
-        context.setShadowsIgnoreTransforms(m_state.shadowsIgnoreTransforms);
-
-    if (m_changeFlags & GraphicsContextState::DrawLuminanceMaskChange)
+    if (m_changeFlags.contains(GraphicsContextState::DrawLuminanceMaskChange))
         context.setDrawLuminanceMask(m_state.drawLuminanceMask);
 
-    if (m_changeFlags & GraphicsContextState::ImageInterpolationQualityChange)
+    if (m_changeFlags.contains(GraphicsContextState::ImageInterpolationQualityChange))
         context.setImageInterpolationQuality(m_state.imageInterpolationQuality);
+
+#if HAVE(OS_DARK_MODE_SUPPORT)
+    if (m_changeFlags.contains(GraphicsContextState::UseDarkAppearanceChange))
+        context.setUseDarkAppearance(m_state.useDarkAppearance);
+#endif
 }
 
 void GraphicsContextStateChange::dump(TextStream& ts) const
 {
-    ts.dumpProperty("change-flags", m_changeFlags);
+    ts.dumpProperty("change-flags", m_changeFlags.toRaw());
 
-    if (m_changeFlags & GraphicsContextState::StrokeGradientChange)
+    if (m_changeFlags.contains(GraphicsContextState::StrokeGradientChange))
         ts.dumpProperty("stroke-gradient", m_state.strokeGradient.get());
 
-    if (m_changeFlags & GraphicsContextState::StrokePatternChange)
+    if (m_changeFlags.contains(GraphicsContextState::StrokePatternChange))
         ts.dumpProperty("stroke-pattern", m_state.strokePattern.get());
 
-    if (m_changeFlags & GraphicsContextState::FillGradientChange)
+    if (m_changeFlags.contains(GraphicsContextState::FillGradientChange))
         ts.dumpProperty("fill-gradient", m_state.fillGradient.get());
 
-    if (m_changeFlags & GraphicsContextState::FillPatternChange)
+    if (m_changeFlags.contains(GraphicsContextState::FillPatternChange))
         ts.dumpProperty("fill-pattern", m_state.fillPattern.get());
 
-    if (m_changeFlags & GraphicsContextState::ShadowChange) {
+    if (m_changeFlags.contains(GraphicsContextState::ShadowChange)) {
         ts.dumpProperty("shadow-blur", m_state.shadowBlur);
         ts.dumpProperty("shadow-offset", m_state.shadowOffset);
 #if USE(CG)
@@ -277,47 +304,52 @@ void GraphicsContextStateChange::dump(TextStream& ts) const
 #endif
     }
 
-    if (m_changeFlags & GraphicsContextState::StrokeThicknessChange)
+    if (m_changeFlags.contains(GraphicsContextState::StrokeThicknessChange))
         ts.dumpProperty("stroke-thickness", m_state.strokeThickness);
 
-    if (m_changeFlags & GraphicsContextState::TextDrawingModeChange)
-        ts.dumpProperty("text-drawing-mode", m_state.textDrawingMode);
+    if (m_changeFlags.contains(GraphicsContextState::TextDrawingModeChange))
+        ts.dumpProperty("text-drawing-mode", m_state.textDrawingMode.toRaw());
 
-    if (m_changeFlags & GraphicsContextState::StrokeColorChange)
+    if (m_changeFlags.contains(GraphicsContextState::StrokeColorChange))
         ts.dumpProperty("stroke-color", m_state.strokeColor);
 
-    if (m_changeFlags & GraphicsContextState::FillColorChange)
+    if (m_changeFlags.contains(GraphicsContextState::FillColorChange))
         ts.dumpProperty("fill-color", m_state.fillColor);
 
-    if (m_changeFlags & GraphicsContextState::StrokeStyleChange)
+    if (m_changeFlags.contains(GraphicsContextState::StrokeStyleChange))
         ts.dumpProperty("stroke-style", m_state.strokeStyle);
 
-    if (m_changeFlags & GraphicsContextState::FillRuleChange)
+    if (m_changeFlags.contains(GraphicsContextState::FillRuleChange))
         ts.dumpProperty("fill-rule", m_state.fillRule);
 
-    if (m_changeFlags & GraphicsContextState::AlphaChange)
+    if (m_changeFlags.contains(GraphicsContextState::AlphaChange))
         ts.dumpProperty("alpha", m_state.alpha);
 
-    if (m_changeFlags & GraphicsContextState::CompositeOperationChange)
+    if (m_changeFlags.contains(GraphicsContextState::CompositeOperationChange))
         ts.dumpProperty("composite-operator", m_state.compositeOperator);
 
-    if (m_changeFlags & GraphicsContextState::BlendModeChange)
+    if (m_changeFlags.contains(GraphicsContextState::BlendModeChange))
         ts.dumpProperty("blend-mode", m_state.blendMode);
 
-    if (m_changeFlags & GraphicsContextState::ShouldAntialiasChange)
+    if (m_changeFlags.contains(GraphicsContextState::ShouldAntialiasChange))
         ts.dumpProperty("should-antialias", m_state.shouldAntialias);
 
-    if (m_changeFlags & GraphicsContextState::ShouldSmoothFontsChange)
+    if (m_changeFlags.contains(GraphicsContextState::ShouldSmoothFontsChange))
         ts.dumpProperty("should-smooth-fonts", m_state.shouldSmoothFonts);
 
-    if (m_changeFlags & GraphicsContextState::ShouldSubpixelQuantizeFontsChange)
+    if (m_changeFlags.contains(GraphicsContextState::ShouldSubpixelQuantizeFontsChange))
         ts.dumpProperty("should-subpixel-quantize-fonts", m_state.shouldSubpixelQuantizeFonts);
 
-    if (m_changeFlags & GraphicsContextState::ShadowsIgnoreTransformsChange)
+    if (m_changeFlags.contains(GraphicsContextState::ShadowsIgnoreTransformsChange))
         ts.dumpProperty("shadows-ignore-transforms", m_state.shadowsIgnoreTransforms);
 
-    if (m_changeFlags & GraphicsContextState::DrawLuminanceMaskChange)
+    if (m_changeFlags.contains(GraphicsContextState::DrawLuminanceMaskChange))
         ts.dumpProperty("draw-luminance-mask", m_state.drawLuminanceMask);
+
+#if HAVE(OS_DARK_MODE_SUPPORT)
+    if (m_changeFlags.contains(GraphicsContextState::UseDarkAppearanceChange))
+        ts.dumpProperty("use-dark-appearance", m_state.useDarkAppearance);
+#endif
 }
 
 TextStream& operator<<(TextStream& ts, const GraphicsContextStateChange& stateChange)
@@ -631,10 +663,10 @@ void GraphicsContext::endTransparencyLayer()
     --m_transparencyCount;
 }
 
-float GraphicsContext::drawText(const FontCascade& font, const TextRun& run, const FloatPoint& point, unsigned from, std::optional<unsigned> to)
+FloatSize GraphicsContext::drawText(const FontCascade& font, const TextRun& run, const FloatPoint& point, unsigned from, Optional<unsigned> to)
 {
     if (paintingDisabled())
-        return 0;
+        return FloatSize();
 
     // Display list recording for text content is done at glyphs level. See GraphicsContext::drawGlyphs.
     return font.drawText(*this, run, point, from, to);
@@ -642,6 +674,7 @@ float GraphicsContext::drawText(const FontCascade& font, const TextRun& run, con
 
 void GraphicsContext::drawGlyphs(const Font& font, const GlyphBuffer& buffer, unsigned from, unsigned numGlyphs, const FloatPoint& point, FontSmoothingMode fontSmoothingMode)
 {
+    ASSERT(buffer.isFlattened());
     if (paintingDisabled())
         return;
 
@@ -653,7 +686,7 @@ void GraphicsContext::drawGlyphs(const Font& font, const GlyphBuffer& buffer, un
     FontCascade::drawGlyphs(*this, font, buffer, from, numGlyphs, point, fontSmoothingMode);
 }
 
-void GraphicsContext::drawEmphasisMarks(const FontCascade& font, const TextRun& run, const AtomicString& mark, const FloatPoint& point, unsigned from, std::optional<unsigned> to)
+void GraphicsContext::drawEmphasisMarks(const FontCascade& font, const TextRun& run, const AtomString& mark, const FloatPoint& point, unsigned from, Optional<unsigned> to)
 {
     if (paintingDisabled())
         return;
@@ -686,8 +719,8 @@ void GraphicsContext::drawBidiText(const FontCascade& font, const TextRun& run, 
         subrun.setDirection(isRTL ? TextDirection::RTL : TextDirection::LTR);
         subrun.setDirectionalOverride(bidiRun->dirOverride(false));
 
-        float width = font.drawText(*this, subrun, currPoint, 0, std::nullopt, customFontNotReadyAction);
-        currPoint.move(width, 0);
+        auto advance = font.drawText(*this, subrun, currPoint, 0, WTF::nullopt, customFontNotReadyAction);
+        currPoint.move(advance);
 
         bidiRun = bidiRun->next();
     }
@@ -702,55 +735,50 @@ ImageDrawResult GraphicsContext::drawImage(Image& image, const FloatPoint& desti
 
 ImageDrawResult GraphicsContext::drawImage(Image& image, const FloatRect& destination, const ImagePaintingOptions& imagePaintingOptions)
 {
-#if PLATFORM(IOS)
-    FloatRect srcRect(FloatPoint(), image.originalSize());
-#else
-    FloatRect srcRect(FloatPoint(), image.size());
-#endif
-
+    FloatRect srcRect(FloatPoint(), image.size(imagePaintingOptions.orientation()));
     return drawImage(image, destination, srcRect, imagePaintingOptions);
 }
 
-ImageDrawResult GraphicsContext::drawImage(Image& image, const FloatRect& destination, const FloatRect& source, const ImagePaintingOptions& imagePaintingOptions)
+ImageDrawResult GraphicsContext::drawImage(Image& image, const FloatRect& destination, const FloatRect& source, const ImagePaintingOptions& options)
 {
     if (paintingDisabled())
         return ImageDrawResult::DidNothing;
 
     if (m_impl)
-        return m_impl->drawImage(image, destination, source, imagePaintingOptions);
+        return m_impl->drawImage(image, destination, source, options);
 
-    InterpolationQualityMaintainer interpolationQualityForThisScope(*this, imagePaintingOptions.m_interpolationQuality);
-    return image.draw(*this, destination, source, imagePaintingOptions.m_compositeOperator, imagePaintingOptions.m_blendMode, imagePaintingOptions.m_decodingMode, imagePaintingOptions.m_orientationDescription);
+    InterpolationQualityMaintainer interpolationQualityForThisScope(*this, options.interpolationQuality());
+    return image.draw(*this, destination, source, options);
 }
 
-ImageDrawResult GraphicsContext::drawTiledImage(Image& image, const FloatRect& destination, const FloatPoint& source, const FloatSize& tileSize, const FloatSize& spacing, const ImagePaintingOptions& imagePaintingOptions)
+ImageDrawResult GraphicsContext::drawTiledImage(Image& image, const FloatRect& destination, const FloatPoint& source, const FloatSize& tileSize, const FloatSize& spacing, const ImagePaintingOptions& options)
 {
     if (paintingDisabled())
         return ImageDrawResult::DidNothing;
 
     if (m_impl)
-        return m_impl->drawTiledImage(image, destination, source, tileSize, spacing, imagePaintingOptions);
+        return m_impl->drawTiledImage(image, destination, source, tileSize, spacing, options);
 
-    InterpolationQualityMaintainer interpolationQualityForThisScope(*this, imagePaintingOptions.m_interpolationQuality);
-    return image.drawTiled(*this, destination, source, tileSize, spacing, imagePaintingOptions.m_compositeOperator, imagePaintingOptions.m_blendMode, imagePaintingOptions.m_decodingMode);
+    InterpolationQualityMaintainer interpolationQualityForThisScope(*this, options.interpolationQuality());
+    return image.drawTiled(*this, destination, source, tileSize, spacing, options);
 }
 
 ImageDrawResult GraphicsContext::drawTiledImage(Image& image, const FloatRect& destination, const FloatRect& source, const FloatSize& tileScaleFactor,
-    Image::TileRule hRule, Image::TileRule vRule, const ImagePaintingOptions& imagePaintingOptions)
+    Image::TileRule hRule, Image::TileRule vRule, const ImagePaintingOptions& options)
 {
     if (paintingDisabled())
         return ImageDrawResult::DidNothing;
 
     if (m_impl)
-        return m_impl->drawTiledImage(image, destination, source, tileScaleFactor, hRule, vRule, imagePaintingOptions);
+        return m_impl->drawTiledImage(image, destination, source, tileScaleFactor, hRule, vRule, options);
 
     if (hRule == Image::StretchTile && vRule == Image::StretchTile) {
         // Just do a scale.
-        return drawImage(image, destination, source, imagePaintingOptions);
+        return drawImage(image, destination, source, options);
     }
 
-    InterpolationQualityMaintainer interpolationQualityForThisScope(*this, imagePaintingOptions.m_interpolationQuality);
-    return image.drawTiled(*this, destination, source, tileScaleFactor, hRule, vRule, imagePaintingOptions.m_compositeOperator);
+    InterpolationQualityMaintainer interpolationQualityForThisScope(*this, options.interpolationQuality());
+    return image.drawTiled(*this, destination, source, tileScaleFactor, hRule, vRule, options.compositeOperator());
 }
 
 void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatPoint& destination, const ImagePaintingOptions& imagePaintingOptions)
@@ -763,13 +791,13 @@ void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatRect& desti
     drawImageBuffer(image, destination, FloatRect(FloatPoint(), FloatSize(image.logicalSize())), imagePaintingOptions);
 }
 
-void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatRect& destination, const FloatRect& source, const ImagePaintingOptions& imagePaintingOptions)
+void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatRect& destination, const FloatRect& source, const ImagePaintingOptions& options)
 {
     if (paintingDisabled())
         return;
 
-    InterpolationQualityMaintainer interpolationQualityForThisScope(*this, imagePaintingOptions.m_interpolationQuality);
-    image.draw(*this, destination, source, imagePaintingOptions.m_compositeOperator, imagePaintingOptions.m_blendMode);
+    InterpolationQualityMaintainer interpolationQualityForThisScope(*this, options.interpolationQuality());
+    image.draw(*this, destination, source, options);
 }
 
 void GraphicsContext::drawConsumingImageBuffer(std::unique_ptr<ImageBuffer> image, const FloatPoint& destination, const ImagePaintingOptions& imagePaintingOptions)
@@ -788,13 +816,13 @@ void GraphicsContext::drawConsumingImageBuffer(std::unique_ptr<ImageBuffer> imag
     drawConsumingImageBuffer(WTFMove(image), destination, FloatRect(FloatPoint(), FloatSize(imageLogicalSize)), imagePaintingOptions);
 }
 
-void GraphicsContext::drawConsumingImageBuffer(std::unique_ptr<ImageBuffer> image, const FloatRect& destination, const FloatRect& source, const ImagePaintingOptions& imagePaintingOptions)
+void GraphicsContext::drawConsumingImageBuffer(std::unique_ptr<ImageBuffer> image, const FloatRect& destination, const FloatRect& source, const ImagePaintingOptions& options)
 {
     if (paintingDisabled() || !image)
         return;
 
-    InterpolationQualityMaintainer interpolationQualityForThisScope(*this, imagePaintingOptions.m_interpolationQuality);
-    ImageBuffer::drawConsuming(WTFMove(image), *this, destination, source, imagePaintingOptions.m_compositeOperator, imagePaintingOptions.m_blendMode);
+    InterpolationQualityMaintainer interpolationQualityForThisScope(*this, options.interpolationQuality());
+    ImageBuffer::drawConsuming(WTFMove(image), *this, destination, source, options);
 }
 
 void GraphicsContext::clipRoundedRect(const FloatRoundedRect& rect)
@@ -947,6 +975,15 @@ void GraphicsContext::setDrawLuminanceMask(bool drawLuminanceMask)
         m_impl->updateState(m_state, GraphicsContextState::DrawLuminanceMaskChange);
 }
 
+#if HAVE(OS_DARK_MODE_SUPPORT)
+void GraphicsContext::setUseDarkAppearance(bool useDarkAppearance)
+{
+    m_state.useDarkAppearance = useDarkAppearance;
+    if (m_impl)
+        m_impl->updateState(m_state, GraphicsContextState::UseDarkAppearanceChange);
+}
+#endif
+
 #if !USE(CG) && !USE(DIRECT2D) && !PLATFORM(JAVA)
 // Implement this if you want to go push the drawing mode into your native context immediately.
 void GraphicsContext::setPlatformTextDrawingMode(TextDrawingModeFlags)
@@ -1085,22 +1122,22 @@ void GraphicsContext::platformStrokeEllipse(const FloatRect& ellipse)
 }
 #endif
 
-FloatRect GraphicsContext::computeUnderlineBoundsForText(const FloatPoint& point, float width, bool printing)
+FloatRect GraphicsContext::computeUnderlineBoundsForText(const FloatRect& rect, bool printing)
 {
     Color dummyColor;
-    return computeLineBoundsAndAntialiasingModeForText(point, width, printing, dummyColor);
+    return computeLineBoundsAndAntialiasingModeForText(rect, printing, dummyColor);
 }
 
-FloatRect GraphicsContext::computeLineBoundsAndAntialiasingModeForText(const FloatPoint& point, float width, bool printing, Color& color)
+FloatRect GraphicsContext::computeLineBoundsAndAntialiasingModeForText(const FloatRect& rect, bool printing, Color& color)
 {
-    FloatPoint origin = point;
-    float thickness = std::max(strokeThickness(), 0.5f);
+    FloatPoint origin = rect.location();
+    float thickness = std::max(rect.height(), 0.5f);
     if (printing)
-        return FloatRect(origin, FloatSize(width, thickness));
+        return FloatRect(origin, FloatSize(rect.width(), thickness));
 
     AffineTransform transform = getCTM(GraphicsContext::DefinitelyIncludeDeviceScale);
     // Just compute scale in x dimension, assuming x and y scales are equal.
-    float scale = transform.b() ? sqrtf(transform.a() * transform.a() + transform.b() * transform.b()) : transform.a();
+    float scale = transform.b() ? std::hypot(transform.a(), transform.b()) : transform.a();
     if (scale < 1.0) {
         // This code always draws a line that is at least one-pixel line high,
         // which tends to visually overwhelm text at small scales. To counter this
@@ -1110,15 +1147,15 @@ FloatRect GraphicsContext::computeLineBoundsAndAntialiasingModeForText(const Flo
         color = color.colorWithAlphaMultipliedBy(shade);
     }
 
-    FloatPoint devicePoint = transform.mapPoint(point);
+    FloatPoint devicePoint = transform.mapPoint(rect.location());
     // Visual overflow might occur here due to integral roundf/ceilf. visualOverflowForDecorations adjusts the overflow value for underline decoration.
     FloatPoint deviceOrigin = FloatPoint(roundf(devicePoint.x()), ceilf(devicePoint.y()));
     if (auto inverse = transform.inverse())
         origin = inverse.value().mapPoint(deviceOrigin);
-    return FloatRect(origin, FloatSize(width, thickness));
+    return FloatRect(origin, FloatSize(rect.width(), thickness));
 }
 
-void GraphicsContext::applyState(const GraphicsContextState& state)
+void GraphicsContext::builderState(const GraphicsContextState& state)
 {
     setPlatformShadow(state.shadowOffset, state.shadowBlur, state.shadowColor);
     setPlatformStrokeThickness(state.strokeThickness);

@@ -33,31 +33,34 @@ namespace JSC {
 class JSArrayBufferPrototype;
 class GetterSetter;
 
-class JSArrayBufferConstructor final : public InternalFunction {
+template<ArrayBufferSharingMode sharingMode>
+class JSGenericArrayBufferConstructor final : public InternalFunction {
 public:
-    typedef InternalFunction Base;
+    using Base = InternalFunction;
 
-    template<typename CellType>
-    static IsoSubspace* subspaceFor(VM& vm)
+    static JSGenericArrayBufferConstructor* create(VM& vm, Structure* structure, JSArrayBufferPrototype* prototype, GetterSetter* speciesSymbol)
     {
-        return &vm.arrayBufferConstructorSpace;
+        JSGenericArrayBufferConstructor* result =
+            new (NotNull, allocateCell<JSGenericArrayBufferConstructor>(vm.heap)) JSGenericArrayBufferConstructor(vm, structure);
+        result->finishCreation(vm, prototype, speciesSymbol);
+        return result;
     }
-
-protected:
-    JSArrayBufferConstructor(VM&, Structure*, ArrayBufferSharingMode);
-    void finishCreation(VM&, JSArrayBufferPrototype*, GetterSetter* speciesSymbol);
-
-public:
-    static JSArrayBufferConstructor* create(VM&, Structure*, JSArrayBufferPrototype*, GetterSetter* speciesSymbol, ArrayBufferSharingMode);
-
-    DECLARE_INFO;
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
 
-    ArrayBufferSharingMode sharingMode() const { return m_sharingMode; }
+    static const ClassInfo s_info; // This is never accessed directly, since that would break linkage on some compilers.
+    static const ClassInfo* info();
 
 private:
-    ArrayBufferSharingMode m_sharingMode;
+    JSGenericArrayBufferConstructor(VM&, Structure*);
+    void finishCreation(VM&, JSArrayBufferPrototype*, GetterSetter* speciesSymbol);
+
+    static EncodedJSValue JSC_HOST_CALL constructArrayBuffer(JSGlobalObject*, CallFrame*);
 };
+
+using JSArrayBufferConstructor = JSGenericArrayBufferConstructor<ArrayBufferSharingMode::Default>;
+using JSSharedArrayBufferConstructor = JSGenericArrayBufferConstructor<ArrayBufferSharingMode::Shared>;
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSArrayBufferConstructor, InternalFunction);
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSharedArrayBufferConstructor, InternalFunction);
 
 } // namespace JSC

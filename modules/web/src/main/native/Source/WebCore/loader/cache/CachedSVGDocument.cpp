@@ -27,8 +27,8 @@
 
 namespace WebCore {
 
-CachedSVGDocument::CachedSVGDocument(CachedResourceRequest&& request, PAL::SessionID sessionID)
-    : CachedResource(WTFMove(request), Type::SVGDocumentResource, sessionID)
+CachedSVGDocument::CachedSVGDocument(CachedResourceRequest&& request, const PAL::SessionID& sessionID, const CookieJar* cookieJar)
+    : CachedResource(WTFMove(request), Type::SVGDocumentResource, sessionID, cookieJar)
     , m_decoder(TextResourceDecoder::create("application/xml"))
 {
 }
@@ -45,14 +45,14 @@ String CachedSVGDocument::encoding() const
     return m_decoder->encoding().name();
 }
 
-void CachedSVGDocument::finishLoading(SharedBuffer* data)
+void CachedSVGDocument::finishLoading(SharedBuffer* data, const NetworkLoadMetrics& metrics)
 {
     if (data) {
         // We don't need to create a new frame because the new document belongs to the parent UseElement.
         m_document = SVGDocument::create(nullptr, response().url());
         m_document->setContent(m_decoder->decodeAndFlush(data->data(), data->size()));
     }
-    CachedResource::finishLoading(data);
+    CachedResource::finishLoading(data, metrics);
 }
 
 }

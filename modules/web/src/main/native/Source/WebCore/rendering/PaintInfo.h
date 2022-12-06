@@ -37,6 +37,7 @@
 
 namespace WebCore {
 
+class EventRegionContext;
 class OverlapTestRequestClient;
 class RenderInline;
 class RenderLayer;
@@ -98,7 +99,7 @@ struct PaintInfo {
     bool forceTextColor() const { return forceBlackText() || forceWhiteText(); }
     bool forceBlackText() const { return paintBehavior.contains(PaintBehavior::ForceBlackText); }
     bool forceWhiteText() const { return paintBehavior.contains(PaintBehavior::ForceWhiteText); }
-    Color forcedTextColor() const { return (forceBlackText()) ? Color::black : Color::white; }
+    Color forcedTextColor() const { return forceBlackText() ? Color::black : Color::white; }
 
     bool skipRootBackground() const { return paintBehavior.contains(PaintBehavior::SkipRootBackground); }
     bool paintRootBackgroundOnly() const { return paintBehavior.contains(PaintBehavior::RootBackgroundOnly); }
@@ -115,7 +116,7 @@ struct PaintInfo {
         if (rect.isInfinite())
             return;
 
-        FloatRect tranformedRect(localToAncestorTransform.inverse().value_or(AffineTransform()).mapRect(rect));
+        FloatRect tranformedRect(localToAncestorTransform.inverse().valueOr(AffineTransform()).mapRect(rect));
         rect.setLocation(LayoutPoint(tranformedRect.location()));
         rect.setSize(LayoutSize(tranformedRect.size()));
     }
@@ -129,6 +130,7 @@ struct PaintInfo {
     const RenderLayerModelObject* paintContainer; // the layer object that originates the current painting
     bool requireSecurityOriginAccessForWidgets { false };
     const RenderLayer* m_enclosingSelfPaintingLayer { nullptr };
+    EventRegionContext* eventRegionContext { nullptr }; // For PaintPhase::EventRegion.
 
 private:
     GraphicsContext* m_context;

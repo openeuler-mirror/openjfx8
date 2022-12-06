@@ -98,8 +98,8 @@
     {
         "name": "Async Iteration",
         "status": {
-            "status": "In Development",
-            "enabled-by-default": false
+            "status": "Supported",
+            "enabled-by-default": true
         },
         "url": "https://tc39.github.io/proposal-async-iteration/",
         "documentation-url": "http://2ality.com/2016/10/asynchronous-iteration.html",
@@ -111,6 +111,16 @@
             "twitter": "@alSkachkov",
             "email": "gskachkov@gmail.com"
         }
+    },
+    {
+        "name": "BigInt",
+        "status": {
+            "status": "Supported",
+            "enabled-by-default": true
+        },
+        "url": "https://tc39.es/proposal-bigint/",
+        "description": "BigInt is a new primitive that offers arbitrary-precision integers.",
+        "specification": "ESNext"
     },
     {
         "name": "Block Scoping",
@@ -229,8 +239,8 @@
     {
         "name": "Object rest/spread",
         "status": {
-            "status": "In Development",
-            "enabled-by-default": false
+            "status": "Supported",
+            "enabled-by-default": true
         },
         "url": "https://github.com/tc39/proposal-object-rest-spread",
         "documentation-url": "http://2ality.com/2016/10/rest-spread-properties.html",

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -34,7 +34,7 @@
 #include "FloatRect.h"
 #include "GraphicsContext.h"
 #include "TransformationMatrix.h"
-#include <wtf/java/JavaEnv.h>
+#include "PlatformJavaClasses.h"
 #include "com_sun_webkit_graphics_GraphicsDecoder.h"
 #include "GraphicsContextJava.h"
 #include "PlatformContextJava.h"
@@ -45,7 +45,7 @@ class ImageBuffer;
 namespace WebCore {
 
 void Image::drawImage(GraphicsContext& gc, const FloatRect &dstRect, const FloatRect &srcRect,
-                       CompositeOperator, BlendMode)
+                       CompositeOperator compositeOperator, BlendMode)
 {
     if (gc.paintingDisabled()) {
         return;
@@ -56,6 +56,9 @@ void Image::drawImage(GraphicsContext& gc, const FloatRect &dstRect, const Float
         return;
     }
 
+    CompositeOperator oldCompositeOperator = gc.compositeOperation();
+    gc.setCompositeOperation(compositeOperator);
+
     gc.platformContext()->rq().freeSpace(72)
     << (jint)com_sun_webkit_graphics_GraphicsDecoder_DRAWIMAGE
     << currFrame
@@ -63,6 +66,8 @@ void Image::drawImage(GraphicsContext& gc, const FloatRect &dstRect, const Float
     << dstRect.width() << dstRect.height()
     << srcRect.x() << srcRect.y()
     << srcRect.width() << srcRect.height();
+
+    gc.setCompositeOperation(oldCompositeOperator);
 
     if (imageObserver())
         imageObserver()->didDraw(*this);
@@ -76,7 +81,7 @@ Ref<Image> Image::loadPlatformResource(const char *name)
 #if !USE(IMAGEIO)
 NativeImagePtr ImageFrame::asNewNativeImage() const
 {
-    JNIEnv* env = WebCore_GetJavaEnv();
+    JNIEnv* env = WTF::GetJavaEnv();
     static jmethodID s_createWCImage_mID = env->GetMethodID(
             PG_GetGraphicsManagerClass(env), "createFrame",
             "(IILjava/nio/ByteBuffer;)Lcom/sun/webkit/graphics/WCImageFrame;");
@@ -94,7 +99,7 @@ NativeImagePtr ImageFrame::asNewNativeImage() const
         height(),
         (jobject)data));
     ASSERT(frame);
-    CheckAndClearException(env);
+    WTF::CheckAndClearException(env);
 
     return RQRef::create(frame);
 }

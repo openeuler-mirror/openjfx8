@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,7 +40,7 @@ namespace JSC { namespace B3 { namespace Air {
 namespace {
 
 namespace AirFixObviousSpillsInternal {
-static const bool verbose = false;
+static constexpr bool verbose = false;
 }
 
 class FixObviousSpills {
@@ -121,11 +121,11 @@ private:
                 else if (isSpillSlot(inst.args[1]))
                     func(SlotConst(inst.args[1].stackSlot(), inst.args[0].value()));
             } else if (isSpillSlot(inst.args[0]) && inst.args[1].isReg()) {
-                if (std::optional<int64_t> constant = m_state.constantFor(inst.args[0]))
+                if (Optional<int64_t> constant = m_state.constantFor(inst.args[0]))
                     func(RegConst(inst.args[1].reg(), *constant));
                 func(RegSlot(inst.args[1].reg(), inst.args[0].stackSlot(), RegSlot::AllBits));
             } else if (inst.args[0].isReg() && isSpillSlot(inst.args[1])) {
-                if (std::optional<int64_t> constant = m_state.constantFor(inst.args[0]))
+                if (Optional<int64_t> constant = m_state.constantFor(inst.args[0]))
                     func(SlotConst(inst.args[1].stackSlot(), *constant));
                 func(RegSlot(inst.args[0].reg(), inst.args[1].stackSlot(), RegSlot::AllBits));
             }
@@ -138,11 +138,11 @@ private:
                 else if (isSpillSlot(inst.args[1]))
                     func(SlotConst(inst.args[1].stackSlot(), static_cast<uint32_t>(inst.args[0].value())));
             } else if (isSpillSlot(inst.args[0]) && inst.args[1].isReg()) {
-                if (std::optional<int64_t> constant = m_state.constantFor(inst.args[0]))
+                if (Optional<int64_t> constant = m_state.constantFor(inst.args[0]))
                     func(RegConst(inst.args[1].reg(), static_cast<uint32_t>(*constant)));
                 func(RegSlot(inst.args[1].reg(), inst.args[0].stackSlot(), RegSlot::ZExt32));
             } else if (inst.args[0].isReg() && isSpillSlot(inst.args[1])) {
-                if (std::optional<int64_t> constant = m_state.constantFor(inst.args[0]))
+                if (Optional<int64_t> constant = m_state.constantFor(inst.args[0]))
                     func(SlotConst(inst.args[1].stackSlot(), static_cast<int32_t>(*constant)));
                 func(RegSlot(inst.args[0].reg(), inst.args[1].stackSlot(), RegSlot::Match32));
             }
@@ -504,19 +504,19 @@ private:
             return nullptr;
         }
 
-        std::optional<int64_t> constantFor(const Arg& arg)
+        Optional<int64_t> constantFor(const Arg& arg)
         {
             if (arg.isReg()) {
                 if (const RegConst* alias = getRegConst(arg.reg()))
                     return alias->constant;
-                return std::nullopt;
+                return WTF::nullopt;
             }
             if (arg.isStack()) {
                 if (const SlotConst* alias = getSlotConst(arg.stackSlot()))
                     return alias->constant;
-                return std::nullopt;
+                return WTF::nullopt;
             }
-            return std::nullopt;
+            return WTF::nullopt;
         }
 
         void clobber(const Arg& arg)

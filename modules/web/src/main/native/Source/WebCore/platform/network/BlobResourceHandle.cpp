@@ -35,19 +35,19 @@
 #include "AsyncFileStream.h"
 #include "BlobData.h"
 #include "FileStream.h"
-#include "FileSystem.h"
 #include "HTTPHeaderNames.h"
 #include "HTTPParsers.h"
 #include "ParsedContentRange.h"
-#include "URL.h"
 #include "ResourceError.h"
 #include "ResourceHandleClient.h"
 #include "ResourceRequest.h"
 #include "ResourceResponse.h"
 #include "SharedBuffer.h"
 #include <wtf/CompletionHandler.h>
+#include <wtf/FileSystem.h>
 #include <wtf/MainThread.h>
 #include <wtf/Ref.h>
+#include <wtf/URL.h>
 
 namespace WebCore {
 
@@ -159,9 +159,9 @@ BlobResourceHandle::BlobResourceHandle(BlobData* blobData, const ResourceRequest
     , m_async { async }
 {
     if (m_async)
-        m_asyncStream = std::make_unique<AsyncFileStream>(*this);
+        m_asyncStream = makeUnique<AsyncFileStream>(*this);
     else
-        m_stream = std::make_unique<FileStream>();
+        m_stream = makeUnique<FileStream>();
 }
 
 BlobResourceHandle::~BlobResourceHandle() = default;

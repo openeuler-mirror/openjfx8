@@ -36,13 +36,7 @@ class JSAsyncFunction final : public JSFunction {
 public:
     typedef JSFunction Base;
 
-    const static unsigned StructureFlags = Base::StructureFlags;
-
-    template<typename CellType>
-    static IsoSubspace* subspaceFor(VM& vm)
-    {
-        return &vm.asyncFunctionSpace;
-    }
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     DECLARE_EXPORT_INFO;
 
@@ -67,5 +61,6 @@ private:
 
     static JSAsyncFunction* createImpl(VM&, FunctionExecutable*, JSScope*, Structure*);
 };
+static_assert(sizeof(JSAsyncFunction) == sizeof(JSFunction), "Some subclasses of JSFunction should be the same size to share IsoSubspace");
 
 } // namespace JSC

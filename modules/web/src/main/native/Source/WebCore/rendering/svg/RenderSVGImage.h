@@ -62,10 +62,10 @@ private:
 
     const AffineTransform& localToParentTransform() const override { return m_localTransform; }
 
+    FloatRect calculateObjectBoundingBox() const;
     FloatRect objectBoundingBox() const override { return m_objectBoundingBox; }
     FloatRect strokeBoundingBox() const override { return m_objectBoundingBox; }
     FloatRect repaintRectInLocalCoordinates() const override { return m_repaintBoundingBox; }
-    FloatRect repaintRectInLocalCoordinatesExcludingSVGShadow() const override { return m_repaintBoundingBoxExcludingShadow; }
 
     void addFocusRingRects(Vector<LayoutRect>&, const LayoutPoint& additionalOffset, const RenderLayerModelObject* paintContainer = 0) override;
 

@@ -29,6 +29,7 @@
 #include "CachedResourceLoader.h"
 #include "CachedScript.h"
 #include "ContentSecurityPolicy.h"
+#include "CrossOriginAccessControl.h"
 #include "Document.h"
 #include "Settings.h"
 
@@ -41,10 +42,10 @@ Ref<CachedScriptFetcher> CachedScriptFetcher::create(const String& charset)
 
 CachedResourceHandle<CachedScript> CachedScriptFetcher::requestModuleScript(Document& document, const URL& sourceURL, String&& integrity) const
 {
-    return requestScriptWithCache(document, sourceURL, String { }, WTFMove(integrity));
+    return requestScriptWithCache(document, sourceURL, String { }, WTFMove(integrity), { });
 }
 
-CachedResourceHandle<CachedScript> CachedScriptFetcher::requestScriptWithCache(Document& document, const URL& sourceURL, const String& crossOriginMode, String&& integrity) const
+CachedResourceHandle<CachedScript> CachedScriptFetcher::requestScriptWithCache(Document& document, const URL& sourceURL, const String& crossOriginMode, String&& integrity, Optional<ResourceLoadPriority> resourceLoadPriority) const
 {
     if (!document.settings().isScriptEnabled())
         return nullptr;
@@ -55,12 +56,12 @@ CachedResourceHandle<CachedScript> CachedScriptFetcher::requestScriptWithCache(D
     options.contentSecurityPolicyImposition = hasKnownNonce ? ContentSecurityPolicyImposition::SkipPolicyCheck : ContentSecurityPolicyImposition::DoPolicyCheck;
     options.sameOriginDataURLFlag = SameOriginDataURLFlag::Set;
     options.integrity = WTFMove(integrity);
+    options.referrerPolicy = m_referrerPolicy;
 
-    CachedResourceRequest request(ResourceRequest(sourceURL), options);
-    request.setAsPotentiallyCrossOrigin(crossOriginMode, document);
+    auto request = createPotentialAccessControlRequest(sourceURL, WTFMove(options), document, crossOriginMode);
     request.upgradeInsecureRequestIfNeeded(document);
-
     request.setCharset(m_charset);
+    request.setPriority(WTFMove(resourceLoadPriority));
     if (!m_initiatorName.isNull())
         request.setInitiator(m_initiatorName);
 

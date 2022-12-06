@@ -42,6 +42,7 @@
 #include "RenderLayer.h"
 #include "RenderView.h"
 #include "StyleResolver.h"
+#include <wtf/HexNumber.h>
 #include <wtf/IsoMallocInlines.h>
 
 namespace WebCore {
@@ -81,7 +82,7 @@ LayoutPoint RenderFragmentContainer::mapFragmentPointIntoFragmentedFlowCoordinat
     effectiveFixedPointDenominator.setRawValue(1);
 
     if (pointLogicalTop < 0) {
-        LayoutPoint pointInThread(0, fragmentedFlowLogicalTop);
+        LayoutPoint pointInThread(0_lu, fragmentedFlowLogicalTop);
         return isHorizontalWritingMode() ? pointInThread : pointInThread.transposedPoint();
     }
 
@@ -302,7 +303,7 @@ RenderBoxFragmentInfo* RenderFragmentContainer::setRenderBoxFragmentInfo(const R
 {
     ASSERT(isValid());
 
-    std::unique_ptr<RenderBoxFragmentInfo>& boxInfo = m_renderBoxFragmentInfo.add(box, std::make_unique<RenderBoxFragmentInfo>(logicalLeftInset, logicalRightInset, containingBlockChainIsInset)).iterator->value;
+    std::unique_ptr<RenderBoxFragmentInfo>& boxInfo = m_renderBoxFragmentInfo.add(box, makeUnique<RenderBoxFragmentInfo>(logicalLeftInset, logicalRightInset, containingBlockChainIsInset)).iterator->value;
     return boxInfo.get();
 }
 
@@ -559,5 +560,14 @@ CurrentRenderFragmentContainerMaintainer::~CurrentRenderFragmentContainerMaintai
     RenderFragmentedFlow* fragmentedFlow = m_fragment.fragmentedFlow();
     fragmentedFlow->setCurrentFragmentMaintainer(nullptr);
 }
+
+#ifndef NDEBUG
+
+TextStream& operator<<(TextStream& stream, const RenderFragmentContainer& container)
+{
+    return stream << &container;
+}
+
+#endif
 
 } // namespace WebCore

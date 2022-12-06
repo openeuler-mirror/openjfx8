@@ -36,7 +36,8 @@
 namespace WTF {
 
 template<typename DataType>
-class CrossThreadQueue {
+class CrossThreadQueue final {
+    WTF_MAKE_FAST_ALLOCATED;
     WTF_MAKE_NONCOPYABLE(CrossThreadQueue);
 public:
     CrossThreadQueue() = default;
@@ -44,16 +45,16 @@ public:
     void append(DataType&&);
 
     DataType waitForMessage();
-    std::optional<DataType> tryGetMessage();
+    Optional<DataType> tryGetMessage();
 
     void kill();
     bool isKilled() const;
     bool isEmpty() const;
 
 private:
+    Deque<DataType> m_queue;
     mutable Lock m_lock;
     Condition m_condition;
-    Deque<DataType> m_queue;
     bool m_killed { false };
 };
 
@@ -84,7 +85,7 @@ DataType CrossThreadQueue<DataType>::waitForMessage()
 }
 
 template<typename DataType>
-std::optional<DataType> CrossThreadQueue<DataType>::tryGetMessage()
+Optional<DataType> CrossThreadQueue<DataType>::tryGetMessage()
 {
     LockHolder lock(m_lock);
 

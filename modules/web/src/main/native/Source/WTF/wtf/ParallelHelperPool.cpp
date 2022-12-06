@@ -24,16 +24,14 @@
  */
 
 #include "config.h"
-#include "ParallelHelperPool.h"
+#include <wtf/ParallelHelperPool.h>
 
-#include "AutomaticThread.h"
-#include "DataLog.h"
-#include "StringPrintStream.h"
+#include <wtf/AutomaticThread.h>
 
 namespace WTF {
 
-ParallelHelperClient::ParallelHelperClient(RefPtr<ParallelHelperPool> pool)
-    : m_pool(pool)
+ParallelHelperClient::ParallelHelperClient(RefPtr<ParallelHelperPool>&& pool)
+    : m_pool(WTFMove(pool))
 {
     LockHolder locker(*m_pool->m_lock);
     RELEASE_ASSERT(!m_pool->m_isDying);
@@ -54,11 +52,11 @@ ParallelHelperClient::~ParallelHelperClient()
     }
 }
 
-void ParallelHelperClient::setTask(RefPtr<SharedTask<void ()>> task)
+void ParallelHelperClient::setTask(RefPtr<SharedTask<void ()>>&& task)
 {
     LockHolder locker(*m_pool->m_lock);
     RELEASE_ASSERT(!m_task);
-    m_task = task;
+    m_task = WTFMove(task);
     m_pool->didMakeWorkAvailable(locker);
 }
 
@@ -81,9 +79,9 @@ void ParallelHelperClient::doSomeHelping()
     runTask(task);
 }
 
-void ParallelHelperClient::runTaskInParallel(RefPtr<SharedTask<void ()>> task)
+void ParallelHelperClient::runTaskInParallel(RefPtr<SharedTask<void ()>>&& task)
 {
-    setTask(task);
+    setTask(WTFMove(task));
     doSomeHelping();
     finish();
 }
@@ -104,7 +102,7 @@ RefPtr<SharedTask<void ()>> ParallelHelperClient::claimTask(const AbstractLocker
     return m_task;
 }
 
-void ParallelHelperClient::runTask(RefPtr<SharedTask<void ()>> task)
+void ParallelHelperClient::runTask(const RefPtr<SharedTask<void ()>>& task)
 {
     RELEASE_ASSERT(m_numActive);
     RELEASE_ASSERT(task);
@@ -123,9 +121,10 @@ void ParallelHelperClient::runTask(RefPtr<SharedTask<void ()>> task)
     }
 }
 
-ParallelHelperPool::ParallelHelperPool()
+ParallelHelperPool::ParallelHelperPool(CString&& threadName)
     : m_lock(Box<Lock>::create())
     , m_workAvailableCondition(AutomaticThreadCondition::create())
+    , m_threadName(WTFMove(threadName))
 {
 }
 
@@ -168,7 +167,7 @@ void ParallelHelperPool::doSomeHelping()
     client->runTask(task);
 }
 
-class ParallelHelperPool::Thread : public AutomaticThread {
+class ParallelHelperPool::Thread final : public AutomaticThread {
 public:
     Thread(const AbstractLocker& locker, ParallelHelperPool& pool)
         : AutomaticThread(locker, pool.m_lock, pool.m_workAvailableCondition.copyRef())
@@ -176,8 +175,13 @@ public:
     {
     }
 
-protected:
-    PollResult poll(const AbstractLocker& locker) override
+    const char* name() const final
+    {
+        return m_pool.m_threadName.data();
+    }
+
+private:
+    PollResult poll(const AbstractLocker& locker) final
     {
         if (m_pool.m_isDying)
             return PollResult::Stop;
@@ -189,7 +193,7 @@ protected:
         return PollResult::Wait;
     }
 
-    WorkResult work() override
+    WorkResult work() final
     {
         m_client->runTask(m_task);
         m_client = nullptr;
@@ -197,7 +201,6 @@ protected:
         return WorkResult::Continue;
     }
 
-private:
     ParallelHelperPool& m_pool;
     ParallelHelperClient* m_client { nullptr };
     RefPtr<SharedTask<void ()>> m_task;

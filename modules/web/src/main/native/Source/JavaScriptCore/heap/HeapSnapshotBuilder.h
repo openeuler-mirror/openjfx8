@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,17 +25,21 @@
 
 #pragma once
 
+#include "HeapAnalyzer.h"
 #include <functional>
+#include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/Vector.h>
-#include <wtf/text/UniquedStringImpl.h>
-#include <wtf/text/WTFString.h>
 
 namespace JSC {
 
+class ConservativeRoots;
 class HeapProfiler;
 class HeapSnapshot;
 class JSCell;
+
+typedef unsigned NodeIdentifier;
 
 struct HeapSnapshotNode {
     HeapSnapshotNode(JSCell* cell, unsigned identifier)
@@ -44,7 +48,7 @@ struct HeapSnapshotNode {
     { }
 
     JSCell* cell;
-    unsigned identifier;
+    NodeIdentifier identifier;
 };
 
 enum class EdgeType : uint8_t {
@@ -82,12 +86,12 @@ struct HeapSnapshotEdge {
 
     union {
         JSCell *cell;
-        unsigned identifier;
+        NodeIdentifier identifier;
     } from;
 
     union {
         JSCell *cell;
-        unsigned identifier;
+        NodeIdentifier identifier;
     } to;
 
     union {
@@ -98,35 +102,49 @@ struct HeapSnapshotEdge {
     EdgeType type;
 };
 
-class JS_EXPORT_PRIVATE HeapSnapshotBuilder {
+class JS_EXPORT_PRIVATE HeapSnapshotBuilder final : public HeapAnalyzer {
     WTF_MAKE_FAST_ALLOCATED;
 public:
-    HeapSnapshotBuilder(HeapProfiler&);
-    ~HeapSnapshotBuilder();
+    enum SnapshotType { InspectorSnapshot, GCDebuggingSnapshot };
 
-    static unsigned nextAvailableObjectIdentifier;
-    static unsigned getNextObjectIdentifier();
+    HeapSnapshotBuilder(HeapProfiler&, SnapshotType = SnapshotType::InspectorSnapshot);
+    ~HeapSnapshotBuilder() final;
+
     static void resetNextAvailableObjectIdentifier();
 
     // Performs a garbage collection that builds a snapshot of all live cells.
     void buildSnapshot();
 
-    // A marked cell.
-    void appendNode(JSCell*);
+    // A root or marked cell.
+    void analyzeNode(JSCell*) final;
 
     // A reference from one cell to another.
-    void appendEdge(JSCell* from, JSCell* to);
-    void appendPropertyNameEdge(JSCell* from, JSCell* to, UniquedStringImpl* propertyName);
-    void appendVariableNameEdge(JSCell* from, JSCell* to, UniquedStringImpl* variableName);
-    void appendIndexEdge(JSCell* from, JSCell* to, uint32_t index);
+    void analyzeEdge(JSCell* from, JSCell* to, SlotVisitor::RootMarkReason) final;
+    void analyzePropertyNameEdge(JSCell* from, JSCell* to, UniquedStringImpl* propertyName) final;
+    void analyzeVariableNameEdge(JSCell* from, JSCell* to, UniquedStringImpl* variableName) final;
+    void analyzeIndexEdge(JSCell* from, JSCell* to, uint32_t index) final;
+
+    void setOpaqueRootReachabilityReasonForCell(JSCell*, const char*) final;
+    void setWrappedObjectForCell(JSCell*, void*) final;
+    void setLabelForCell(JSCell*, const String&) final;
 
     String json();
     String json(Function<bool (const HeapSnapshotNode&)> allowNodeCallback);
 
 private:
+    static NodeIdentifier nextAvailableObjectIdentifier;
+    static NodeIdentifier getNextObjectIdentifier();
+
     // Finalized snapshots are not modified during building. So searching them
     // for an existing node can be done concurrently without a lock.
-    bool hasExistingNodeForCell(JSCell*);
+    bool previousSnapshotHasNodeForCell(JSCell*, NodeIdentifier&);
+
+    String descriptionForCell(JSCell*) const;
+
+    struct RootData {
+        const char* reachabilityFromOpaqueRootReasons { nullptr };
+        SlotVisitor::RootMarkReason markReason { SlotVisitor::RootMarkReason::None };
+    };
 
     HeapProfiler& m_profiler;
 
@@ -135,6 +153,11 @@ private:
     std::unique_ptr<HeapSnapshot> m_snapshot;
     Lock m_buildingEdgeMutex;
     Vector<HeapSnapshotEdge> m_edges;
+    HashMap<JSCell*, RootData> m_rootData;
+    HashMap<JSCell*, void*> m_wrappedObjectPointers;
+    HashMap<JSCell*, String> m_cellLabels;
+    HashSet<JSCell*> m_appendedCells;
+    SnapshotType m_snapshotType;
 };
 
 } // namespace JSC

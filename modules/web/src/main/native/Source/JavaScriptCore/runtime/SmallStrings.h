@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2009, 2015-2016 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2008-2019 Apple Inc. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -51,10 +51,9 @@ namespace JSC {
 
 class VM;
 class JSString;
-class SmallStringsStorage;
 class SlotVisitor;
 
-static const unsigned maxSingleCharacterString = 0xFF;
+static constexpr unsigned maxSingleCharacterString = 0xFF;
 
 class SmallStrings {
     WTF_MAKE_NONCOPYABLE(SmallStrings);
@@ -72,7 +71,9 @@ public:
         return m_singleCharacterStrings[character];
     }
 
-    JS_EXPORT_PRIVATE WTF::StringImpl& singleCharacterStringRep(unsigned char character);
+    JS_EXPORT_PRIVATE Ref<StringImpl> singleCharacterStringRep(unsigned char character);
+
+    void setIsInitialized(bool isInitialized) { m_isInitialized = isInitialized; }
 
     JSString** singleCharacterStrings() { return &m_singleCharacterStrings[0]; }
 
@@ -115,6 +116,7 @@ public:
     JSString* objectStringStart() const { return m_objectStringStart; }
     JSString* nullObjectString() const { return m_nullObjectString; }
     JSString* undefinedObjectString() const { return m_undefinedObjectString; }
+    JSString* boundPrefixString() const { return m_boundPrefixString; }
 
     bool needsToBeVisited(CollectionScope scope) const
     {
@@ -124,23 +126,21 @@ public:
     }
 
 private:
-    static const unsigned singleCharacterStringCount = maxSingleCharacterString + 1;
-
-    void createEmptyString(VM*);
-    void createSingleCharacterString(VM*, unsigned char);
+    static constexpr unsigned singleCharacterStringCount = maxSingleCharacterString + 1;
 
     void initialize(VM*, JSString*&, const char* value);
 
-    JSString* m_emptyString;
-#define JSC_COMMON_STRINGS_ATTRIBUTE_DECLARATION(name) JSString* m_##name;
+    JSString* m_emptyString { nullptr };
+#define JSC_COMMON_STRINGS_ATTRIBUTE_DECLARATION(name) JSString* m_##name { nullptr };
     JSC_COMMON_STRINGS_EACH_NAME(JSC_COMMON_STRINGS_ATTRIBUTE_DECLARATION)
 #undef JSC_COMMON_STRINGS_ATTRIBUTE_DECLARATION
-    JSString* m_objectStringStart;
-    JSString* m_nullObjectString;
-    JSString* m_undefinedObjectString;
-    JSString* m_singleCharacterStrings[singleCharacterStringCount];
-    std::unique_ptr<SmallStringsStorage> m_storage;
-    bool m_needsToBeVisited;
+    JSString* m_objectStringStart { nullptr };
+    JSString* m_nullObjectString { nullptr };
+    JSString* m_undefinedObjectString { nullptr };
+    JSString* m_boundPrefixString { nullptr };
+    JSString* m_singleCharacterStrings[singleCharacterStringCount] { nullptr };
+    bool m_needsToBeVisited { true };
+    bool m_isInitialized { false };
 };
 
 } // namespace JSC

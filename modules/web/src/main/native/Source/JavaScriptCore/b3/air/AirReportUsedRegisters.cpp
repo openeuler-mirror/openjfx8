@@ -28,9 +28,9 @@
 
 #if ENABLE(B3_JIT)
 
-#include "AirArgInlines.h"
 #include "AirCode.h"
 #include "AirInstInlines.h"
+#include "AirPadInterference.h"
 #include "AirRegLiveness.h"
 #include "AirPhaseScope.h"
 
@@ -41,6 +41,8 @@ void reportUsedRegisters(Code& code)
     PhaseScope phaseScope(code, "reportUsedRegisters");
 
     static constexpr bool verbose = false;
+
+    padInterference(code);
 
     if (verbose)
         dataLog("Doing reportUsedRegisters on:\n", code);

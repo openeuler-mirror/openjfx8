@@ -40,7 +40,7 @@ class IsoSubspace;
 // Create a set of cells that are in an IsoSubspace. This allows concurrent O(1) set insertion and
 // removal. Each such set should be thought of as a 0.8% increase in object size for objects in that
 // IsoSubspace (it's like adding 1 bit every 16 bytes, or 1 bit every 128 bits).
-class IsoCellSet : public BasicRawSentinelNode<IsoCellSet> {
+class IsoCellSet : public PackedRawSentinelNode<IsoCellSet> {
 public:
     IsoCellSet(IsoSubspace& subspace);
     ~IsoCellSet();
@@ -51,7 +51,7 @@ public:
 
     bool contains(HeapCell* cell) const;
 
-    JS_EXPORT_PRIVATE RefPtr<SharedTask<MarkedBlock::Handle*()>> parallelNotEmptyMarkedBlockSource();
+    JS_EXPORT_PRIVATE Ref<SharedTask<MarkedBlock::Handle*()>> parallelNotEmptyMarkedBlockSource();
 
     // This will have to do a combined search over whatever Subspace::forEachMarkedCell uses and
     // our m_blocksWithBits.
@@ -59,7 +59,7 @@ public:
     void forEachMarkedCell(const Func&);
 
     template<typename Func>
-    RefPtr<SharedTask<void(SlotVisitor&)>> forEachMarkedCellInParallel(const Func&);
+    Ref<SharedTask<void(SlotVisitor&)>> forEachMarkedCellInParallel(const Func&);
 
     template<typename Func>
     void forEachLiveCell(const Func&);
@@ -67,11 +67,14 @@ public:
 private:
     friend class IsoSubspace;
 
-    Bitmap<MarkedBlock::atomsPerBlock>* addSlow(size_t blockIndex);
+    Bitmap<MarkedBlock::atomsPerBlock>* addSlow(unsigned blockIndex);
 
-    void didResizeBits(size_t newSize);
-    void didRemoveBlock(size_t blockIndex);
+    void didResizeBits(unsigned newSize);
+    void didRemoveBlock(unsigned blockIndex);
     void sweepToFreeList(MarkedBlock::Handle*);
+    void clearLowerTierCell(unsigned);
+
+    Bitmap<MarkedBlock::maxNumberOfLowerTierCells> m_lowerTierBits;
 
     IsoSubspace& m_subspace;
 

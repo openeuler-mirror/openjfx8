@@ -3,7 +3,7 @@ AC_PREREQ(2.63)
 
 m4_define([MAJOR_VERSION], [1])
 m4_define([MINOR_VERSION], [1])
-m4_define([MICRO_VERSION], [35])
+m4_define([MICRO_VERSION], [34])
 
 AC_INIT([libxslt], [MAJOR_VERSION.MINOR_VERSION.MICRO_VERSION])
 AC_CONFIG_SRCDIR([libxslt/xslt.c])
@@ -109,13 +109,6 @@ AC_ARG_WITH(html-subdir, AS_HELP_STRING([--with-html-subdir=path],
 
 AC_SUBST(HTML_DIR)
 
-AC_ARG_ENABLE(rebuild-docs,
-[  --enable-rebuild-docs[[=yes/no]]  rebuild some generated docs [[default=no]]])
-if test "$enable_rebuild_docs" = "yes" -a "$srcdir" != "."; then
-  AC_MSG_ERROR([cannot rebuild docs when builddir != srcdir])
-fi
-AM_CONDITIONAL([REBUILD_DOCS], [test "$enable_rebuild_docs" = "yes"])
-
 dnl
 dnl Check the environment
 dnl
@@ -153,18 +146,15 @@ dnl Look for pthread.h, needed for testThreads
 case $host in
   *-mingw*) ;;
   *)
-WITH_THREADS=0
 THREAD_LIBS=""
 AC_CHECK_HEADER(pthread.h,
     AC_CHECK_LIB(pthread, pthread_join,[
        AC_DEFINE([HAVE_LIBPTHREAD], [], [Define if pthread library is there (-lpthread)])
        AC_DEFINE([HAVE_PTHREAD_H], [], [Define if <pthread.h> is there])
-       WITH_THREADS="1"
        THREAD_LIBS="-lpthread"]))
   ;;
 esac
 
-AC_SUBST(WITH_THREADS)
 AC_SUBST(THREAD_LIBS)
 
 dnl
@@ -240,107 +230,76 @@ dnl
 PYTHON_VERSION=
 PYTHON_INCLUDES=
 PYTHON_SITE_PACKAGES=
-PYTHON_TESTS=
 pythondir=
-AC_ARG_WITH(python,
-[  --with-python[[=DIR]]     build Python bindings if found])
-AC_ARG_WITH(python_install_dir,
-[  --with-python-install-dir=DIR
-                          install Python bindings in DIR])
+AC_ARG_WITH(python, [  --with-python[=DIR]    Build Python bindings if found])
 if test "$with_python" != "no" ; then
     if test -x "$with_python/bin/python"
     then
         echo Found python in $with_python/bin/python
         PYTHON="$with_python/bin/python"
     else
-        if test -x "$with_python/python.exe"
-        then
-            echo Found python in $with_python/python.exe
-            PYTHON="$with_python/python.exe"
-        else
-            if test -x "$with_python"
+	if test -x "$with_python"
+	then
+	    echo Found python in $with_python
+	    PYTHON="$with_python"
+	else
+            if test -x "$PYTHON"
             then
-                echo Found python in $with_python
-                PYTHON="$with_python"
-            else
-                if test -x "$PYTHON"
-                then
-                    echo Found python in environment PYTHON=$PYTHON
-                    with_python=`$PYTHON -c "import sys; print(sys.exec_prefix)"`
-                else
-                    AC_PATH_PROG(PYTHON, python python2.6 python2.5 python2.4 python2.3 python2.2 python2.1 python2.0 python1.6 python1.5)
-		fi
+                echo Found python in environment PYTHON=$PYTHON
+                with_python=`$PYTHON -c "import sys; print sys.exec_prefix"`
+	    else
+	        AC_PATH_PROG(PYTHON, python python2.4 python2.3 python2.2 python2.1 python2.0 python1.6 python1.5)
 	    fi
 	fi
     fi
     if test "$PYTHON" != ""
     then
-        PYTHON_VERSION=`$PYTHON -c "from distutils import sysconfig; print(sysconfig.get_python_version())"`
-	PYTHON_INCLUDES=`$PYTHON -c "from distutils import sysconfig; print(sysconfig.get_python_inc())"`
-# does not work as it produce a /usr/lib/python path instead of/usr/lib64/python
-#
-#	PYTHON_SITE_PACKAGES=`$PYTHON -c "from distutils import sysconfig; print(sysconfig.get_python_lib())"`
+        echo "PYTHON is pointing at $PYTHON"
+        PYTHON_VERSION=`$PYTHON -c "import sys; print sys.version[[0:3]]"`
 	echo Found Python version $PYTHON_VERSION
-  LIBXML2_PYTHON=`$PYTHON -c "import sys
-try:
-    import libxml2
-    sys.stdout.write('1')
-except:
-    sys.stdout.write('0')
-"`
+	LIBXML2_PYTHON=`$PYTHON -c "try : import libxml2 ; print 1
+except: print 0"`
 	if test "$LIBXML2_PYTHON" = "1"
 	then
 	    echo Found libxml2-python module
 	else
 	    echo Warning: Missing libxml2-python
-  fi
+	fi
     fi
-    if test "$PYTHON_VERSION" != "" -a "$PYTHON_INCLUDES" = ""
+    if test "$PYTHON_VERSION" != ""
     then
-	if test -r $with_python/include/python$PYTHON_VERSION/Python.h
+	if test -r $with_python/include/python$PYTHON_VERSION/Python.h -a \
+	   -d $with_python/lib/python$PYTHON_VERSION/site-packages
 	then
 	    PYTHON_INCLUDES=$with_python/include/python$PYTHON_VERSION
+	    PYTHON_SITE_PACKAGES='$(libdir)/python$(PYTHON_VERSION)/site-packages'
 	else
 	    if test -r $prefix/include/python$PYTHON_VERSION/Python.h
 	    then
 	        PYTHON_INCLUDES=$prefix/include/python$PYTHON_VERSION
+		PYTHON_SITE_PACKAGES='$(libdir)/python$(PYTHON_VERSION)/site-packages'
 	    else
 		if test -r /usr/include/python$PYTHON_VERSION/Python.h
 		then
 		    PYTHON_INCLUDES=/usr/include/python$PYTHON_VERSION
+		    PYTHON_SITE_PACKAGES='$(libdir)/python$(PYTHON_VERSION)/site-packages'
 		else
-	            if test -r $with_python/include/Python.h
-	            then
-	                PYTHON_INCLUDES=$with_python/include
-	            else
-		        echo could not find python$PYTHON_VERSION/Python.h or $with_python/include/Python.h
-		    fi
+		    echo could not find python$PYTHON_VERSION/Python.h
 		fi
 	    fi
-	fi
-    fi
-    if test "$with_python_install_dir" != ""
-    then
-	PYTHON_SITE_PACKAGES="$with_python_install_dir"
-    fi
-    if test "$PYTHON_VERSION" != "" -a "$PYTHON_SITE_PACKAGES" = ""
-    then
-	if test -d $libdir/python$PYTHON_VERSION/site-packages
-	then
-	    PYTHON_SITE_PACKAGES=$libdir/python$PYTHON_VERSION/site-packages
-	else
-	    if test -d $with_python/lib/site-packages
+	    if test ! -d "$PYTHON_SITE_PACKAGES"
 	    then
-		PYTHON_SITE_PACKAGES=$with_python/lib/site-packages
-	    else
-		PYTHON_SITE_PACKAGES=$($PYTHON -c 'from distutils import sysconfig; print(sysconfig.get_python_lib(True,False,"${exec_prefix}"))')
+		    PYTHON_SITE_PACKAGES=`$PYTHON -c "from distutils import sysconfig; print sysconfig.get_python_lib()"`
 	    fi
 	fi
+        PYTHON_LIBS=`python$PYTHON_VERSION-config --libs`
     fi
-    pythondir='$(PYTHON_SITE_PACKAGES)'
-    PYTHON_LIBS=`python$PYTHON_VERSION-config --ldflags`
-else
-    PYTHON=
+    if test "$with_python" != ""
+    then
+        pythondir='$(PYTHON_SITE_PACKAGES)'
+    else
+        pythondir='$(libdir)/python$(PYTHON_VERSION)/site-packages'
+    fi
 fi
 AM_CONDITIONAL(WITH_PYTHON, test "$PYTHON_INCLUDES" != "")
 if test "$PYTHON_INCLUDES" != ""
@@ -515,7 +474,7 @@ if test "${GCC}" != "yes" ; then
                ;;
     esac
 else
-    CFLAGS="${CFLAGS} -Wall -Wextra -Wformat=2 -Wmissing-format-attribute -Wshadow"
+    CFLAGS="${CFLAGS} -Wall -Wextra -Wformat=2 -Wmissing-format-attribute"
     case "${host}" in
           alpha*-*-linux* )
 	       CFLAGS="${CFLAGS} -mieee"
@@ -532,7 +491,6 @@ dnl
 
 build_shared_libs="yes"
 build_static_libs="yes"
-xml_config_dynamic=
 
 if test "$enable_shared" = "no"; then
     build_shared_libs="no"
@@ -557,11 +515,10 @@ if test "x$LIBXML_SRC" != "x"; then
         XML_CONFIG="${LIBXML_SRC}/xml2-config"
         LIBXML_CFLAGS="-I${LIBXML_SRC}/include"
         if test "$build_static_libs" = "no"; then
-            if $XML_CONFIG --help | grep -q '\--dynamic'; then
-                xml_config_dynamic=--dynamic
-            fi
+            LIBXML_LIBS="-L${LIBXML_SRC} `$XML_CONFIG --libs --dynamic`"
+        else
+            LIBXML_LIBS="-L${LIBXML_SRC} `$XML_CONFIG --libs`"
         fi
-        LIBXML_LIBS="-L${LIBXML_SRC} `$XML_CONFIG --libs $xml_config_dynamic`"
         WITH_MODULES="`$XML_CONFIG --modules`"
         cd $CWD
     else
@@ -589,7 +546,7 @@ dnl make sure xml2-config is executable,
 dnl test version and init our variables
 dnl
 
-if test "x$LIBXML_LIBS" = "x" && ${XML_CONFIG} --libs > /dev/null 2>&1
+if test "x$LIBXML_LIBS" = "x" && ${XML_CONFIG} --libs print > /dev/null 2>&1
 then
     AC_MSG_CHECKING(for libxml libraries >= $LIBXML_REQUIRED_VERSION)
     XMLVERS=`$XML_CONFIG --version`
@@ -600,18 +557,17 @@ then
     fi
 
     if test "$build_static_libs" = "no"; then
-        if $XML_CONFIG --help | grep -q '\--dynamic'; then
-            xml_config_dynamic=--dynamic
-        fi
+        LIBXML_LIBS="`$XML_CONFIG --libs --dynamic`"
+    else
+        LIBXML_LIBS="`$XML_CONFIG --libs`"
     fi
-    LIBXML_LIBS="`$XML_CONFIG --libs $xml_config_dynamic`"
-    LIBXML_CFLAGS="`$XML_CONFIG --cflags`"
-    WITH_MODULES="`$XML_CONFIG --modules`"
+	LIBXML_CFLAGS="`$XML_CONFIG --cflags`"
+        WITH_MODULES="`$XML_CONFIG --modules`"
 fi
 
 if test "x$LIBXML_LIBS" = "x"
 then
-	AC_MSG_ERROR([Could not find libxml2 anywhere.])
+	AC_MSG_ERROR([Could not find libxml2 anywhere, check ftp://xmlsoft.org/.])
 fi
 
 
@@ -694,9 +650,11 @@ AC_SUBST(XSLT_PRIVATE_LIBS)
 
 EXSLT_LIBDIR='-L${libdir}'
 EXSLT_INCLUDEDIR='-I${includedir}'
+EXSLT_LIBS="-lexslt $XSLT_LIBS"
 EXSLT_PRIVATE_LIBS="$XSLT_PRIVATE_LIBS $LIBGCRYPT_LIBS"
 AC_SUBST(EXSLT_LIBDIR)
 AC_SUBST(EXSLT_INCLUDEDIR)
+AC_SUBST(EXSLT_LIBS)
 AC_SUBST(EXSLT_PRIVATE_LIBS)
 
 AC_SUBST(EXTRA_LIBS)
@@ -714,7 +672,6 @@ AC_CONFIG_FILES([
 Makefile
 libxslt.pc
 libexslt.pc
-libxslt-config.cmake
 libxslt/Makefile
 libxslt/xsltconfig.h
 libxslt/xsltwin32config.h
@@ -753,8 +710,6 @@ tests/exslt/crypto/Makefile
 tests/plugins/Makefile
 tests/fuzz/Makefile
 doc/Makefile
-doc/devhelp/Makefile
-doc/EXSLT/devhelp/Makefile
 xslt-config
 libxslt.spec
 ])

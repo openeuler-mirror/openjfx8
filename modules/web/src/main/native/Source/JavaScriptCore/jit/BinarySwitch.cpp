@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013, 2015 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,23 +28,22 @@
 
 #if ENABLE(JIT)
 
-#include "JSCInlines.h"
 #include <wtf/ListDump.h>
 
 namespace JSC {
 
 namespace BinarySwitchInternal {
-static const bool verbose = false;
+static constexpr bool verbose = false;
 }
 
 static unsigned globalCounter; // We use a different seed every time we are invoked.
 
 BinarySwitch::BinarySwitch(GPRReg value, const Vector<int64_t>& cases, Type type)
-    : m_value(value)
+    : m_type(type)
+    , m_value(value)
     , m_weakRandom(globalCounter++)
     , m_index(0)
     , m_caseIndex(UINT_MAX)
-    , m_type(type)
 {
     if (cases.isEmpty())
         return;
@@ -60,8 +59,10 @@ BinarySwitch::BinarySwitch(GPRReg value, const Vector<int64_t>& cases, Type type
     if (BinarySwitchInternal::verbose)
         dataLog("Sorted cases: ", listDump(m_cases), "\n");
 
+#if ASSERT_ENABLED
     for (unsigned i = 1; i < m_cases.size(); ++i)
-        RELEASE_ASSERT(m_cases[i - 1] < m_cases[i]);
+        ASSERT(m_cases[i - 1] < m_cases[i], i, m_cases.size(), m_cases[i].value, m_cases[i].index);
+#endif
 
     build(0, false, m_cases.size());
 }

@@ -31,21 +31,37 @@
 #if ENABLE(ENCRYPTED_MEDIA)
 
 #include "CDMFactory.h"
-#include "CDMInstance.h"
+#include "CDMInstanceSession.h"
 #include "CDMPrivate.h"
+#include "CDMProxy.h"
 #include "SharedBuffer.h"
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
 
+namespace ClearKey {
+
+// ClearKey CENC SystemID.
+// https://www.w3.org/TR/eme-initdata-cenc/#common-system
+const uint8_t cencSystemId[] = { 0x10, 0x77, 0xef, 0xec, 0xc0, 0xb2, 0x4d, 0x02, 0xac, 0xe3, 0x3c, 0x1e, 0x52, 0xe2, 0xfb, 0x4b };
+const unsigned cencSystemIdSize = sizeof(cencSystemId);
+enum {
+    AES128CTRBlockSizeInBytes = 16,
+    KeyIDSizeInBytes = 16,
+    IVSizeInBytes = 16,
+};
+
+} // namespace ClearKey
+
 class CDMFactoryClearKey final : public CDMFactory {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     static CDMFactoryClearKey& singleton();
 
     virtual ~CDMFactoryClearKey();
 
-    std::unique_ptr<CDMPrivate> createCDM(const String&) override;
-    bool supportsKeySystem(const String&) override;
+    std::unique_ptr<CDMPrivate> createCDM(const String&) final;
+    bool supportsKeySystem(const String&) final;
 
 private:
     friend class NeverDestroyed<CDMFactoryClearKey>;
@@ -53,56 +69,57 @@ private:
 };
 
 class CDMPrivateClearKey final : public CDMPrivate {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     CDMPrivateClearKey();
     virtual ~CDMPrivateClearKey();
 
-    bool supportsInitDataType(const AtomicString&) const override;
-    bool supportsConfiguration(const CDMKeySystemConfiguration&) const override;
-    bool supportsConfigurationWithRestrictions(const CDMKeySystemConfiguration&, const CDMRestrictions&) const override;
-    bool supportsSessionTypeWithConfiguration(CDMSessionType&, const CDMKeySystemConfiguration&) const override;
-    bool supportsRobustness(const String&) const override;
-    CDMRequirement distinctiveIdentifiersRequirement(const CDMKeySystemConfiguration&, const CDMRestrictions&) const override;
-    CDMRequirement persistentStateRequirement(const CDMKeySystemConfiguration&, const CDMRestrictions&) const override;
-    bool distinctiveIdentifiersAreUniquePerOriginAndClearable(const CDMKeySystemConfiguration&) const override;
-    RefPtr<CDMInstance> createInstance() override;
-    void loadAndInitialize() override;
-    bool supportsServerCertificates() const override;
-    bool supportsSessions() const override;
-    bool supportsInitData(const AtomicString&, const SharedBuffer&) const override;
-    RefPtr<SharedBuffer> sanitizeResponse(const SharedBuffer&) const override;
-    std::optional<String> sanitizeSessionId(const String&) const override;
+    Vector<AtomString> supportedInitDataTypes() const final;
+    Vector<AtomString> supportedRobustnesses() const final;
+    bool supportsConfiguration(const CDMKeySystemConfiguration&) const final;
+    bool supportsConfigurationWithRestrictions(const CDMKeySystemConfiguration&, const CDMRestrictions&) const final;
+    bool supportsSessionTypeWithConfiguration(const CDMSessionType&, const CDMKeySystemConfiguration&) const final;
+    CDMRequirement distinctiveIdentifiersRequirement(const CDMKeySystemConfiguration&, const CDMRestrictions&) const final;
+    CDMRequirement persistentStateRequirement(const CDMKeySystemConfiguration&, const CDMRestrictions&) const final;
+    bool distinctiveIdentifiersAreUniquePerOriginAndClearable(const CDMKeySystemConfiguration&) const final;
+    RefPtr<CDMInstance> createInstance() final;
+    void loadAndInitialize() final;
+    bool supportsServerCertificates() const final;
+    bool supportsSessions() const final;
+    bool supportsInitData(const AtomString&, const SharedBuffer&) const final;
+    RefPtr<SharedBuffer> sanitizeResponse(const SharedBuffer&) const final;
+    Optional<String> sanitizeSessionId(const String&) const final;
 };
 
-class CDMInstanceClearKey final : public CDMInstance, public CanMakeWeakPtr<CDMInstanceClearKey> {
+class CDMInstanceClearKey final : public CDMInstanceProxy {
 public:
     CDMInstanceClearKey();
     virtual ~CDMInstanceClearKey();
 
+    // CDMInstance
     ImplementationType implementationType() const final { return ImplementationType::ClearKey; }
-
-    SuccessValue initializeWithConfiguration(const CDMKeySystemConfiguration&) override;
-    SuccessValue setDistinctiveIdentifiersAllowed(bool) override;
-    SuccessValue setPersistentStateAllowed(bool) override;
-    SuccessValue setServerCertificate(Ref<SharedBuffer>&&) override;
-    SuccessValue setStorageDirectory(const String&) override;
-
-    void requestLicense(LicenseType, const AtomicString& initDataType, Ref<SharedBuffer>&& initData, LicenseCallback) override;
-    void updateLicense(const String&, LicenseType, const SharedBuffer&, LicenseUpdateCallback) override;
-    void loadSession(LicenseType, const String&, const String&, LoadSessionCallback) override;
-    void closeSession(const String&, CloseSessionCallback) override;
-    void removeSessionData(const String&, LicenseType, RemoveSessionDataCallback) override;
-    void storeRecordOfKeyUsage(const String&) override;
-
+    void initializeWithConfiguration(const CDMKeySystemConfiguration&, AllowDistinctiveIdentifiers, AllowPersistentState, SuccessCallback&&) final;
+    void setServerCertificate(Ref<SharedBuffer>&&, SuccessCallback&&) final;
+    void setStorageDirectory(const String&) final;
     const String& keySystem() const final;
+    RefPtr<CDMInstanceSession> createSession() final;
+};
 
-    struct Key {
-        KeyStatus status;
-        RefPtr<SharedBuffer> keyIDData;
-        RefPtr<SharedBuffer> keyValueData;
-    };
+class CDMInstanceSessionClearKey final : public CDMInstanceSessionProxy {
+public:
+    CDMInstanceSessionClearKey(CDMInstanceClearKey& parent)
+        : CDMInstanceSessionProxy(parent) { }
+    void requestLicense(LicenseType, const AtomString& initDataType, Ref<SharedBuffer>&& initData, LicenseCallback&&) final;
+    void updateLicense(const String&, LicenseType, Ref<SharedBuffer>&&, LicenseUpdateCallback&&) final;
+    void loadSession(LicenseType, const String&, const String&, LoadSessionCallback&&) final;
+    void closeSession(const String&, CloseSessionCallback&&) final;
+    void removeSessionData(const String&, LicenseType, RemoveSessionDataCallback&&) final;
+    void storeRecordOfKeyUsage(const String&) final;
+private:
+    CDMInstanceClearKey& parentInstance() const;
 
-    const Vector<Key> keys() const;
+    String m_sessionID;
+    KeyStore m_keyStore;
 };
 
 } // namespace WebCore

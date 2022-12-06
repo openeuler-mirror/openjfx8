@@ -27,6 +27,7 @@
 #include "JSPerformanceObserver.h"
 
 #include "PerformanceObserverCallback.h"
+#include <JavaScriptCore/JSCInlines.h>
 
 namespace WebCore {
 
@@ -35,9 +36,12 @@ void JSPerformanceObserver::visitAdditionalChildren(JSC::SlotVisitor& visitor)
     wrapped().callback().visitJSFunction(visitor);
 }
 
-bool JSPerformanceObserverOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, SlotVisitor&)
+bool JSPerformanceObserverOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::SlotVisitor&, const char** reason)
 {
-    return jsCast<JSPerformanceObserver*>(handle.slot()->asCell())->wrapped().isRegistered();
+    if (UNLIKELY(reason))
+        *reason = "Registered PerformanceObserver callback";
+
+    return JSC::jsCast<JSPerformanceObserver*>(handle.slot()->asCell())->wrapped().isRegistered();
 }
 
 }

@@ -69,6 +69,9 @@ public:
     const_iterator begin() const;
     const_iterator end() const;
 
+    iterator random() { return m_impl.random(); }
+    const_iterator random() const { return m_impl.random(); }
+
     ValuesIteratorRange values();
     const ValuesConstIteratorRange values() const;
 
@@ -106,6 +109,8 @@ public:
     template<typename V = ValueType> typename std::enable_if<IsSmartPtr<V>::value, bool>::type contains(typename GetPtrHelper<V>::PtrType) const;
     template<typename V = ValueType> typename std::enable_if<IsSmartPtr<V>::value, unsigned>::type count(typename GetPtrHelper<V>::PtrType) const;
     template<typename V = ValueType> typename std::enable_if<IsSmartPtr<V>::value, bool>::type remove(typename GetPtrHelper<V>::PtrType);
+
+    static bool isValidValue(const ValueType& value) { return ImplType::isValidValue(value); }
 
 private:
     ImplType m_impl;

@@ -23,8 +23,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef WTF_Box_h
-#define WTF_Box_h
+#pragma once
 
 #include <wtf/RefPtr.h>
 #include <wtf/ThreadSafeRefCounted.h>
@@ -35,6 +34,7 @@ namespace WTF {
 // count to it.
 template<typename T>
 class Box {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     Box() = default;
     Box(Box&&) = default;
@@ -79,6 +79,3 @@ private:
 } // namespace WTF
 
 using WTF::Box;
-
-#endif // WTF_Box_h
-

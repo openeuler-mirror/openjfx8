@@ -30,14 +30,14 @@
 #include "ApplicationCacheGroup.h"
 #include "ApplicationCacheHost.h"
 #include "ApplicationCacheResource.h"
-#include "FileSystem.h"
 #include "SQLiteDatabaseTracker.h"
 #include "SQLiteStatement.h"
 #include "SQLiteTransaction.h"
 #include "SecurityOrigin.h"
 #include "SecurityOriginData.h"
-#include "URL.h"
+#include <wtf/FileSystem.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/URL.h>
 #include <wtf/UUID.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/StringBuilder.h>
@@ -84,15 +84,10 @@ private:
 
 static unsigned urlHostHash(const URL& url)
 {
-    unsigned hostStart = url.hostStart();
-    unsigned hostEnd = url.hostEnd();
-
-    const String& urlString = url.string();
-
-    if (urlString.is8Bit())
-        return AlreadyHashed::avoidDeletedValue(StringHasher::computeHashAndMaskTop8Bits(urlString.characters8() + hostStart, hostEnd - hostStart));
-
-    return AlreadyHashed::avoidDeletedValue(StringHasher::computeHashAndMaskTop8Bits(urlString.characters16() + hostStart, hostEnd - hostStart));
+    StringView host = url.host();
+    if (host.is8Bit())
+        return AlreadyHashed::avoidDeletedValue(StringHasher::computeHashAndMaskTop8Bits(host.characters8(), host.length()));
+    return AlreadyHashed::avoidDeletedValue(StringHasher::computeHashAndMaskTop8Bits(host.characters16(), host.length()));
 }
 
 ApplicationCacheGroup* ApplicationCacheStorage::loadCacheGroup(const URL& manifestURL)
@@ -107,7 +102,7 @@ ApplicationCacheGroup* ApplicationCacheStorage::loadCacheGroup(const URL& manife
     if (statement.prepare() != SQLITE_OK)
         return nullptr;
 
-    statement.bindText(1, manifestURL);
+    statement.bindText(1, manifestURL.string());
 
     int result = statement.step();
     if (result == SQLITE_DONE)
@@ -134,7 +129,7 @@ ApplicationCacheGroup* ApplicationCacheStorage::findOrCreateCacheGroup(const URL
 {
     ASSERT(!manifestURL.hasFragmentIdentifier());
 
-    auto result = m_cachesInMemory.add(manifestURL, nullptr);
+    auto result = m_cachesInMemory.add(manifestURL.string(), nullptr);
     if (!result.isNewEntry) {
         ASSERT(result.iterator->value);
         return result.iterator->value;
@@ -155,7 +150,7 @@ ApplicationCacheGroup* ApplicationCacheStorage::findOrCreateCacheGroup(const URL
 
 ApplicationCacheGroup* ApplicationCacheStorage::findInMemoryCacheGroup(const URL& manifestURL) const
 {
-    return m_cachesInMemory.get(manifestURL);
+    return m_cachesInMemory.get(manifestURL.string());
 }
 
 void ApplicationCacheStorage::loadManifestHostHashes()
@@ -202,7 +197,7 @@ ApplicationCacheGroup* ApplicationCacheStorage::cacheGroupForURL(const URL& url)
             continue;
 
         if (ApplicationCache* cache = group->newestCache()) {
-            ApplicationCacheResource* resource = cache->resourceForURL(url);
+            ApplicationCacheResource* resource = cache->resourceForURL(url.string());
             if (!resource)
                 continue;
             if (resource->type() & ApplicationCacheResource::Foreign)
@@ -223,9 +218,9 @@ ApplicationCacheGroup* ApplicationCacheStorage::cacheGroupForURL(const URL& url)
 
     int result;
     while ((result = statement.step()) == SQLITE_ROW) {
-        URL manifestURL = URL(ParsedURLString, statement.getColumnText(1));
+        URL manifestURL = URL({ }, statement.getColumnText(1));
 
-        if (m_cachesInMemory.contains(manifestURL))
+        if (m_cachesInMemory.contains(manifestURL.string()))
             continue;
 
         if (!protocolHostAndPortAreEqual(url, manifestURL))
@@ -238,7 +233,7 @@ ApplicationCacheGroup* ApplicationCacheStorage::cacheGroupForURL(const URL& url)
         if (!cache)
             continue;
 
-        auto* resource = cache->resourceForURL(url);
+        auto* resource = cache->resourceForURL(url.string());
         if (!resource)
             continue;
         if (resource->type() & ApplicationCacheResource::Foreign)
@@ -247,7 +242,7 @@ ApplicationCacheGroup* ApplicationCacheStorage::cacheGroupForURL(const URL& url)
         auto& group = *new ApplicationCacheGroup(*this, manifestURL);
         group.setStorageID(static_cast<unsigned>(statement.getColumnInt64(0)));
         group.setNewestCache(cache.releaseNonNull());
-        m_cachesInMemory.set(group.manifestURL(), &group);
+        m_cachesInMemory.set(group.manifestURL().string(), &group);
 
         return &group;
     }
@@ -270,11 +265,11 @@ ApplicationCacheGroup* ApplicationCacheStorage::fallbackCacheGroupForURL(const U
 
         if (ApplicationCache* cache = group->newestCache()) {
             URL fallbackURL;
-            if (cache->isURLInOnlineWhitelist(url))
+            if (cache->isURLInOnlineAllowlist(url))
                 continue;
             if (!cache->urlMatchesFallbackNamespace(url, &fallbackURL))
                 continue;
-            if (cache->resourceForURL(fallbackURL)->type() & ApplicationCacheResource::Foreign)
+            if (cache->resourceForURL(fallbackURL.string())->type() & ApplicationCacheResource::Foreign)
                 continue;
             return group;
         }
@@ -290,9 +285,9 @@ ApplicationCacheGroup* ApplicationCacheStorage::fallbackCacheGroupForURL(const U
 
     int result;
     while ((result = statement.step()) == SQLITE_ROW) {
-        URL manifestURL = URL(ParsedURLString, statement.getColumnText(1));
+        URL manifestURL = URL({ }, statement.getColumnText(1));
 
-        if (m_cachesInMemory.contains(manifestURL))
+        if (m_cachesInMemory.contains(manifestURL.string()))
             continue;
 
         // Fallback namespaces always have the same origin as manifest URL, so we can avoid loading caches that cannot match.
@@ -305,18 +300,18 @@ ApplicationCacheGroup* ApplicationCacheStorage::fallbackCacheGroupForURL(const U
         auto cache = loadCache(newestCacheID);
 
         URL fallbackURL;
-        if (cache->isURLInOnlineWhitelist(url))
+        if (cache->isURLInOnlineAllowlist(url))
             continue;
         if (!cache->urlMatchesFallbackNamespace(url, &fallbackURL))
             continue;
-        if (cache->resourceForURL(fallbackURL)->type() & ApplicationCacheResource::Foreign)
+        if (cache->resourceForURL(fallbackURL.string())->type() & ApplicationCacheResource::Foreign)
             continue;
 
         auto& group = *new ApplicationCacheGroup(*this, manifestURL);
         group.setStorageID(static_cast<unsigned>(statement.getColumnInt64(0)));
         group.setNewestCache(cache.releaseNonNull());
 
-        m_cachesInMemory.set(group.manifestURL(), &group);
+        m_cachesInMemory.set(group.manifestURL().string(), &group);
 
         return &group;
     }
@@ -331,13 +326,13 @@ void ApplicationCacheStorage::cacheGroupDestroyed(ApplicationCacheGroup& group)
 {
     if (group.isObsolete()) {
         ASSERT(!group.storageID());
-        ASSERT(m_cachesInMemory.get(group.manifestURL()) != &group);
+        ASSERT(m_cachesInMemory.get(group.manifestURL().string()) != &group);
         return;
     }
 
-    ASSERT(m_cachesInMemory.get(group.manifestURL()) == &group);
+    ASSERT(m_cachesInMemory.get(group.manifestURL().string()) == &group);
 
-    m_cachesInMemory.remove(group.manifestURL());
+    m_cachesInMemory.remove(group.manifestURL().string());
 
     // If the cache group is half-created, we don't want it in the saved set (as it is not stored in database).
     if (!group.storageID())
@@ -346,13 +341,13 @@ void ApplicationCacheStorage::cacheGroupDestroyed(ApplicationCacheGroup& group)
 
 void ApplicationCacheStorage::cacheGroupMadeObsolete(ApplicationCacheGroup& group)
 {
-    ASSERT(m_cachesInMemory.get(group.manifestURL()) == &group);
+    ASSERT(m_cachesInMemory.get(group.manifestURL().string()) == &group);
     ASSERT(m_cacheHostSet.contains(urlHostHash(group.manifestURL())));
 
     if (auto* newestCache = group.newestCache())
         remove(newestCache);
 
-    m_cachesInMemory.remove(group.manifestURL());
+    m_cachesInMemory.remove(group.manifestURL().string());
     m_cacheHostSet.remove(urlHostHash(group.manifestURL()));
 }
 
@@ -621,7 +616,7 @@ void ApplicationCacheStorage::openDatabase(bool createIfDoesNotExist)
     executeSQLCommand("CREATE TABLE IF NOT EXISTS DeletedCacheResources (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT)");
     executeSQLCommand("CREATE TABLE IF NOT EXISTS Origins (origin TEXT UNIQUE ON CONFLICT IGNORE, quota INTEGER NOT NULL ON CONFLICT FAIL)");
 
-    // When a cache is deleted, all its entries and its whitelist should be deleted.
+    // When a cache is deleted, all its entries and its allowlist should be deleted.
     executeSQLCommand("CREATE TRIGGER IF NOT EXISTS CacheDeleted AFTER DELETE ON Caches"
                       " FOR EACH ROW BEGIN"
                       "  DELETE FROM CacheEntries WHERE cache = OLD.id;"
@@ -673,14 +668,14 @@ bool ApplicationCacheStorage::store(ApplicationCacheGroup* group, GroupStorageID
     // a cache group with an identical manifest URL and associated cache entries. We want to remove
     // this cache group and its associated cache entries so that we can create it again (below) as
     // a way to repair it.
-    deleteCacheGroupRecord(group->manifestURL());
+    deleteCacheGroupRecord(group->manifestURL().string());
 
     SQLiteStatement statement(m_database, "INSERT INTO CacheGroups (manifestHostHash, manifestURL, origin) VALUES (?, ?, ?)");
     if (statement.prepare() != SQLITE_OK)
         return false;
 
     statement.bindInt64(1, urlHostHash(group->manifestURL()));
-    statement.bindText(2, group->manifestURL());
+    statement.bindText(2, group->manifestURL().string());
     statement.bindText(3, group->origin().data().databaseIdentifier());
 
     if (!executeStatement(statement))
@@ -726,14 +721,14 @@ bool ApplicationCacheStorage::store(ApplicationCache* cache, ResourceStorageIDJo
         storageIDJournal->add(resource.get(), oldStorageID);
     }
 
-    // Store the online whitelist
-    const Vector<URL>& onlineWhitelist = cache->onlineWhitelist();
+    // Store the online allowlist
+    const Vector<URL>& onlineAllowlist = cache->onlineAllowlist();
     {
-        for (auto& whitelistURL : onlineWhitelist) {
+        for (auto& allowlistURL : onlineAllowlist) {
             SQLiteStatement statement(m_database, "INSERT INTO CacheWhitelistURLs (url, cache) VALUES (?, ?)");
             statement.prepare();
 
-            statement.bindText(1, whitelistURL);
+            statement.bindText(1, allowlistURL.string());
             statement.bindInt64(2, cacheStorageID);
 
             if (!executeStatement(statement))
@@ -741,7 +736,7 @@ bool ApplicationCacheStorage::store(ApplicationCache* cache, ResourceStorageIDJo
         }
     }
 
-    // Store online whitelist wildcard flag.
+    // Store online allowlist wildcard flag.
     {
         SQLiteStatement statement(m_database, "INSERT INTO CacheAllowsAllNetworkRequests (wildcard, cache) VALUES (?, ?)");
         statement.prepare();
@@ -760,8 +755,8 @@ bool ApplicationCacheStorage::store(ApplicationCache* cache, ResourceStorageIDJo
             SQLiteStatement statement(m_database, "INSERT INTO FallbackURLs (namespace, fallbackURL, cache) VALUES (?, ?, ?)");
             statement.prepare();
 
-            statement.bindText(1, fallbackURL.first);
-            statement.bindText(2, fallbackURL.second);
+            statement.bindText(1, fallbackURL.first.string());
+            statement.bindText(2, fallbackURL.second.string());
             statement.bindInt64(3, cacheStorageID);
 
             if (!executeStatement(statement))
@@ -855,9 +850,9 @@ bool ApplicationCacheStorage::store(ApplicationCacheResource* resource, unsigned
     // The same ApplicationCacheResource are used in ApplicationCacheResource::size()
     // to calculate the approximate size of an ApplicationCacheResource object. If
     // you change the code below, please also change ApplicationCacheResource::size().
-    resourceStatement.bindText(1, resource->url());
+    resourceStatement.bindText(1, resource->url().string());
     resourceStatement.bindInt64(2, resource->response().httpStatusCode());
-    resourceStatement.bindText(3, resource->response().url());
+    resourceStatement.bindText(3, resource->response().url().string());
     resourceStatement.bindText(4, headers);
     resourceStatement.bindInt64(5, dataId);
     resourceStatement.bindText(6, resource->response().mimeType());
@@ -1064,9 +1059,9 @@ static inline void parseHeader(const CharacterType* header, unsigned headerLengt
     ASSERT(find(header, headerLength, ':') != notFound);
     unsigned colonPosition = find(header, headerLength, ':');
 
-    // Save memory by putting the header names into atomic strings so each is stored only once,
-    // even though the setHTTPHeaderField function does not require an atomic string.
-    AtomicString headerName { header, colonPosition };
+    // Save memory by putting the header names into atom strings so each is stored only once,
+    // even though the setHTTPHeaderField function does not require an atom string.
+    AtomString headerName { header, colonPosition };
     String headerValue { header + colonPosition + 1, headerLength - colonPosition - 1 };
 
     response.setHTTPHeaderField(headerName, headerValue);
@@ -1114,7 +1109,7 @@ RefPtr<ApplicationCache> ApplicationCacheStorage::loadCache(unsigned storageID)
 
     int result;
     while ((result = cacheStatement.step()) == SQLITE_ROW) {
-        URL url(ParsedURLString, cacheStatement.getColumnText(0));
+        URL url({ }, cacheStatement.getColumnText(0));
 
         int httpStatusCode = cacheStatement.getColumnInt(1);
 
@@ -1159,35 +1154,35 @@ RefPtr<ApplicationCache> ApplicationCacheStorage::loadCache(unsigned storageID)
         return nullptr;
     }
 
-    // Load the online whitelist
-    SQLiteStatement whitelistStatement(m_database, "SELECT url FROM CacheWhitelistURLs WHERE cache=?");
-    if (whitelistStatement.prepare() != SQLITE_OK)
+    // Load the online allowlist
+    SQLiteStatement allowlistStatement(m_database, "SELECT url FROM CacheWhitelistURLs WHERE cache=?");
+    if (allowlistStatement.prepare() != SQLITE_OK)
         return nullptr;
-    whitelistStatement.bindInt64(1, storageID);
+    allowlistStatement.bindInt64(1, storageID);
 
-    Vector<URL> whitelist;
-    while ((result = whitelistStatement.step()) == SQLITE_ROW)
-        whitelist.append(URL(ParsedURLString, whitelistStatement.getColumnText(0)));
+    Vector<URL> allowlist;
+    while ((result = allowlistStatement.step()) == SQLITE_ROW)
+        allowlist.append(URL({ }, allowlistStatement.getColumnText(0)));
 
     if (result != SQLITE_DONE)
-        LOG_ERROR("Could not load cache online whitelist, error \"%s\"", m_database.lastErrorMsg());
+        LOG_ERROR("Could not load cache online allowlist, error \"%s\"", m_database.lastErrorMsg());
 
-    cache->setOnlineWhitelist(whitelist);
+    cache->setOnlineAllowlist(allowlist);
 
-    // Load online whitelist wildcard flag.
-    SQLiteStatement whitelistWildcardStatement(m_database, "SELECT wildcard FROM CacheAllowsAllNetworkRequests WHERE cache=?");
-    if (whitelistWildcardStatement.prepare() != SQLITE_OK)
+    // Load online allowlist wildcard flag.
+    SQLiteStatement allowlistWildcardStatement(m_database, "SELECT wildcard FROM CacheAllowsAllNetworkRequests WHERE cache=?");
+    if (allowlistWildcardStatement.prepare() != SQLITE_OK)
         return nullptr;
-    whitelistWildcardStatement.bindInt64(1, storageID);
+    allowlistWildcardStatement.bindInt64(1, storageID);
 
-    result = whitelistWildcardStatement.step();
+    result = allowlistWildcardStatement.step();
     if (result != SQLITE_ROW)
-        LOG_ERROR("Could not load cache online whitelist wildcard flag, error \"%s\"", m_database.lastErrorMsg());
+        LOG_ERROR("Could not load cache online allowlist wildcard flag, error \"%s\"", m_database.lastErrorMsg());
 
-    cache->setAllowsAllNetworkRequests(whitelistWildcardStatement.getColumnInt64(0));
+    cache->setAllowsAllNetworkRequests(allowlistWildcardStatement.getColumnInt64(0));
 
-    if (whitelistWildcardStatement.step() != SQLITE_DONE)
-        LOG_ERROR("Too many rows for online whitelist wildcard flag");
+    if (allowlistWildcardStatement.step() != SQLITE_DONE)
+        LOG_ERROR("Too many rows for online allowlist wildcard flag");
 
     // Load fallback URLs.
     SQLiteStatement fallbackStatement(m_database, "SELECT namespace, fallbackURL FROM FallbackURLs WHERE cache=?");
@@ -1197,7 +1192,7 @@ RefPtr<ApplicationCache> ApplicationCacheStorage::loadCache(unsigned storageID)
 
     FallbackURLVector fallbackURLs;
     while ((result = fallbackStatement.step()) == SQLITE_ROW)
-        fallbackURLs.append(std::make_pair(URL(ParsedURLString, fallbackStatement.getColumnText(0)), URL(ParsedURLString, fallbackStatement.getColumnText(1))));
+        fallbackURLs.append(std::make_pair(URL({ }, fallbackStatement.getColumnText(0)), URL({ }, fallbackStatement.getColumnText(1))));
 
     if (result != SQLITE_DONE)
         LOG_ERROR("Could not load fallback URLs, error \"%s\"", m_database.lastErrorMsg());
@@ -1206,7 +1201,7 @@ RefPtr<ApplicationCache> ApplicationCacheStorage::loadCache(unsigned storageID)
 
     cache->setStorageID(storageID);
 
-    return WTFMove(cache);
+    return cache;
 }
 
 void ApplicationCacheStorage::remove(ApplicationCache* cache)
@@ -1313,24 +1308,24 @@ bool ApplicationCacheStorage::writeDataToUniqueFileInDirectory(SharedBuffer& dat
     return true;
 }
 
-std::optional<Vector<URL>> ApplicationCacheStorage::manifestURLs()
+Optional<Vector<URL>> ApplicationCacheStorage::manifestURLs()
 {
     SQLiteTransactionInProgressAutoCounter transactionCounter;
 
     openDatabase(false);
     if (!m_database.isOpen())
-        return std::nullopt;
+        return WTF::nullopt;
 
     SQLiteStatement selectURLs(m_database, "SELECT manifestURL FROM CacheGroups");
 
     if (selectURLs.prepare() != SQLITE_OK)
-        return std::nullopt;
+        return WTF::nullopt;
 
     Vector<URL> urls;
     while (selectURLs.step() == SQLITE_ROW)
-        urls.append(URL(ParsedURLString, selectURLs.getColumnText(0)));
+        urls.append(URL({ }, selectURLs.getColumnText(0)));
 
-    return WTFMove(urls);
+    return urls;
 }
 
 bool ApplicationCacheStorage::deleteCacheGroupRecord(const String& manifestURL)
@@ -1519,7 +1514,7 @@ void ApplicationCacheStorage::deleteCacheForOrigin(const SecurityOrigin& securit
         if (auto* group = findInMemoryCacheGroup(url))
             group->makeObsolete();
         else
-            deleteCacheGroup(url);
+            deleteCacheGroup(url.string());
     }
 }
 

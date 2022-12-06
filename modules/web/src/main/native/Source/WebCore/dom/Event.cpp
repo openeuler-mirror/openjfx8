@@ -28,13 +28,17 @@
 #include "EventNames.h"
 #include "EventPath.h"
 #include "EventTarget.h"
+#include "InspectorInstrumentation.h"
 #include "Performance.h"
 #include "UserGestureIndicator.h"
 #include "WorkerGlobalScope.h"
+#include <wtf/IsoMallocInlines.h>
 
 namespace WebCore {
 
-ALWAYS_INLINE Event::Event(MonotonicTime createTime, const AtomicString& type, IsTrusted isTrusted, CanBubble canBubble, IsCancelable cancelable, IsComposed composed)
+WTF_MAKE_ISO_ALLOCATED_IMPL(Event);
+
+ALWAYS_INLINE Event::Event(MonotonicTime createTime, const AtomString& type, IsTrusted isTrusted, CanBubble canBubble, IsCancelable cancelable, IsComposed composed)
     : m_isInitialized { !type.isNull() }
     , m_canBubble { canBubble == CanBubble::Yes }
     , m_cancelable { cancelable == IsCancelable::Yes }
@@ -57,19 +61,19 @@ Event::Event(IsTrusted isTrusted)
 {
 }
 
-Event::Event(const AtomicString& eventType, CanBubble canBubble, IsCancelable isCancelable)
-    : Event { MonotonicTime::now(), eventType, IsTrusted::Yes, canBubble, isCancelable, IsComposed::No }
+Event::Event(const AtomString& eventType, CanBubble canBubble, IsCancelable isCancelable, IsComposed isComposed)
+    : Event { MonotonicTime::now(), eventType, IsTrusted::Yes, canBubble, isCancelable, isComposed }
 {
     ASSERT(!eventType.isNull());
 }
 
-Event::Event(const AtomicString& eventType, CanBubble canBubble, IsCancelable isCancelable, MonotonicTime timestamp)
-    : Event { timestamp, eventType, IsTrusted::Yes, canBubble, isCancelable, IsComposed::No }
+Event::Event(const AtomString& eventType, CanBubble canBubble, IsCancelable isCancelable, IsComposed isComposed, MonotonicTime timestamp, IsTrusted isTrusted)
+    : Event { timestamp, eventType, isTrusted, canBubble, isCancelable, isComposed }
 {
     ASSERT(!eventType.isNull());
 }
 
-Event::Event(const AtomicString& eventType, const EventInit& initializer, IsTrusted isTrusted)
+Event::Event(const AtomString& eventType, const EventInit& initializer, IsTrusted isTrusted)
     : Event { MonotonicTime::now(), eventType, isTrusted,
         initializer.bubbles ? CanBubble::Yes : CanBubble::No,
         initializer.cancelable ? IsCancelable::Yes : IsCancelable::No,
@@ -80,9 +84,9 @@ Event::Event(const AtomicString& eventType, const EventInit& initializer, IsTrus
 
 Event::~Event() = default;
 
-Ref<Event> Event::create(const AtomicString& type, CanBubble canBubble, IsCancelable isCancelable)
+Ref<Event> Event::create(const AtomString& type, CanBubble canBubble, IsCancelable isCancelable, IsComposed isComposed)
 {
-    return adoptRef(*new Event(type, canBubble, isCancelable));
+    return adoptRef(*new Event(type, canBubble, isCancelable, isComposed));
 }
 
 Ref<Event> Event::createForBindings()
@@ -90,12 +94,12 @@ Ref<Event> Event::createForBindings()
     return adoptRef(*new Event);
 }
 
-Ref<Event> Event::create(const AtomicString& type, const EventInit& initializer, IsTrusted isTrusted)
+Ref<Event> Event::create(const AtomString& type, const EventInit& initializer, IsTrusted isTrusted)
 {
     return adoptRef(*new Event(type, initializer, isTrusted));
 }
 
-void Event::initEvent(const AtomicString& eventTypeArg, bool canBubbleArg, bool cancelableArg)
+void Event::initEvent(const AtomString& eventTypeArg, bool canBubbleArg, bool cancelableArg)
 {
     if (isBeingDispatched())
         return;
@@ -111,27 +115,6 @@ void Event::initEvent(const AtomicString& eventTypeArg, bool canBubbleArg, bool 
     m_cancelable = cancelableArg;
 
     m_underlyingEvent = nullptr;
-}
-
-bool Event::composed() const
-{
-    if (m_composed)
-        return true;
-
-    // http://w3c.github.io/webcomponents/spec/shadow/#scoped-flag
-    if (!isTrusted())
-        return false;
-
-    return m_type == eventNames().inputEvent
-        || m_type == eventNames().textInputEvent
-        || m_type == eventNames().DOMActivateEvent
-        || isCompositionEvent()
-        || isClipboardEvent()
-        || isFocusEvent()
-        || isKeyboardEvent()
-        || isMouseEvent()
-        || isTouchEvent()
-        || isInputEvent();
 }
 
 void Event::setTarget(RefPtr<EventTarget>&& target)
@@ -172,7 +155,7 @@ DOMHighResTimeStamp Event::timeStampForBindings(ScriptExecutionContext& context)
     if (is<WorkerGlobalScope>(context))
         performance = &downcast<WorkerGlobalScope>(context).performance();
     else if (auto* window = downcast<Document>(context).domWindow())
-        performance = window->performance();
+        performance = &window->performance();
 
     if (!performance)
         return 0;
@@ -192,6 +175,8 @@ void Event::resetAfterDispatch()
     m_eventPhase = NONE;
     m_propagationStopped = false;
     m_immediatePropagationStopped = false;
+
+    InspectorInstrumentation::eventDidResetAfterDispatch(*this);
 }
 
 } // namespace WebCore

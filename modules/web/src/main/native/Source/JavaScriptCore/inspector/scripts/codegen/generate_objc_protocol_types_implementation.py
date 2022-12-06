@@ -29,16 +29,22 @@ import logging
 import string
 from string import Template
 
-from .generator import Generator, ucfirst
-from .models import ObjectType, EnumType, Frameworks
-from .objc_generator import ObjCTypeCategory, ObjCGenerator
-from .objc_generator_templates import ObjCGeneratorTemplates as ObjCTemplates
+try:
+    from .generator import Generator, ucfirst
+    from .models import ObjectType, EnumType, Frameworks
+    from .objc_generator import ObjCTypeCategory, ObjCGenerator
+    from .objc_generator_templates import ObjCGeneratorTemplates as ObjCTemplates
+except ValueError:
+    from generator import Generator, ucfirst
+    from models import ObjectType, EnumType, Frameworks
+    from objc_generator import ObjCTypeCategory, ObjCGenerator
+    from objc_generator_templates import ObjCGeneratorTemplates as ObjCTemplates
 
 log = logging.getLogger('global')
 
 
 def add_newline(lines):
-    if lines and lines[-1] == '':
+    if not len(lines) or lines[-1] == '':
         return
     lines.append('')
 
@@ -85,7 +91,7 @@ class ObjCProtocolTypesImplementationGenerator(ObjCGenerator):
             if (isinstance(declaration.type, ObjectType)):
                 add_newline(lines)
                 lines.append(self.generate_type_implementation(domain, declaration))
-        return '\n'.join(lines)
+        return self.wrap_with_guard_for_condition(domain.condition, '\n'.join(lines))
 
     def generate_type_implementation(self, domain, declaration):
         lines = []
@@ -106,7 +112,7 @@ class ObjCProtocolTypesImplementationGenerator(ObjCGenerator):
             lines.append(self._generate_getter_for_member(domain, declaration, member))
         lines.append('')
         lines.append('@end')
-        return '\n'.join(lines)
+        return self.wrap_with_guard_for_condition(declaration.condition, '\n'.join(lines))
 
     def _generate_init_method_for_protocol_object(self, domain, declaration):
         lines = []
@@ -137,7 +143,7 @@ class ObjCProtocolTypesImplementationGenerator(ObjCGenerator):
             var_name = ObjCGenerator.identifier_to_objc_identifier(member_name)
             conversion_expression = self.payload_to_objc_expression_for_member(declaration, member)
             if isinstance(member.type, EnumType):
-                lines.append('    std::optional<%s> %s = %s;' % (objc_type, var_name, conversion_expression))
+                lines.append('    Optional<%s> %s = %s;' % (objc_type, var_name, conversion_expression))
                 if not member.is_optional:
                     lines.append('    THROW_EXCEPTION_FOR_BAD_ENUM_VALUE(%s, @"%s");' % (var_name, member_name))
                     lines.append('    self.%s = %s.value();' % (var_name, var_name))

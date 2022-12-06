@@ -29,8 +29,8 @@
 
 namespace JSC {
 
+class CallFrame;
 class VM;
-class ExecState;
 struct Instruction;
 
 class AbstractPC {
@@ -40,7 +40,7 @@ public:
     {
     }
 
-    AbstractPC(VM&, ExecState*);
+    AbstractPC(VM&, CallFrame*);
 
 #if ENABLE(JIT)
     AbstractPC(ReturnAddressPtr ptr)
@@ -62,7 +62,7 @@ public:
 
 private:
 #if ENABLE(JIT)
-    void* m_pointer { nullptr };
+    const void* m_pointer { nullptr };
 #endif
 
     enum Mode { None, JIT, Interpreter };

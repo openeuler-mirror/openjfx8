@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,7 +36,7 @@ namespace WebCore {
 // 99) MacEditingBehavior is used as a fallback.
 inline EditingBehaviorType editingBehaviorTypeForPlatform()
 {
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     return EditingIOSBehavior;
 #elif OS(DARWIN)
     return EditingMacBehavior;
@@ -57,7 +57,7 @@ static const bool defaultYouTubeFlashPluginReplacementEnabled = true;
 static const bool defaultYouTubeFlashPluginReplacementEnabled = false;
 #endif
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
 static const bool defaultFixedBackgroundsPaintRelativeToDocument = true;
 static const bool defaultAcceleratedCompositingForFixedPositionEnabled = true;
 static const bool defaultAllowsInlineMediaPlayback = false;
@@ -102,6 +102,20 @@ static const bool defaultSelectTrailingWhitespaceEnabled = false;
 static const bool defaultMediaEnabled = true;
 #else
 static const bool defaultMediaEnabled = false;
+#endif
+
+// FIXME: Seems like this should be HAVE(CG_CONTEXT_DRAW_CONIC_GRADIENT).
+// FIXME: Can we change tvOS to be like the other Cocoa platforms?
+#if PLATFORM(COCOA) && !PLATFORM(APPLETV)
+static const bool defaultConicGradient = true;
+#else
+static const bool defaultConicGradient = false;
+#endif
+
+#if ENABLE(APPLE_PAY_REMOTE_UI)
+static const bool defaultApplePayEnabled = true;
+#else
+static const bool defaultApplePayEnabled = false;
 #endif
 
 }

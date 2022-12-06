@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2018 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2013-2019 Apple Inc. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,7 +25,9 @@
 
 #pragma once
 
+#include "CodeBlock.h"
 #include "Register.h"
+#include "StackAlignment.h"
 #include <wtf/ForbidHeapAllocation.h>
 
 namespace JSC {
@@ -33,6 +35,9 @@ namespace JSC {
 struct JS_EXPORT_PRIVATE ProtoCallFrame {
     WTF_FORBID_HEAP_ALLOCATION;
 public:
+    // CodeBlock, Callee, ArgumentCount, and |this|.
+    static constexpr unsigned numberOfRegisters { 4 };
+
     Register codeBlockValue;
     Register calleeValue;
     Register argCountAndCodeOriginValue;
@@ -40,14 +45,19 @@ public:
     uint32_t paddedArgCount;
     bool hasArityMismatch;
     JSValue *args;
+    JSGlobalObject* globalObject;
 
-    void init(CodeBlock*, JSObject*, JSValue, int, JSValue* otherArgs = 0);
+    inline void init(CodeBlock*, JSGlobalObject*, JSObject*, JSValue, int, JSValue* otherArgs = nullptr);
 
-    CodeBlock* codeBlock() const { return codeBlockValue.Register::codeBlock(); }
-    void setCodeBlock(CodeBlock* codeBlock) { codeBlockValue = codeBlock; }
+    inline CodeBlock* codeBlock() const;
+    inline void setCodeBlock(CodeBlock*);
 
-    JSObject* callee() const { return calleeValue.Register::object(); }
-    void setCallee(JSObject* callee) { calleeValue = callee; }
+    inline JSObject* callee() const;
+    inline void setCallee(JSObject*);
+    void setGlobalObject(JSGlobalObject* object)
+    {
+        globalObject = object;
+    }
 
     int argumentCountIncludingThis() const { return argCountAndCodeOriginValue.payload(); }
     int argumentCount() const { return argumentCountIncludingThis() - 1; }

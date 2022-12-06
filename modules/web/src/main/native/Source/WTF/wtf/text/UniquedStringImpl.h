@@ -23,8 +23,7 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef UniquedStringImpl_h
-#define UniquedStringImpl_h
+#pragma once
 
 #include <wtf/text/StringImpl.h>
 
@@ -41,7 +40,7 @@ protected:
     UniquedStringImpl(CreateSymbolTag) : StringImpl(CreateSymbol) { }
 };
 
-#if !ASSERT_DISABLED
+#if ASSERT_ENABLED
 // UniquedStringImpls created from StaticStringImpl will ASSERT
 // in the generic ValueCheck<T>::checkConsistency
 // as they are not allocated by fastMalloc.
@@ -56,10 +55,8 @@ template<> struct
 ValueCheck<const UniquedStringImpl*> {
     static void checkConsistency(const UniquedStringImpl*) { }
 };
-#endif
+#endif // ASSERT_ENABLED
 
 } // namespace WTF
 
 using WTF::UniquedStringImpl;
-
-#endif // UniquedStringImpl_h

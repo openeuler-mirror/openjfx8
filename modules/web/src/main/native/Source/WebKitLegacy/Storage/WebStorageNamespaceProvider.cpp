@@ -26,6 +26,7 @@
 #include "WebStorageNamespaceProvider.h"
 
 #include "StorageNamespaceImpl.h"
+#include <WebCore/Page.h>
 #include <wtf/NeverDestroyed.h>
 
 using namespace WebCore;
@@ -39,9 +40,9 @@ static HashSet<WebStorageNamespaceProvider*>& storageNamespaceProviders()
     return storageNamespaceProviders;
 }
 
-RefPtr<WebStorageNamespaceProvider> WebStorageNamespaceProvider::create(const String& localStorageDatabasePath)
+Ref<WebStorageNamespaceProvider> WebStorageNamespaceProvider::create(const String& localStorageDatabasePath)
 {
-    return adoptRef(new WebStorageNamespaceProvider(localStorageDatabasePath));
+    return adoptRef(*new WebStorageNamespaceProvider(localStorageDatabasePath));
 }
 
 WebStorageNamespaceProvider::WebStorageNamespaceProvider(const String& localStorageDatabasePath)
@@ -96,26 +97,21 @@ void WebStorageNamespaceProvider::syncLocalStorage()
     }
 }
 
-RefPtr<StorageNamespace> WebStorageNamespaceProvider::createSessionStorageNamespace(Page&, unsigned quota)
+Ref<StorageNamespace> WebStorageNamespaceProvider::createSessionStorageNamespace(Page& page, unsigned quota)
 {
-    return StorageNamespaceImpl::createSessionStorageNamespace(quota);
+    return StorageNamespaceImpl::createSessionStorageNamespace(quota, page.sessionID());
 }
 
-RefPtr<StorageNamespace> WebStorageNamespaceProvider::createEphemeralLocalStorageNamespace(Page&, unsigned quota)
+Ref<StorageNamespace> WebStorageNamespaceProvider::createLocalStorageNamespace(unsigned quota, PAL::SessionID sessionID)
 {
-    return StorageNamespaceImpl::createEphemeralLocalStorageNamespace(quota);
+    return StorageNamespaceImpl::getOrCreateLocalStorageNamespace(m_localStorageDatabasePath, quota, sessionID);
 }
 
-RefPtr<StorageNamespace> WebStorageNamespaceProvider::createLocalStorageNamespace(unsigned quota)
-{
-    return StorageNamespaceImpl::getOrCreateLocalStorageNamespace(m_localStorageDatabasePath, quota);
-}
-
-RefPtr<StorageNamespace> WebStorageNamespaceProvider::createTransientLocalStorageNamespace(SecurityOrigin&, unsigned quota)
+Ref<StorageNamespace> WebStorageNamespaceProvider::createTransientLocalStorageNamespace(SecurityOrigin&, unsigned quota, PAL::SessionID sessionID)
 {
     // FIXME: A smarter implementation would create a special namespace type instead of just piggy-backing off
     // SessionStorageNamespace here.
-    return StorageNamespaceImpl::createSessionStorageNamespace(quota);
+    return StorageNamespaceImpl::createSessionStorageNamespace(quota, sessionID);
 }
 
 }

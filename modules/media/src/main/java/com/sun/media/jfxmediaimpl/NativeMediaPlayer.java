@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -719,6 +719,14 @@ public abstract class NativeMediaPlayer implements MediaPlayer, MarkerStateListe
             for (ListIterator<WeakReference<AudioSpectrumListener>> it = audioSpectrumListeners.listIterator(); it.hasNext();) {
                 AudioSpectrumListener listener = it.next().get();
                 if (listener != null) {
+                    // OSXPlatfrom will set queryTimestamp to true, so we can request
+                    // time here from EventQueueThread, since requesting time from
+                    // audio processing thread might hang. See JDK-8240694.
+                    if (evt.queryTimestamp()) {
+                        double timestamp = playerGetPresentationTime();
+                        evt.setTimestamp(timestamp);
+                    }
+
                     listener.onAudioSpectrumEvent(evt);
                 } else {
                     it.remove();
@@ -1411,6 +1419,17 @@ public abstract class NativeMediaPlayer implements MediaPlayer, MarkerStateListe
         }
     }
 
+    @Override
+    public boolean isErrorEventCached() {
+        synchronized (cachedErrorEvents) {
+            if (cachedErrorEvents.isEmpty()) {
+                return false;
+            } else {
+                return true;
+            }
+        }
+    }
+
     //**************************************************************************
     //***** Non-JNI methods called by the native layer. These methods are called
     //***** from the native layer via the invocation API. Their purpose is to
@@ -1540,8 +1559,8 @@ public abstract class NativeMediaPlayer implements MediaPlayer, MarkerStateListe
         sendPlayerEvent(new BufferProgressEvent(clipDuration, bufferStart, bufferStop, bufferPosition));
     }
 
-    protected void sendAudioSpectrumEvent(double timestamp, double duration) {
-        sendPlayerEvent(new AudioSpectrumEvent(getAudioSpectrum(), timestamp, duration));
+    protected void sendAudioSpectrumEvent(double timestamp, double duration, boolean queryTimestamp) {
+        sendPlayerEvent(new AudioSpectrumEvent(getAudioSpectrum(), timestamp, duration, queryTimestamp));
     }
 
     @Override

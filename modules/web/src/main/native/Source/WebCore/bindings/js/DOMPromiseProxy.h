@@ -36,13 +36,14 @@ namespace WebCore {
 
 template<typename IDLType>
 class DOMPromiseProxy {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     using Value = typename IDLType::StorageType;
 
     DOMPromiseProxy() = default;
     ~DOMPromiseProxy() = default;
 
-    JSC::JSValue promise(JSC::ExecState&, JSDOMGlobalObject&);
+    JSC::JSValue promise(JSC::JSGlobalObject&, JSDOMGlobalObject&);
 
     void clear();
 
@@ -50,30 +51,31 @@ public:
 
     void resolve(typename IDLType::ParameterType);
     void resolveWithNewlyCreated(typename IDLType::ParameterType);
-    void reject(Exception);
+    void reject(Exception, RejectAsHandled = RejectAsHandled::No);
 
 private:
-    std::optional<ExceptionOr<Value>> m_valueOrException;
+    Optional<ExceptionOr<Value>> m_valueOrException;
     Vector<Ref<DeferredPromise>, 1> m_deferredPromises;
 };
 
 template<>
 class DOMPromiseProxy<IDLVoid> {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     DOMPromiseProxy() = default;
     ~DOMPromiseProxy() = default;
 
-    JSC::JSValue promise(JSC::ExecState&, JSDOMGlobalObject&);
+    JSC::JSValue promise(JSC::JSGlobalObject&, JSDOMGlobalObject&);
 
     void clear();
 
     bool isFulfilled() const;
 
     void resolve();
-    void reject(Exception);
+    void reject(Exception, RejectAsHandled = RejectAsHandled::No);
 
 private:
-    std::optional<ExceptionOr<void>> m_valueOrException;
+    Optional<ExceptionOr<void>> m_valueOrException;
     Vector<Ref<DeferredPromise>, 1> m_deferredPromises;
 };
 
@@ -83,6 +85,7 @@ private:
 // FontFace and FontFaceSet.
 template<typename IDLType>
 class DOMPromiseProxyWithResolveCallback {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     using ResolveCallback = WTF::Function<typename IDLType::ParameterType ()>;
 
@@ -91,7 +94,7 @@ public:
     DOMPromiseProxyWithResolveCallback(ResolveCallback&&);
     ~DOMPromiseProxyWithResolveCallback() = default;
 
-    JSC::JSValue promise(JSC::ExecState&, JSDOMGlobalObject&);
+    JSC::JSValue promise(JSC::JSGlobalObject&, JSDOMGlobalObject&);
 
     void clear();
 
@@ -99,11 +102,11 @@ public:
 
     void resolve(typename IDLType::ParameterType);
     void resolveWithNewlyCreated(typename IDLType::ParameterType);
-    void reject(Exception);
+    void reject(Exception, RejectAsHandled = RejectAsHandled::No);
 
 private:
     ResolveCallback m_resolveCallback;
-    std::optional<ExceptionOr<void>> m_valueOrException;
+    Optional<ExceptionOr<void>> m_valueOrException;
     Vector<Ref<DeferredPromise>, 1> m_deferredPromises;
 };
 
@@ -111,15 +114,16 @@ private:
 // MARK: - DOMPromiseProxy<IDLType> generic implementation
 
 template<typename IDLType>
-inline JSC::JSValue DOMPromiseProxy<IDLType>::promise(JSC::ExecState& state, JSDOMGlobalObject& globalObject)
+inline JSC::JSValue DOMPromiseProxy<IDLType>::promise(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject)
 {
+    UNUSED_PARAM(lexicalGlobalObject);
     for (auto& deferredPromise : m_deferredPromises) {
         if (deferredPromise->globalObject() == &globalObject)
             return deferredPromise->promise();
     }
 
     // DeferredPromise can fail construction during worker abrupt termination.
-    auto deferredPromise = DeferredPromise::create(state, globalObject, DeferredPromise::Mode::RetainPromiseOnResolve);
+    auto deferredPromise = DeferredPromise::create(globalObject, DeferredPromise::Mode::RetainPromiseOnResolve);
     if (!deferredPromise)
         return JSC::jsUndefined();
 
@@ -138,14 +142,14 @@ inline JSC::JSValue DOMPromiseProxy<IDLType>::promise(JSC::ExecState& state, JSD
 template<typename IDLType>
 inline void DOMPromiseProxy<IDLType>::clear()
 {
-    m_valueOrException = std::nullopt;
+    m_valueOrException = WTF::nullopt;
     m_deferredPromises.clear();
 }
 
 template<typename IDLType>
 inline bool DOMPromiseProxy<IDLType>::isFulfilled() const
 {
-    return m_valueOrException.has_value();
+    return m_valueOrException.hasValue();
 }
 
 template<typename IDLType>
@@ -169,27 +173,28 @@ inline void DOMPromiseProxy<IDLType>::resolveWithNewlyCreated(typename IDLType::
 }
 
 template<typename IDLType>
-inline void DOMPromiseProxy<IDLType>::reject(Exception exception)
+inline void DOMPromiseProxy<IDLType>::reject(Exception exception, RejectAsHandled rejectAsHandled)
 {
     ASSERT(!m_valueOrException);
 
     m_valueOrException = ExceptionOr<Value> { WTFMove(exception) };
     for (auto& deferredPromise : m_deferredPromises)
-        deferredPromise->reject(m_valueOrException->exception());
+        deferredPromise->reject(m_valueOrException->exception(), rejectAsHandled);
 }
 
 
 // MARK: - DOMPromiseProxy<IDLVoid> specialization
 
-inline JSC::JSValue DOMPromiseProxy<IDLVoid>::promise(JSC::ExecState& state, JSDOMGlobalObject& globalObject)
+inline JSC::JSValue DOMPromiseProxy<IDLVoid>::promise(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject)
 {
+    UNUSED_PARAM(lexicalGlobalObject);
     for (auto& deferredPromise : m_deferredPromises) {
         if (deferredPromise->globalObject() == &globalObject)
             return deferredPromise->promise();
     }
 
     // DeferredPromise can fail construction during worker abrupt termination.
-    auto deferredPromise = DeferredPromise::create(state, globalObject, DeferredPromise::Mode::RetainPromiseOnResolve);
+    auto deferredPromise = DeferredPromise::create(globalObject, DeferredPromise::Mode::RetainPromiseOnResolve);
     if (!deferredPromise)
         return JSC::jsUndefined();
 
@@ -207,13 +212,13 @@ inline JSC::JSValue DOMPromiseProxy<IDLVoid>::promise(JSC::ExecState& state, JSD
 
 inline void DOMPromiseProxy<IDLVoid>::clear()
 {
-    m_valueOrException = std::nullopt;
+    m_valueOrException = WTF::nullopt;
     m_deferredPromises.clear();
 }
 
 inline bool DOMPromiseProxy<IDLVoid>::isFulfilled() const
 {
-    return m_valueOrException.has_value();
+    return m_valueOrException.hasValue();
 }
 
 inline void DOMPromiseProxy<IDLVoid>::resolve()
@@ -224,12 +229,12 @@ inline void DOMPromiseProxy<IDLVoid>::resolve()
         deferredPromise->resolve();
 }
 
-inline void DOMPromiseProxy<IDLVoid>::reject(Exception exception)
+inline void DOMPromiseProxy<IDLVoid>::reject(Exception exception, RejectAsHandled rejectAsHandled)
 {
     ASSERT(!m_valueOrException);
     m_valueOrException = ExceptionOr<void> { WTFMove(exception) };
     for (auto& deferredPromise : m_deferredPromises)
-        deferredPromise->reject(m_valueOrException->exception());
+        deferredPromise->reject(m_valueOrException->exception(), rejectAsHandled);
 }
 
 // MARK: - DOMPromiseProxyWithResolveCallback<IDLType> implementation
@@ -248,15 +253,16 @@ inline DOMPromiseProxyWithResolveCallback<IDLType>::DOMPromiseProxyWithResolveCa
 }
 
 template<typename IDLType>
-inline JSC::JSValue DOMPromiseProxyWithResolveCallback<IDLType>::promise(JSC::ExecState& state, JSDOMGlobalObject& globalObject)
+inline JSC::JSValue DOMPromiseProxyWithResolveCallback<IDLType>::promise(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject)
 {
+    UNUSED_PARAM(lexicalGlobalObject);
     for (auto& deferredPromise : m_deferredPromises) {
         if (deferredPromise->globalObject() == &globalObject)
             return deferredPromise->promise();
     }
 
     // DeferredPromise can fail construction during worker abrupt termination.
-    auto deferredPromise = DeferredPromise::create(state, globalObject, DeferredPromise::Mode::RetainPromiseOnResolve);
+    auto deferredPromise = DeferredPromise::create(globalObject, DeferredPromise::Mode::RetainPromiseOnResolve);
     if (!deferredPromise)
         return JSC::jsUndefined();
 
@@ -275,14 +281,14 @@ inline JSC::JSValue DOMPromiseProxyWithResolveCallback<IDLType>::promise(JSC::Ex
 template<typename IDLType>
 inline void DOMPromiseProxyWithResolveCallback<IDLType>::clear()
 {
-    m_valueOrException = std::nullopt;
+    m_valueOrException = WTF::nullopt;
     m_deferredPromises.clear();
 }
 
 template<typename IDLType>
 inline bool DOMPromiseProxyWithResolveCallback<IDLType>::isFulfilled() const
 {
-    return m_valueOrException.has_value();
+    return m_valueOrException.hasValue();
 }
 
 template<typename IDLType>
@@ -306,13 +312,13 @@ inline void DOMPromiseProxyWithResolveCallback<IDLType>::resolveWithNewlyCreated
 }
 
 template<typename IDLType>
-inline void DOMPromiseProxyWithResolveCallback<IDLType>::reject(Exception exception)
+inline void DOMPromiseProxyWithResolveCallback<IDLType>::reject(Exception exception, RejectAsHandled rejectAsHandled)
 {
     ASSERT(!m_valueOrException);
 
     m_valueOrException = ExceptionOr<void> { WTFMove(exception) };
     for (auto& deferredPromise : m_deferredPromises)
-        deferredPromise->reject(m_valueOrException->exception());
+        deferredPromise->reject(m_valueOrException->exception(), rejectAsHandled);
 }
 
 }

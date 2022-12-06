@@ -26,16 +26,18 @@
 #pragma once
 
 #include "CallTracerTypes.h"
-#include <wtf/Vector.h>
+#include <initializer_list>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
 class CanvasRenderingContext;
+class HTMLCanvasElement;
 
 class CallTracer {
 public:
-    static void recordCanvasAction(CanvasRenderingContext&, const String&, Vector<RecordCanvasActionVariant>&& = { });
+    static void recordCanvasAction(const HTMLCanvasElement&, const String&, std::initializer_list<RecordCanvasActionVariant>&& = { });
+    static void recordCanvasAction(CanvasRenderingContext&, const String&, std::initializer_list<RecordCanvasActionVariant>&& = { });
 };
 
 } // namespace WebCore

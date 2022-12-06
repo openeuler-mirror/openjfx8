@@ -29,6 +29,7 @@
 #include "RenderSVGResourceFilter.h"
 #include "RenderSVGResourceMasker.h"
 #include "RenderSVGResourceSolidColor.h"
+#include "RenderSVGRoot.h"
 #include "RenderView.h"
 #include "SVGResources.h"
 #include "SVGResourcesCache.h"
@@ -47,7 +48,7 @@ static inline bool inheritColorFromParentStyleIfNeeded(RenderElement& object, bo
     return true;
 }
 
-static inline RenderSVGResource* requestPaintingResource(OptionSet<RenderSVGResourceMode> mode, RenderElement& renderer, const RenderStyle& style, Color& fallbackColor)
+static inline RenderSVGResource* requestPaintingResource(RenderSVGResourceMode mode, RenderElement& renderer, const RenderStyle& style, Color& fallbackColor)
 {
     const SVGRenderStyle& svgStyle = style.svgStyle();
 
@@ -165,9 +166,9 @@ static inline void removeFromCacheAndInvalidateDependencies(RenderElement& rende
             clipper->removeClientFromCache(renderer);
     }
 
-    if (!renderer.element() || !renderer.element()->isSVGElement())
+    if (!is<SVGElement>(renderer.element()))
         return;
-    HashSet<SVGElement*>* dependencies = renderer.document().accessSVGExtensions().setOfElementsReferencingTarget(downcast<SVGElement>(renderer.element()));
+    auto* dependencies = renderer.document().accessSVGExtensions().setOfElementsReferencingTarget(downcast<SVGElement>(*renderer.element()));
     if (!dependencies)
         return;
 
@@ -190,8 +191,14 @@ void RenderSVGResource::markForLayoutAndParentResourceInvalidation(RenderObject&
 {
     ASSERT(object.node());
 
-    if (needsLayout && !object.renderTreeBeingDestroyed())
-        object.setNeedsLayout();
+    if (needsLayout && !object.renderTreeBeingDestroyed()) {
+        // If we are inside the layout of an RenderSVGRoot, do not cross the SVG boundary to
+        // invalidate the ancestor renderer because it may have finished its layout already.
+        if (is<RenderSVGRoot>(object) && downcast<RenderSVGRoot>(object).isInLayout())
+            object.setNeedsLayout(MarkOnlyThis);
+        else
+            object.setNeedsLayout(MarkContainingBlockChain);
+    }
 
     if (is<RenderElement>(object))
         removeFromCacheAndInvalidateDependencies(downcast<RenderElement>(object), needsLayout);

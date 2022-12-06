@@ -5,8 +5,6 @@
 BUILD_DIR = $(OUTPUT_DIR)/$(BUILD_TYPE)
 TARGET_DIRS = $(BUILD_DIR)
 
-BASE_DIR = ../../..
-
 SRCBASE_DIR = ../../../plugins
 
 DIRLIST = av

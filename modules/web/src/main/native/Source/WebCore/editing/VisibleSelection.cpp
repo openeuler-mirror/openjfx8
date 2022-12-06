@@ -30,6 +30,8 @@
 #include "Editing.h"
 #include "Element.h"
 #include "HTMLInputElement.h"
+#include "Settings.h"
+#include "ShadowRoot.h"
 #include "TextIterator.h"
 #include "VisibleUnits.h"
 #include <stdio.h>
@@ -85,12 +87,13 @@ VisibleSelection::VisibleSelection(const VisiblePosition& base, const VisiblePos
     validate();
 }
 
-VisibleSelection::VisibleSelection(const Range& range, EAffinity affinity, bool isDirectional)
-    : m_base(range.startPosition())
-    , m_extent(range.endPosition())
+VisibleSelection::VisibleSelection(const SimpleRange& range, EAffinity affinity, bool isDirectional)
+    : m_base(createLegacyEditingPosition(&range.startContainer(), range.startOffset()))
+    , m_extent(createLegacyEditingPosition(&range.endContainer(), range.endOffset()))
     , m_affinity(affinity)
     , m_isDirectional(isDirectional)
 {
+    ASSERT(&range.startContainer().treeScope() == &range.endContainer().treeScope());
     validate();
 }
 
@@ -124,21 +127,18 @@ void VisibleSelection::setExtent(const VisiblePosition& visiblePosition)
     validate();
 }
 
-RefPtr<Range> VisibleSelection::firstRange() const
+Optional<SimpleRange> VisibleSelection::firstRange() const
 {
     if (isNoneOrOrphaned())
-        return nullptr;
-    Position start = m_start.parentAnchoredEquivalent();
-    Position end = m_end.parentAnchoredEquivalent();
-    if (start.isNull() || start.isOrphan() || end.isNull() || end.isOrphan())
-        return nullptr;
-    return Range::create(start.anchorNode()->document(), start, end);
+        return WTF::nullopt;
+    // FIXME: Seems likely we don't need to call parentAnchoredEquivalent here.
+    return makeSimpleRange(m_start.parentAnchoredEquivalent(), m_end.parentAnchoredEquivalent());
 }
 
-RefPtr<Range> VisibleSelection::toNormalizedRange() const
+Optional<SimpleRange> VisibleSelection::toNormalizedRange() const
 {
     if (isNoneOrOrphaned())
-        return nullptr;
+        return WTF::nullopt;
 
     // Make sure we have an updated layout since this function is called
     // in the course of running edit commands which modify the DOM.
@@ -148,7 +148,7 @@ RefPtr<Range> VisibleSelection::toNormalizedRange() const
 
     // Check again, because updating layout can clear the selection.
     if (isNoneOrOrphaned())
-        return nullptr;
+        return WTF::nullopt;
 
     Position s, e;
     if (isCaret()) {
@@ -175,20 +175,13 @@ RefPtr<Range> VisibleSelection::toNormalizedRange() const
         if (comparePositions(s, e) > 0) {
             // Make sure the start is before the end.
             // The end can wind up before the start if collapsed whitespace is the only thing selected.
-            Position tmp = s;
-            s = e;
-            e = tmp;
+            std::swap(s, e);
         }
         s = s.parentAnchoredEquivalent();
         e = e.parentAnchoredEquivalent();
     }
 
-    if (!s.containerNode() || !e.containerNode())
-        return nullptr;
-
-    // VisibleSelections are supposed to always be valid.  This constructor will ASSERT
-    // if a valid range could not be created, which is fine for this callsite.
-    return Range::create(s.anchorNode()->document(), s, e);
+    return makeSimpleRange(s, e);
 }
 
 bool VisibleSelection::expandUsingGranularity(TextGranularity granularity)
@@ -200,28 +193,6 @@ bool VisibleSelection::expandUsingGranularity(TextGranularity granularity)
     return true;
 }
 
-static RefPtr<Range> makeSearchRange(const Position& position)
-{
-    auto* node = position.deprecatedNode();
-    if (!node)
-        return nullptr;
-    auto* boundary = deprecatedEnclosingBlockFlowElement(node);
-    if (!boundary)
-        return nullptr;
-
-    auto searchRange = Range::create(node->document());
-
-    auto result = searchRange->selectNodeContents(*boundary);
-    if (result.hasException())
-        return nullptr;
-    Position start { position.parentAnchoredEquivalent() };
-    result = searchRange->setStart(*start.containerNode(), start.offsetInContainerNode());
-    if (result.hasException())
-        return nullptr;
-
-    return WTFMove(searchRange);
-}
-
 bool VisibleSelection::isAll(EditingBoundaryCrossingRule rule) const
 {
     return !nonBoundaryShadowTreeRootNode() && visibleStart().previous(rule).isNull() && visibleEnd().next(rule).isNull();
@@ -229,17 +200,16 @@ bool VisibleSelection::isAll(EditingBoundaryCrossingRule rule) const
 
 void VisibleSelection::appendTrailingWhitespace()
 {
-    RefPtr<Range> searchRange = makeSearchRange(m_end);
-    if (!searchRange)
+    auto scope = deprecatedEnclosingBlockFlowElement(m_end.deprecatedNode());
+    if (!scope)
         return;
 
-    CharacterIterator charIt(*searchRange, TextIteratorEmitsCharactersBetweenAllVisiblePositions);
-
+    CharacterIterator charIt(*makeSimpleRange(m_end, makeBoundaryPointAfterNodeContents(*scope)), TextIteratorEmitsCharactersBetweenAllVisiblePositions);
     for (; !charIt.atEnd() && charIt.text().length(); charIt.advance(1)) {
         UChar c = charIt.text()[0];
         if ((!isSpaceOrNewline(c) && c != noBreakSpace) || c == '\n')
             break;
-        m_end = charIt.range()->endPosition();
+        m_end = createLegacyEditingPosition(charIt.range().end);
     }
 }
 
@@ -279,10 +249,10 @@ void VisibleSelection::setStartAndEndFromBaseAndExtentRespectingGranularity(Text
     }
 
     switch (granularity) {
-        case CharacterGranularity:
+        case TextGranularity::CharacterGranularity:
             // Don't do any expansion.
             break;
-        case WordGranularity: {
+        case TextGranularity::WordGranularity: {
             // General case: Select the word the caret is positioned inside of, or at the start of (RightWordIfOnBoundary).
             // Edge case: If the caret is after the last word in a soft-wrapped line or the last word in
             // the document, select that last word (LeftWordIfOnBoundary).
@@ -329,12 +299,12 @@ void VisibleSelection::setStartAndEndFromBaseAndExtentRespectingGranularity(Text
             }
             break;
         }
-        case SentenceGranularity: {
+        case TextGranularity::SentenceGranularity: {
             m_start = startOfSentence(VisiblePosition(m_start, m_affinity)).deepEquivalent();
             m_end = endOfSentence(VisiblePosition(m_end, m_affinity)).deepEquivalent();
             break;
         }
-        case LineGranularity: {
+        case TextGranularity::LineGranularity: {
             m_start = startOfLine(VisiblePosition(m_start, m_affinity)).deepEquivalent();
             VisiblePosition end = endOfLine(VisiblePosition(m_end, m_affinity));
             // If the end of this line is at the end of a paragraph, include the space
@@ -347,11 +317,11 @@ void VisibleSelection::setStartAndEndFromBaseAndExtentRespectingGranularity(Text
             m_end = end.deepEquivalent();
             break;
         }
-        case LineBoundary:
+        case TextGranularity::LineBoundary:
             m_start = startOfLine(VisiblePosition(m_start, m_affinity)).deepEquivalent();
             m_end = endOfLine(VisiblePosition(m_end, m_affinity)).deepEquivalent();
             break;
-        case ParagraphGranularity: {
+        case TextGranularity::ParagraphGranularity: {
             VisiblePosition pos(m_start, m_affinity);
             if (isStartOfLine(pos) && isEndOfEditableOrNonEditableContent(pos))
                 pos = pos.previous();
@@ -378,19 +348,19 @@ void VisibleSelection::setStartAndEndFromBaseAndExtentRespectingGranularity(Text
             m_end = end.deepEquivalent();
             break;
         }
-        case DocumentBoundary:
-            m_start = startOfDocument(VisiblePosition(m_start, m_affinity)).deepEquivalent();
-            m_end = endOfDocument(VisiblePosition(m_end, m_affinity)).deepEquivalent();
+        case TextGranularity::DocumentBoundary:
+            m_start = startOfDocument(m_start.document()).deepEquivalent();
+            m_end = endOfDocument(m_end.document()).deepEquivalent();
             break;
-        case ParagraphBoundary:
+        case TextGranularity::ParagraphBoundary:
             m_start = startOfParagraph(VisiblePosition(m_start, m_affinity)).deepEquivalent();
             m_end = endOfParagraph(VisiblePosition(m_end, m_affinity)).deepEquivalent();
             break;
-        case SentenceBoundary:
+        case TextGranularity::SentenceBoundary:
             m_start = startOfSentence(VisiblePosition(m_start, m_affinity)).deepEquivalent();
             m_end = endOfSentence(VisiblePosition(m_end, m_affinity)).deepEquivalent();
             break;
-        case DocumentGranularity:
+        case TextGranularity::DocumentGranularity:
             ASSERT_NOT_REACHED();
             break;
     }
@@ -504,13 +474,37 @@ Position VisibleSelection::adjustPositionForStart(const Position& currentPositio
     return Position();
 }
 
+static bool isInUserAgentShadowRootOrHasEditableShadowAncestor(Node& node)
+{
+    auto* shadowRoot = node.containingShadowRoot();
+    if (!shadowRoot)
+        return false;
+
+    if (shadowRoot->mode() == ShadowRootMode::UserAgent)
+        return true;
+
+    for (RefPtr<Node> currentNode = &node; currentNode; currentNode = currentNode->parentOrShadowHostNode()) {
+        if (currentNode->hasEditableStyle())
+            return true;
+    }
+    return false;
+}
+
 void VisibleSelection::adjustSelectionToAvoidCrossingShadowBoundaries()
 {
     if (m_base.isNull() || m_start.isNull() || m_end.isNull())
         return;
 
-    if (&m_start.anchorNode()->treeScope() == &m_end.anchorNode()->treeScope())
+    auto startNode = makeRef(*m_start.anchorNode());
+    auto endNode = makeRef(*m_end.anchorNode());
+    if (&startNode->treeScope() == &endNode->treeScope())
         return;
+
+    if (startNode->document().settings().selectionAcrossShadowBoundariesEnabled()) {
+        if (!isInUserAgentShadowRootOrHasEditableShadowAncestor(startNode)
+            && !isInUserAgentShadowRootOrHasEditableShadowAncestor(endNode))
+            return;
+    }
 
     if (m_baseIsFirst) {
         m_extent = adjustPositionForEnd(m_end, m_start.containerNode());
@@ -519,8 +513,6 @@ void VisibleSelection::adjustSelectionToAvoidCrossingShadowBoundaries()
         m_extent = adjustPositionForStart(m_start, m_end.containerNode());
         m_start = m_extent;
     }
-
-    ASSERT(&m_start.anchorNode()->treeScope() == &m_end.anchorNode()->treeScope());
 }
 
 void VisibleSelection::adjustSelectionToAvoidCrossingEditingBoundaries()
@@ -721,6 +713,8 @@ void VisibleSelection::showTreeForThis() const
     }
 }
 
+#endif
+
 TextStream& operator<<(TextStream& stream, const VisibleSelection& v)
 {
     TextStream::GroupScope scope(stream);
@@ -733,8 +727,6 @@ TextStream& operator<<(TextStream& stream, const VisibleSelection& v)
 
     return stream;
 }
-
-#endif
 
 } // namespace WebCore
 

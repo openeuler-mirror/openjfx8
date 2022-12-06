@@ -33,6 +33,7 @@
 namespace WebCore {
 
 class GCController {
+    WTF_MAKE_FAST_ALLOCATED;
     WTF_MAKE_NONCOPYABLE(GCController);
     friend class WTF::NeverDestroyed<GCController>;
 public:
@@ -50,6 +51,8 @@ public:
 
 private:
     GCController(); // Use singleton() instead.
+
+    void dumpHeap();
 
     void gcTimerFired();
     Timer m_GCTimer;

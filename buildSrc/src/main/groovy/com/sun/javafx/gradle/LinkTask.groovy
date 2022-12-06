@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2013, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -35,18 +35,23 @@ class LinkTask extends DefaultTask {
     @InputDirectory File objectDir;
     @OutputFile File lib;
     @Input String linker;
-
     @TaskAction void compile() {
         // Link & generate the library (.dll, .so, .dylib)
         lib.getParentFile().mkdirs();
         project.exec({
             commandLine(linker);
+            if ((project.IS_LINUX) && (project.IS_STATIC_BUILD)) {
+              args("rcs");
+              args("$lib");
+            }
             // Exclude parfait files (.bc)
             args(objectDir.listFiles().sort().findAll{ !it.getAbsolutePath().endsWith(".bc") });
             if (project.IS_WINDOWS) {
                 args("/out:$lib");
             } else {
-                args("-o", "$lib");
+                if (! ((project.IS_LINUX) && (project.IS_STATIC_BUILD))) {
+                    args("-o", "$lib");
+                }
             }
             if (project.IS_DEBUG_NATIVE && !project.IS_WINDOWS) args("-g");
             if (linkParams != null) args(linkParams);

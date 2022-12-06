@@ -31,20 +31,23 @@
 #include "AudioContext.h"
 #include "AudioDestination.h"
 #include "Logging.h"
+#include "MediaStrategy.h"
+#include "PlatformStrategies.h"
 #include "ScriptExecutionContext.h"
+#include <wtf/IsoMallocInlines.h>
 #include <wtf/MainThread.h>
 
 const unsigned EnabledInputChannels = 2;
 
 namespace WebCore {
 
-DefaultAudioDestinationNode::DefaultAudioDestinationNode(AudioContext& context)
-    : AudioDestinationNode(context, AudioDestination::hardwareSampleRate())
+WTF_MAKE_ISO_ALLOCATED_IMPL(DefaultAudioDestinationNode);
+
+DefaultAudioDestinationNode::DefaultAudioDestinationNode(BaseAudioContext& context, Optional<float> sampleRate)
+    : AudioDestinationNode(context)
+    , m_sampleRate(sampleRate.valueOr(AudioDestination::hardwareSampleRate()))
 {
-    // Node-specific default mixing rules.
-    m_channelCount = 2;
-    m_channelCountMode = Explicit;
-    m_channelInterpretation = AudioBus::Speakers;
+    initializeDefaultNodeOptions(2, ChannelCountMode::Explicit, ChannelInterpretation::Speakers);
 }
 
 DefaultAudioDestinationNode::~DefaultAudioDestinationNode()
@@ -57,6 +60,7 @@ void DefaultAudioDestinationNode::initialize()
     ASSERT(isMainThread());
     if (isInitialized())
         return;
+    ALWAYS_LOG(LOGIDENTIFIER);
 
     createDestination();
     AudioNode::initialize();
@@ -68,7 +72,9 @@ void DefaultAudioDestinationNode::uninitialize()
     if (!isInitialized())
         return;
 
+    ALWAYS_LOG(LOGIDENTIFIER);
     m_destination->stop();
+    m_destination = nullptr;
     m_numberOfInputChannels = 0;
 
     AudioNode::uninitialize();
@@ -79,11 +85,13 @@ void DefaultAudioDestinationNode::createDestination()
     float hardwareSampleRate = AudioDestination::hardwareSampleRate();
     LOG(WebAudio, ">>>> hardwareSampleRate = %f\n", hardwareSampleRate);
 
-    m_destination = AudioDestination::create(*this, m_inputDeviceId, m_numberOfInputChannels, channelCount(), hardwareSampleRate);
+    m_destination = platformStrategies()->mediaStrategy().createAudioDestination(*this, m_inputDeviceId, m_numberOfInputChannels, channelCount(), hardwareSampleRate);
 }
 
 void DefaultAudioDestinationNode::enableInput(const String& inputDeviceId)
 {
+    ALWAYS_LOG(LOGIDENTIFIER);
+
     ASSERT(isMainThread());
     if (m_numberOfInputChannels != EnabledInputChannels) {
         m_numberOfInputChannels = EnabledInputChannels;
@@ -98,11 +106,14 @@ void DefaultAudioDestinationNode::enableInput(const String& inputDeviceId)
     }
 }
 
-void DefaultAudioDestinationNode::startRendering()
+ExceptionOr<void> DefaultAudioDestinationNode::startRendering()
 {
     ASSERT(isInitialized());
-    if (isInitialized())
-        m_destination->start();
+    if (!isInitialized())
+        return Exception { InvalidStateError };
+
+    m_destination->start();
+    return { };
 }
 
 void DefaultAudioDestinationNode::resume(Function<void ()>&& function)
@@ -110,8 +121,7 @@ void DefaultAudioDestinationNode::resume(Function<void ()>&& function)
     ASSERT(isInitialized());
     if (isInitialized())
         m_destination->start();
-    if (auto scriptExecutionContext = context().scriptExecutionContext())
-        scriptExecutionContext->postTask(WTFMove(function));
+    context().postTask(WTFMove(function));
 }
 
 void DefaultAudioDestinationNode::suspend(Function<void ()>&& function)
@@ -119,16 +129,14 @@ void DefaultAudioDestinationNode::suspend(Function<void ()>&& function)
     ASSERT(isInitialized());
     if (isInitialized())
         m_destination->stop();
-    if (auto scriptExecutionContext = context().scriptExecutionContext())
-        scriptExecutionContext->postTask(WTFMove(function));
+    context().postTask(WTFMove(function));
 }
 
 void DefaultAudioDestinationNode::close(Function<void()>&& function)
 {
     ASSERT(isInitialized());
     uninitialize();
-    if (auto scriptExecutionContext = context().scriptExecutionContext())
-        scriptExecutionContext->postTask(WTFMove(function));
+    context().postTask(WTFMove(function));
 }
 
 unsigned DefaultAudioDestinationNode::maxChannelCount() const
@@ -143,6 +151,7 @@ ExceptionOr<void> DefaultAudioDestinationNode::setChannelCount(unsigned channelC
     // channels supported by the hardware.
 
     ASSERT(isMainThread());
+    ALWAYS_LOG(LOGIDENTIFIER, channelCount);
 
     if (!maxChannelCount() || channelCount > maxChannelCount())
         return Exception { InvalidStateError };
@@ -165,6 +174,11 @@ ExceptionOr<void> DefaultAudioDestinationNode::setChannelCount(unsigned channelC
 bool DefaultAudioDestinationNode::isPlaying()
 {
     return m_destination && m_destination->isPlaying();
+}
+
+unsigned DefaultAudioDestinationNode::framesPerBuffer() const
+{
+    return m_destination ? m_destination->framesPerBuffer() : 0.;
 }
 
 } // namespace WebCore

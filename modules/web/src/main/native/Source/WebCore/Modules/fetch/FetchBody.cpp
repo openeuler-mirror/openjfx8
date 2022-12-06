@@ -35,60 +35,66 @@
 #include "FetchHeaders.h"
 #include "HTTPHeaderValues.h"
 #include "HTTPParsers.h"
+#include "JSDOMPromiseDeferred.h"
 #include "ReadableStreamSource.h"
 #include <JavaScriptCore/ArrayBufferView.h>
 
 namespace WebCore {
 
-FetchBody FetchBody::extract(ScriptExecutionContext& context, Init&& value, String& contentType)
+ExceptionOr<FetchBody> FetchBody::extract(Init&& value, String& contentType)
 {
-    return WTF::switchOn(value, [&](RefPtr<Blob>& value) mutable {
+    return WTF::switchOn(value, [&](RefPtr<Blob>& value) mutable -> ExceptionOr<FetchBody> {
         Ref<const Blob> blob = value.releaseNonNull();
         if (!blob->type().isEmpty())
             contentType = blob->type();
         return FetchBody(WTFMove(blob));
-    }, [&](RefPtr<DOMFormData>& value) mutable {
+    }, [&](RefPtr<DOMFormData>& value) mutable -> ExceptionOr<FetchBody> {
         Ref<DOMFormData> domFormData = value.releaseNonNull();
-        auto formData = FormData::createMultiPart(domFormData.get(), &downcast<Document>(context));
+        auto formData = FormData::createMultiPart(domFormData.get());
         contentType = makeString("multipart/form-data; boundary=", formData->boundary().data());
         return FetchBody(WTFMove(formData));
-    }, [&](RefPtr<URLSearchParams>& value) mutable {
+    }, [&](RefPtr<URLSearchParams>& value) mutable -> ExceptionOr<FetchBody> {
         Ref<const URLSearchParams> params = value.releaseNonNull();
         contentType = HTTPHeaderValues::formURLEncodedContentType();
         return FetchBody(WTFMove(params));
-    }, [&](RefPtr<ArrayBuffer>& value) mutable {
+    }, [&](RefPtr<ArrayBuffer>& value) mutable -> ExceptionOr<FetchBody> {
         Ref<const ArrayBuffer> buffer = value.releaseNonNull();
         return FetchBody(WTFMove(buffer));
-    }, [&](RefPtr<ArrayBufferView>& value) mutable {
+    }, [&](RefPtr<ArrayBufferView>& value) mutable -> ExceptionOr<FetchBody> {
         Ref<const ArrayBufferView> buffer = value.releaseNonNull();
         return FetchBody(WTFMove(buffer));
-    }, [&](RefPtr<ReadableStream>& stream) mutable {
+    }, [&](RefPtr<ReadableStream>& stream) mutable -> ExceptionOr<FetchBody> {
+        if (stream->isDisturbed())
+            return Exception { TypeError, "Input body is disturbed."_s };
+        if (stream->isLocked())
+            return Exception { TypeError, "Input body is locked."_s };
+
         return FetchBody(stream.releaseNonNull());
-    }, [&](String& value) {
+    }, [&](String& value) -> ExceptionOr<FetchBody> {
         contentType = HTTPHeaderValues::textPlainContentType();
         return FetchBody(WTFMove(value));
     });
 }
 
-std::optional<FetchBody> FetchBody::fromFormData(FormData& formData)
+Optional<FetchBody> FetchBody::fromFormData(FormData& formData)
 {
     ASSERT(!formData.isEmpty());
 
     if (auto buffer = formData.asSharedBuffer()) {
         FetchBody body;
         body.m_consumer.setData(buffer.releaseNonNull());
-        return WTFMove(body);
+        return body;
     }
 
     auto url = formData.asBlobURL();
     if (!url.isNull()) {
         // FIXME: Properly set mime type and size of the blob.
-        Ref<const Blob> blob = Blob::deserialize(url, { }, 0, { });
+        Ref<const Blob> blob = Blob::deserialize(url, { }, { }, { });
         return FetchBody { WTFMove(blob) };
     }
 
     // FIXME: Support form data bodies.
-    return std::nullopt;
+    return WTF::nullopt;
 }
 
 void FetchBody::arrayBuffer(FetchBodyOwner& owner, Ref<DeferredPromise>&& promise)
@@ -122,6 +128,11 @@ void FetchBody::text(FetchBodyOwner& owner, Ref<DeferredPromise>&& promise)
     }
     m_consumer.setType(FetchBodyConsumer::Type::Text);
     consume(owner, WTFMove(promise));
+}
+
+void FetchBody::formData(FetchBodyOwner&, Ref<DeferredPromise>&& promise)
+{
+    promise.get().reject(NotSupportedError);
 }
 
 void FetchBody::consumeOnceLoadingFinished(FetchBodyConsumer::Type type, Ref<DeferredPromise>&& promise, const String& contentType)
@@ -163,8 +174,6 @@ void FetchBody::consume(FetchBodyOwner& owner, Ref<DeferredPromise>&& promise)
     m_consumer.resolve(WTFMove(promise), m_readableStream.get());
 }
 
-#if ENABLE(STREAMS_API)
-
 void FetchBody::consumeAsStream(FetchBodyOwner& owner, FetchBodySource& source)
 {
     bool closeStream = false;
@@ -186,7 +195,7 @@ void FetchBody::consumeAsStream(FetchBodyOwner& owner, FetchBodySource& source)
         owner.loadBlob(blobBody(), nullptr);
         m_data = nullptr;
     } else if (isFormData())
-        source.error("not implemented"_s);
+        source.error(Exception { NotSupportedError, "Not implemented"_s });
     else if (m_consumer.hasData())
         closeStream = source.enqueue(m_consumer.takeAsArrayBuffer());
     else
@@ -195,8 +204,6 @@ void FetchBody::consumeAsStream(FetchBodyOwner& owner, FetchBodySource& source)
     if (closeStream)
         source.close();
 }
-
-#endif
 
 void FetchBody::consumeArrayBuffer(Ref<DeferredPromise>&& promise)
 {
@@ -224,9 +231,9 @@ void FetchBody::consumeBlob(FetchBodyOwner& owner, Ref<DeferredPromise>&& promis
     m_data = nullptr;
 }
 
-void FetchBody::loadingFailed()
+void FetchBody::loadingFailed(const Exception& exception)
 {
-    m_consumer.loadingFailed();
+    m_consumer.loadingFailed(exception);
 }
 
 void FetchBody::loadingSucceeded()
@@ -234,14 +241,14 @@ void FetchBody::loadingSucceeded()
     m_consumer.loadingSucceeded();
 }
 
-RefPtr<FormData> FetchBody::bodyAsFormData(ScriptExecutionContext& context) const
+RefPtr<FormData> FetchBody::bodyAsFormData() const
 {
     if (isText())
         return FormData::create(UTF8Encoding().encode(textBody(), UnencodableHandling::Entities));
     if (isURLSearchParams())
         return FormData::create(UTF8Encoding().encode(urlSearchParamsBody().toString(), UnencodableHandling::Entities));
     if (isBlob()) {
-        RefPtr<FormData> body = FormData::create();
+        auto body = FormData::create();
         body->appendBlob(blobBody().url());
         return body;
     }
@@ -250,9 +257,7 @@ RefPtr<FormData> FetchBody::bodyAsFormData(ScriptExecutionContext& context) cons
     if (isArrayBufferView())
         return FormData::create(arrayBufferViewBody().baseAddress(), arrayBufferViewBody().byteLength());
     if (isFormData()) {
-        ASSERT(!context.isWorkerGlobalScope());
-        RefPtr<FormData> body = const_cast<FormData*>(&formDataBody());
-        body->generateFiles(&downcast<Document>(context));
+        auto body = makeRef(const_cast<FormData&>(formDataBody()));
         return body;
     }
     if (auto* data = m_consumer.data())
@@ -274,7 +279,7 @@ FetchBody::TakenData FetchBody::take()
     if (isBlob()) {
         auto body = FormData::create();
         body->appendBlob(blobBody().url());
-        return WTFMove(body);
+        return TakenData { WTFMove(body) };
     }
 
     if (isFormData())

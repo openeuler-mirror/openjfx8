@@ -61,6 +61,7 @@ void DOMGCOutputConstraint::executeImpl(SlotVisitor& visitor)
     m_clientData.forEachOutputConstraintSpace(
         [&] (Subspace& subspace) {
             auto func = [] (SlotVisitor& visitor, HeapCell* heapCell, HeapCell::Kind) {
+                SetRootMarkReasonScope rootScope(visitor, SlotVisitor::RootMarkReason::DOMGCOutput);
                 JSCell* cell = static_cast<JSCell*>(heapCell);
                 cell->methodTable(visitor.vm())->visitOutputConstraints(cell, visitor);
             };

@@ -34,7 +34,17 @@
 typedef struct _GdkEventScroll GdkEventScroll;
 #endif
 
+namespace WTF {
+class TextStream;
+}
+
 namespace WebCore {
+
+enum class WheelEventProcessingSteps : uint8_t {
+    ScrollingThread                 = 1 << 0,
+    MainThreadForScrolling          = 1 << 1,
+    MainThreadForDOMEventDispatch   = 1 << 2,
+};
 
 // The ScrollByPixelWheelEvent is a fine-grained event that specifies the precise number of pixels to scroll.
 // It is sent directly by touch pads on macOS, or synthesized when platforms generate line-by-line scrolling events.
@@ -48,7 +58,7 @@ enum PlatformWheelEventGranularity : uint8_t {
     ScrollByPixelWheelEvent,
 };
 
-#if ENABLE(ASYNC_SCROLLING)
+#if ENABLE(KINETIC_SCROLLING)
 
 enum PlatformWheelEventPhase : uint8_t {
     PlatformWheelEventPhaseNone = 0,
@@ -59,6 +69,8 @@ enum PlatformWheelEventPhase : uint8_t {
     PlatformWheelEventPhaseCancelled = 1 << 4,
     PlatformWheelEventPhaseMayBegin = 1 << 5,
 };
+
+WTF::TextStream& operator<<(WTF::TextStream&, PlatformWheelEventPhase);
 
 #endif
 
@@ -114,6 +126,7 @@ public:
 
     float deltaX() const { return m_deltaX; }
     float deltaY() const { return m_deltaY; }
+    FloatSize delta() const { return { m_deltaX, m_deltaY}; }
 
     float wheelTicksX() const { return m_wheelTicksX; }
     float wheelTicksY() const { return m_wheelTicksY; }
@@ -126,12 +139,14 @@ public:
 
 #if PLATFORM(GTK)
     explicit PlatformWheelEvent(GdkEventScroll*);
-    FloatPoint swipeVelocity() const;
+#endif
+
+#if PLATFORM(COCOA) || PLATFORM(GTK) || USE(LIBWPE)
+    bool hasPreciseScrollingDeltas() const { return m_hasPreciseScrollingDeltas; }
+    void setHasPreciseScrollingDeltas(bool hasPreciseScrollingDeltas) { m_hasPreciseScrollingDeltas = hasPreciseScrollingDeltas; }
 #endif
 
 #if PLATFORM(COCOA)
-    bool hasPreciseScrollingDeltas() const { return m_hasPreciseScrollingDeltas; }
-    void setHasPreciseScrollingDeltas(bool hasPreciseScrollingDeltas) { m_hasPreciseScrollingDeltas = hasPreciseScrollingDeltas; }
     unsigned scrollCount() const { return m_scrollCount; }
     float unacceleratedScrollingDeltaX() const { return m_unacceleratedScrollingDeltaX; }
     float unacceleratedScrollingDeltaY() const { return m_unacceleratedScrollingDeltaY; }
@@ -146,16 +161,20 @@ public:
     bool useLatchedEventElement() const { return false; }
 #endif
 
-#if ENABLE(ASYNC_SCROLLING)
+#if ENABLE(KINETIC_SCROLLING)
     PlatformWheelEventPhase phase() const { return m_phase; }
     PlatformWheelEventPhase momentumPhase() const { return m_momentumPhase; }
+
+    bool isGestureBegin() const;
+    bool isGestureCancel() const;
+
     bool isEndOfNonMomentumScroll() const;
     bool isTransitioningToMomentumScroll() const;
+    FloatPoint swipeVelocity() const;
 #endif
 
 #if PLATFORM(WIN)
     PlatformWheelEvent(HWND, WPARAM, LPARAM, bool isMouseHWheel);
-    PlatformWheelEvent(HWND, const FloatSize& delta, const FloatPoint& location);
 #endif
 
 #if PLATFORM(JAVA)
@@ -177,12 +196,14 @@ protected:
     // Scrolling velocity in pixels per second.
     FloatSize m_scrollingVelocity;
 
-#if ENABLE(ASYNC_SCROLLING)
+#if ENABLE(KINETIC_SCROLLING)
     PlatformWheelEventPhase m_phase { PlatformWheelEventPhaseNone };
     PlatformWheelEventPhase m_momentumPhase { PlatformWheelEventPhaseNone };
 #endif
-#if PLATFORM(COCOA)
+#if PLATFORM(COCOA) || PLATFORM(GTK) || USE(LIBWPE)
     bool m_hasPreciseScrollingDeltas { false };
+#endif
+#if PLATFORM(COCOA)
     unsigned m_scrollCount { 0 };
     float m_unacceleratedScrollingDeltaX { 0 };
     float m_unacceleratedScrollingDeltaY { 0 };
@@ -202,6 +223,7 @@ inline bool PlatformWheelEvent::useLatchedEventElement() const
 
 inline bool PlatformWheelEvent::shouldConsiderLatching() const
 {
+    // FIXME: This should disallow latching if the delta is zero.
     return m_phase == PlatformWheelEventPhaseBegan || m_phase == PlatformWheelEventPhaseMayBegin;
 }
 
@@ -215,9 +237,20 @@ inline bool PlatformWheelEvent::isEndOfMomentumScroll() const
     return m_phase == PlatformWheelEventPhaseNone && m_momentumPhase == PlatformWheelEventPhaseEnded;
 }
 
-#endif
+#endif // ENABLE(ASYNC_SCROLLING)
 
-#if PLATFORM(COCOA) || PLATFORM(GTK)
+#if ENABLE(KINETIC_SCROLLING)
+
+inline bool PlatformWheelEvent::isGestureBegin() const
+{
+    return m_phase == PlatformWheelEventPhaseMayBegin
+        || m_phase == PlatformWheelEventPhaseBegan;
+}
+
+inline bool PlatformWheelEvent::isGestureCancel() const
+{
+    return m_phase == PlatformWheelEventPhaseCancelled;
+}
 
 inline bool PlatformWheelEvent::isEndOfNonMomentumScroll() const
 {
@@ -228,6 +261,16 @@ inline bool PlatformWheelEvent::isTransitioningToMomentumScroll() const
 {
     return m_phase == PlatformWheelEventPhaseNone && m_momentumPhase == PlatformWheelEventPhaseBegan;
 }
-#endif
+
+inline FloatPoint PlatformWheelEvent::swipeVelocity() const
+{
+    // The swiping velocity is stored in the deltas of the event declaring it.
+    return isTransitioningToMomentumScroll() ? FloatPoint(m_wheelTicksX, m_wheelTicksY) : FloatPoint();
+}
+
+#endif // ENABLE(KINETIC_SCROLLING)
+
+WTF::TextStream& operator<<(WTF::TextStream&, const PlatformWheelEvent&);
+WTF::TextStream& operator<<(WTF::TextStream&, WheelEventProcessingSteps);
 
 } // namespace WebCore

@@ -33,6 +33,8 @@ MACRO_INSTRUCTIONS =
      "emit",
      "addi",
      "andi",
+     "andf",
+     "andd",
      "lshifti",
      "lshiftp",
      "lshiftq",
@@ -42,31 +44,71 @@ MACRO_INSTRUCTIONS =
      "negq",
      "noti",
      "ori",
+     "orf",
+     "ord",
+     "orh",
      "rshifti",
      "urshifti",
      "rshiftp",
      "urshiftp",
      "rshiftq",
      "urshiftq",
+     "lrotatei",
+     "lrotateq",
+     "rrotatei",
+     "rrotateq",
      "subi",
      "xori",
      "loadi",
      "loadis",
      "loadb",
-     "loadbs",
+     "loadbsi",
+     "loadbsq",
      "loadh",
-     "loadhs",
+     "loadhsi",
+     "loadhsq",
      "storei",
+     "storeh",
      "storeb",
+     "loadf",
      "loadd",
      "moved",
+     "storef",
      "stored",
+     "addf",
      "addd",
+     "divf",
      "divd",
+     "subf",
      "subd",
+     "mulf",
      "muld",
+     "sqrtf",
      "sqrtd",
+     "floorf",
+     "floord",
+     "roundf",
+     "roundd",
+     "truncatef",
+     "truncated",
+     "truncatef2i",
+     "truncatef2q",
+     "truncated2q",
+     "truncated2i",
+     "truncatef2is",
+     "truncated2is",
+     "truncatef2qs",
+     "truncated2qs",
      "ci2d",
+     "ci2ds",
+     "ci2f",
+     "ci2fs",
+     "cq2f",
+     "cq2fs",
+     "cq2d",
+     "cq2ds",
+     "cd2f",
+     "cf2d",
      "fii2d", # usage: fii2d <gpr with least significant bits>, <gpr with most significant bits>, <fpr>
      "fd2ii", # usage: fd2ii <fpr>, <gpr with least significant bits>, <gpr with most significant bits>
      "fq2d",
@@ -83,6 +125,13 @@ MACRO_INSTRUCTIONS =
      "bdgtequn",
      "bdltun",
      "bdltequn",
+     "bfeq",
+     "bfgt",
+     "bflt",
+     "bfgtun",
+     "bfgtequn",
+     "bfltun",
+     "bfltequn",
      "btd2i",
      "td2i",
      "bcd2i",
@@ -252,26 +301,64 @@ MACRO_INSTRUCTIONS =
      "memfence",
      "tagReturnAddress",
      "untagReturnAddress",
-     "removeCodePtrTag"
+     "removeCodePtrTag",
+     "untagArrayPtr",    
+     "tzcnti",
+     "tzcntq",
+     "lzcnti",
+     "lzcntq",
+     "absf",
+     "absd",
+     "negf",
+     "negd",
+     "ceilf",
+     "ceild",
+     "cfeq",
+     "cdeq",
+     "cfneq",
+     "cfnequn",
+     "cdneq",
+     "cdnequn",
+     "cflt",
+     "cdlt",
+     "cflteq",
+     "cdlteq",
+     "cfgt",
+     "cdgt",
+     "cfgteq",
+     "cdgteq",
+     "fi2f",
+     "ff2i",
+     "tls_loadp",
+     "tls_storep",
     ]
 
 X86_INSTRUCTIONS =
     [
      "cdqi",
-     "idivi"
+     "idivi",
+     "udivi",
+     "cqoq",
+     "idivq",
+     "udivq",
     ]
 
 ARM_INSTRUCTIONS =
     [
      "clrbp",
-     "mvlbl"
+     "mvlbl",
+     "globaladdr"
     ]
 
 ARM64_INSTRUCTIONS =
     [
+     "bfiq", # Bit field insert <source reg> <last bit written> <width immediate> <dest reg>
      "pcrtoaddr",   # Address from PC relative offset - adr instruction
-     "nopFixCortexA53Err835769", # nop on Cortex-A53 (nothing otherwise)
-     "globaladdr"
+     "globaladdr",
+     "divi",
+     "divis",
+     "divq",
+     "divqs",
     ]
 
 RISC_INSTRUCTIONS =
@@ -323,3 +410,7 @@ def hasFallThrough(instruction)
     instruction != "ret" and instruction != "jmp"
 end
 
+def isPowerOfTwo(value)
+    return false if value <= 0
+    (value & (value - 1)).zero?
+end

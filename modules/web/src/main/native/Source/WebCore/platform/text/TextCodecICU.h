@@ -35,7 +35,7 @@ using ICUConverterPtr = std::unique_ptr<UConverter, void (*)(UConverter*)>;
 
 class TextCodecICU : public TextCodec {
 public:
-    TextCodecICU(const char* encoding, const char* canonicalConverterName);
+    explicit TextCodecICU(const char* encoding, const char* canonicalConverterName);
     virtual ~TextCodecICU();
 
     static void registerEncodingNames(EncodingNameRegistrar);
@@ -59,9 +59,9 @@ private:
 };
 
 struct ICUConverterWrapper {
-    ICUConverterPtr converter { nullptr, ucnv_close };
+    WTF_MAKE_STRUCT_FAST_ALLOCATED;
 
-    WTF_MAKE_FAST_ALLOCATED;
+    ICUConverterPtr converter { nullptr, ucnv_close };
 };
 
 } // namespace WebCore

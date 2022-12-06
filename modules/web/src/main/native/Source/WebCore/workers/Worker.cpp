@@ -28,6 +28,7 @@
 #include "Worker.h"
 
 #include "ContentSecurityPolicy.h"
+#include "ErrorEvent.h"
 #include "Event.h"
 #include "EventNames.h"
 #include "InspectorInstrumentation.h"
@@ -39,11 +40,16 @@
 #include "WorkerScriptLoader.h"
 #include "WorkerThread.h"
 #include <JavaScriptCore/IdentifiersFactory.h>
+#include <JavaScriptCore/ScriptCallStack.h>
 #include <wtf/HashSet.h>
+#include <wtf/IsoMallocInlines.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/Scope.h>
 
 namespace WebCore {
+
+WTF_MAKE_ISO_ALLOCATED_IMPL(Worker);
 
 static HashSet<Worker*>& allWorkers()
 {
@@ -57,8 +63,9 @@ void Worker::networkStateChanged(bool isOnLine)
         worker->notifyNetworkStateChange(isOnLine);
 }
 
-inline Worker::Worker(ScriptExecutionContext& context, JSC::RuntimeFlags runtimeFlags)
+inline Worker::Worker(ScriptExecutionContext& context, JSC::RuntimeFlags runtimeFlags, const Options& options)
     : ActiveDOMObject(&context)
+    , m_name(options.name)
     , m_identifier("worker:" + Inspector::IdentifiersFactory::createIdentifier())
     , m_contextProxy(WorkerGlobalScopeProxy::create(*this))
     , m_runtimeFlags(runtimeFlags)
@@ -73,14 +80,14 @@ inline Worker::Worker(ScriptExecutionContext& context, JSC::RuntimeFlags runtime
     ASSERT_UNUSED(addResult, addResult.isNewEntry);
 }
 
-ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, JSC::RuntimeFlags runtimeFlags, const String& url)
+ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, JSC::RuntimeFlags runtimeFlags, const String& url, const Options& options)
 {
     ASSERT(isMainThread());
 
     // We don't currently support nested workers, so workers can only be created from documents.
     ASSERT_WITH_SECURITY_IMPLICATION(context.isDocument());
 
-    auto worker = adoptRef(*new Worker(context, runtimeFlags));
+    auto worker = adoptRef(*new Worker(context, runtimeFlags, options));
 
     worker->suspendIfNeeded();
 
@@ -92,7 +99,7 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, JSC::Ru
     worker->m_shouldBypassMainWorldContentSecurityPolicy = shouldBypassMainWorldContentSecurityPolicy;
 
     // The worker context does not exist while loading, so we must ensure that the worker object is not collected, nor are its event listeners.
-    worker->setPendingActivity(worker.ptr());
+    worker->setPendingActivity(worker.get());
 
     // https://html.spec.whatwg.org/multipage/workers.html#official-moment-of-creation
     worker->m_workerCreationTime = MonotonicTime::now();
@@ -103,13 +110,13 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, JSC::Ru
     ResourceRequest request { scriptURL.releaseReturnValue() };
     request.setInitiatorIdentifier(worker->m_identifier);
 
-    FetchOptions options;
-    options.mode = FetchOptions::Mode::SameOrigin;
-    options.cache = FetchOptions::Cache::Default;
-    options.redirect = FetchOptions::Redirect::Follow;
-    options.destination = FetchOptions::Destination::Worker;
-    worker->m_scriptLoader->loadAsynchronously(context, WTFMove(request), WTFMove(options), contentSecurityPolicyEnforcement, ServiceWorkersMode::All, worker);
-    return WTFMove(worker);
+    FetchOptions fetchOptions;
+    fetchOptions.mode = FetchOptions::Mode::SameOrigin;
+    fetchOptions.cache = FetchOptions::Cache::Default;
+    fetchOptions.redirect = FetchOptions::Redirect::Follow;
+    fetchOptions.destination = FetchOptions::Destination::Worker;
+    worker->m_scriptLoader->loadAsynchronously(context, WTFMove(request), WTFMove(fetchOptions), contentSecurityPolicyEnforcement, ServiceWorkersMode::All, worker);
+    return worker;
 }
 
 Worker::~Worker()
@@ -120,10 +127,10 @@ Worker::~Worker()
     m_contextProxy.workerObjectDestroyed();
 }
 
-ExceptionOr<void> Worker::postMessage(JSC::ExecState& state, JSC::JSValue messageValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer)
+ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, PostMessageOptions&& options)
 {
     Vector<RefPtr<MessagePort>> ports;
-    auto message = SerializedScriptValue::create(state, messageValue, WTFMove(transfer), ports, SerializationContext::WorkerPostMessage);
+    auto message = SerializedScriptValue::create(state, messageValue, WTFMove(options.transfer), ports, SerializationContext::WorkerPostMessage);
     if (message.hasException())
         return message.releaseException();
 
@@ -139,12 +146,7 @@ ExceptionOr<void> Worker::postMessage(JSC::ExecState& state, JSC::JSValue messag
 void Worker::terminate()
 {
     m_contextProxy.terminateWorkerGlobalScope();
-}
-
-bool Worker::canSuspendForDocumentSuspension() const
-{
-    // FIXME: It is not currently possible to suspend a worker, so pages with workers can not go into page cache.
-    return false;
+    m_wasTerminated = true;
 }
 
 const char* Worker::activeDOMObjectName() const
@@ -157,9 +159,25 @@ void Worker::stop()
     terminate();
 }
 
-bool Worker::hasPendingActivity() const
+void Worker::suspend(ReasonForSuspension reason)
 {
-    return m_contextProxy.hasPendingActivity() || ActiveDOMObject::hasPendingActivity();
+    if (reason == ReasonForSuspension::BackForwardCache) {
+        m_contextProxy.suspendForBackForwardCache();
+        m_isSuspendedForBackForwardCache = true;
+    }
+}
+
+void Worker::resume()
+{
+    if (m_isSuspendedForBackForwardCache) {
+        m_contextProxy.resumeForBackForwardCache();
+        m_isSuspendedForBackForwardCache = false;
+    }
+}
+
+bool Worker::virtualHasPendingActivity() const
+{
+    return m_contextProxy.hasPendingActivity();
 }
 
 void Worker::notifyNetworkStateChange(bool isOnLine)
@@ -177,20 +195,39 @@ void Worker::didReceiveResponse(unsigned long identifier, const ResourceResponse
 
 void Worker::notifyFinished()
 {
+    auto clearLoader = makeScopeExit([this] {
+        m_scriptLoader = nullptr;
+        unsetPendingActivity(*this);
+    });
+
     auto* context = scriptExecutionContext();
-    PAL::SessionID sessionID = context ? context->sessionID() : PAL::SessionID();
+    if (!context)
+        return;
 
-    if (m_scriptLoader->failed() || !sessionID.isValid())
-        dispatchEvent(Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::Yes));
-    else {
-        bool isOnline = platformStrategies()->loaderStrategy()->isOnLine();
-        const ContentSecurityPolicyResponseHeaders& contentSecurityPolicyResponseHeaders = m_contentSecurityPolicyResponseHeaders ? m_contentSecurityPolicyResponseHeaders.value() : scriptExecutionContext()->contentSecurityPolicy()->responseHeaders();
-        m_contextProxy.startWorkerGlobalScope(m_scriptLoader->url(), scriptExecutionContext()->userAgent(m_scriptLoader->url()), isOnline, m_scriptLoader->script(), contentSecurityPolicyResponseHeaders, m_shouldBypassMainWorldContentSecurityPolicy, m_workerCreationTime, m_runtimeFlags, sessionID);
-        InspectorInstrumentation::scriptImported(*scriptExecutionContext(), m_scriptLoader->identifier(), m_scriptLoader->script());
+    if (m_scriptLoader->failed()) {
+        queueTaskToDispatchEvent(*this, TaskSource::DOMManipulation, Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::Yes));
+        return;
     }
-    m_scriptLoader = nullptr;
 
-    unsetPendingActivity(this);
+    bool isOnline = platformStrategies()->loaderStrategy()->isOnLine();
+    const ContentSecurityPolicyResponseHeaders& contentSecurityPolicyResponseHeaders = m_contentSecurityPolicyResponseHeaders ? m_contentSecurityPolicyResponseHeaders.value() : context->contentSecurityPolicy()->responseHeaders();
+    ReferrerPolicy referrerPolicy = ReferrerPolicy::EmptyString;
+    if (auto policy = parseReferrerPolicy(m_scriptLoader->referrerPolicy(), ReferrerPolicySource::HTTPHeader))
+        referrerPolicy = *policy;
+    m_contextProxy.startWorkerGlobalScope(m_scriptLoader->url(), m_name, context->userAgent(m_scriptLoader->url()), isOnline, m_scriptLoader->script(), contentSecurityPolicyResponseHeaders, m_shouldBypassMainWorldContentSecurityPolicy, m_workerCreationTime, referrerPolicy, m_runtimeFlags);
+    InspectorInstrumentation::scriptImported(*context, m_scriptLoader->identifier(), m_scriptLoader->script());
+}
+
+void Worker::dispatchEvent(Event& event)
+{
+    if (m_wasTerminated)
+        return;
+
+    AbstractWorker::dispatchEvent(event);
+    if (is<ErrorEvent>(event) && !event.defaultPrevented() && event.isTrusted() && scriptExecutionContext()) {
+        auto& errorEvent = downcast<ErrorEvent>(event);
+        scriptExecutionContext()->reportException(errorEvent.message(), errorEvent.lineno(), errorEvent.colno(), errorEvent.filename(), nullptr, nullptr);
+    }
 }
 
 } // namespace WebCore

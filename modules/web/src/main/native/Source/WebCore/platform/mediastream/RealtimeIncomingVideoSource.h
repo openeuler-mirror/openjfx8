@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,41 +34,62 @@
 
 #include "LibWebRTCMacros.h"
 #include "RealtimeMediaSource.h"
-#include <webrtc/api/mediastreaminterface.h>
+
+ALLOW_UNUSED_PARAMETERS_BEGIN
+
+#include <webrtc/api/media_stream_interface.h>
+
+ALLOW_UNUSED_PARAMETERS_END
+
 #include <wtf/RetainPtr.h>
 
 namespace WebCore {
 
 class CaptureDevice;
 
-class RealtimeIncomingVideoSource : public RealtimeMediaSource, private rtc::VideoSinkInterface<webrtc::VideoFrame> {
+class RealtimeIncomingVideoSource
+    : public RealtimeMediaSource
+    , private rtc::VideoSinkInterface<webrtc::VideoFrame>
+    , private webrtc::ObserverInterface
+{
 public:
     static Ref<RealtimeIncomingVideoSource> create(rtc::scoped_refptr<webrtc::VideoTrackInterface>&&, String&&);
-    ~RealtimeIncomingVideoSource()
-    {
-        stop();
-    }
-
-    void setSourceTrack(rtc::scoped_refptr<webrtc::VideoTrackInterface>&&);
+    ~RealtimeIncomingVideoSource();
 
 protected:
     RealtimeIncomingVideoSource(rtc::scoped_refptr<webrtc::VideoTrackInterface>&&, String&&);
 
-    RealtimeMediaSourceSettings m_currentSettings;
+#if !RELEASE_LOG_DISABLED
+    const char* logClassName() const final { return "RealtimeIncomingVideoSource"; }
+#endif
 
 private:
     // RealtimeMediaSource API
     void startProducingData() final;
     void stopProducingData()  final;
+    void settingsDidChange(OptionSet<RealtimeMediaSourceSettings::Flag>) final;
 
-    const RealtimeMediaSourceCapabilities& capabilities() const final;
-    const RealtimeMediaSourceSettings& settings() const final;
+    const RealtimeMediaSourceCapabilities& capabilities() final;
+    const RealtimeMediaSourceSettings& settings() final;
 
-    bool applySize(const IntSize&) final { return true; }
+    bool isIncomingVideoSource() const final { return true; }
 
+    // webrtc::ObserverInterface API
+    void OnChanged() final;
+
+    Optional<RealtimeMediaSourceSettings> m_currentSettings;
     rtc::scoped_refptr<webrtc::VideoTrackInterface> m_videoTrack;
+
+#if !RELEASE_LOG_DISABLED
+    mutable RefPtr<const Logger> m_logger;
+    const void* m_logIdentifier;
+#endif
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::RealtimeIncomingVideoSource)
+static bool isType(const WebCore::RealtimeMediaSource& source) { return source.isIncomingVideoSource(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // USE(LIBWEBRTC)

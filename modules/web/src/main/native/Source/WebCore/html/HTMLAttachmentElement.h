@@ -27,22 +27,23 @@
 
 #if ENABLE(ATTACHMENT_ELEMENT)
 
-#include "AttachmentTypes.h"
 #include "HTMLElement.h"
+#include "Image.h"
 
 namespace WebCore {
 
-class AttachmentDataReader;
 class File;
 class HTMLImageElement;
-class HTMLVideoElement;
 class RenderAttachment;
+class ShareableBitmap;
 class SharedBuffer;
 
 class HTMLAttachmentElement final : public HTMLElement {
     WTF_MAKE_ISO_ALLOCATED(HTMLAttachmentElement);
 public:
     static Ref<HTMLAttachmentElement> create(const QualifiedName&, Document&);
+    static const String& getAttachmentIdentifier(HTMLImageElement&);
+    static URL archiveResourceURL(const String&);
 
     WEBCORE_EXPORT URL blobURL() const;
     WEBCORE_EXPORT File* file() const;
@@ -50,22 +51,27 @@ public:
     enum class UpdateDisplayAttributes { No, Yes };
     void setFile(RefPtr<File>&&, UpdateDisplayAttributes = UpdateDisplayAttributes::No);
 
-    String uniqueIdentifier() const { return m_uniqueIdentifier; }
+    const String& uniqueIdentifier() const { return m_uniqueIdentifier; }
     void setUniqueIdentifier(const String& uniqueIdentifier) { m_uniqueIdentifier = uniqueIdentifier; }
 
-    WEBCORE_EXPORT void updateFileWithData(Ref<SharedBuffer>&& data, std::optional<String>&& newContentType = std::nullopt, std::optional<String>&& newFilename = std::nullopt);
+    void copyNonAttributePropertiesFromElement(const Element&) final;
+
+    WEBCORE_EXPORT void updateAttributes(Optional<uint64_t>&& newFileSize, const String& newContentType, const String& newFilename);
+    WEBCORE_EXPORT void updateEnclosingImageWithData(const String& contentType, Ref<SharedBuffer>&& data);
+    WEBCORE_EXPORT void updateThumbnail(const RefPtr<Image>& thumbnail);
 
     InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) final;
     void removedFromAncestor(RemovalType, ContainerNode&) final;
 
+    const String& ensureUniqueIdentifier();
+    bool hasEnclosingImage() const;
+
     WEBCORE_EXPORT String attachmentTitle() const;
+    String attachmentTitleForDisplay() const;
     String attachmentType() const;
     String attachmentPath() const;
-
+    RefPtr<Image> thumbnail() const { return m_thumbnail; }
     RenderAttachment* renderer() const;
-
-    WEBCORE_EXPORT void requestInfo(Function<void(const AttachmentInfo&)>&& callback);
-    void destroyReader(AttachmentDataReader&);
 
 private:
     HTMLAttachmentElement(const QualifiedName&, Document&);
@@ -73,18 +79,18 @@ private:
 
     RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
     bool shouldSelectOnMouseDown() final {
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
         return false;
 #else
         return true;
 #endif
     }
     bool canContainRangeEndPoint() const final { return false; }
-    void parseAttribute(const QualifiedName&, const AtomicString&) final;
+    void parseAttribute(const QualifiedName&, const AtomString&) final;
 
     RefPtr<File> m_file;
-    Vector<std::unique_ptr<AttachmentDataReader>> m_attachmentReaders;
     String m_uniqueIdentifier;
+    RefPtr<Image> m_thumbnail;
 };
 
 } // namespace WebCore

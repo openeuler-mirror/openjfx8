@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,7 +27,7 @@
 #include "BAssert.h"
 #include "Chunk.h"
 #include "Deallocator.h"
-#include "DebugHeap.h"
+#include "Environment.h"
 #include "Heap.h"
 #include "PerProcess.h"
 #include "Sizes.h"
@@ -38,9 +38,9 @@ namespace bmalloc {
 
 Allocator::Allocator(Heap& heap, Deallocator& deallocator)
     : m_heap(heap)
-    , m_debugHeap(heap.debugHeap())
     , m_deallocator(deallocator)
 {
+    BASSERT(!Environment::get()->isDebugHeapEnabled());
     for (size_t sizeClass = 0; sizeClass < sizeClassCount; ++sizeClass)
         m_bumpAllocators[sizeClass].init(objectSize(sizeClass));
 }
@@ -50,67 +50,33 @@ Allocator::~Allocator()
     scavenge();
 }
 
-void* Allocator::tryAllocate(size_t size)
-{
-    if (m_debugHeap)
-        return m_debugHeap->malloc(size);
-
-    if (size <= smallMax)
-        return allocate(size);
-
-    std::unique_lock<Mutex> lock(Heap::mutex());
-    return m_heap.tryAllocateLarge(lock, alignment, size);
-}
-
-void* Allocator::allocate(size_t alignment, size_t size)
-{
-    bool crashOnFailure = true;
-    return allocateImpl(alignment, size, crashOnFailure);
-}
-
-void* Allocator::tryAllocate(size_t alignment, size_t size)
-{
-    bool crashOnFailure = false;
-    return allocateImpl(alignment, size, crashOnFailure);
-}
-
-void* Allocator::allocateImpl(size_t alignment, size_t size, bool crashOnFailure)
+void* Allocator::allocateImpl(size_t alignment, size_t size, FailureAction action)
 {
     BASSERT(isPowerOfTwo(alignment));
-
-    if (m_debugHeap)
-        return m_debugHeap->memalign(alignment, size, crashOnFailure);
 
     if (!size)
         size = alignment;
 
     if (size <= smallMax && alignment <= smallMax)
-        return allocate(roundUpToMultipleOf(alignment, size));
+        return allocateImpl(roundUpToMultipleOf(alignment, size), action);
 
-    std::unique_lock<Mutex> lock(Heap::mutex());
-    if (crashOnFailure)
-        return m_heap.allocateLarge(lock, alignment, size);
-    return m_heap.tryAllocateLarge(lock, alignment, size);
+    return allocateLarge(size, action);
 }
 
-void* Allocator::reallocate(void* object, size_t newSize)
+void* Allocator::reallocateImpl(void* object, size_t newSize, FailureAction action)
 {
-    if (m_debugHeap)
-        return m_debugHeap->realloc(object, newSize);
+    if (!object)
+        return allocateImpl(newSize, action);
 
     size_t oldSize = 0;
-    switch (objectType(m_heap.kind(), object)) {
+    switch (objectType(m_heap, object)) {
     case ObjectType::Small: {
-        BASSERT(objectType(m_heap.kind(), nullptr) == ObjectType::Small);
-        if (!object)
-            break;
-
         size_t sizeClass = Object(object).page()->sizeClass();
         oldSize = objectSize(sizeClass);
         break;
     }
     case ObjectType::Large: {
-        std::unique_lock<Mutex> lock(Heap::mutex());
+        UniqueLockHolder lock(Heap::mutex());
         oldSize = m_heap.largeSize(lock, object);
 
         if (newSize < oldSize && newSize > smallMax) {
@@ -121,7 +87,12 @@ void* Allocator::reallocate(void* object, size_t newSize)
     }
     }
 
-    void* result = allocate(newSize);
+    void* result = nullptr;
+    result = allocateImpl(newSize, action);
+    if (!result) {
+        BASSERT(action == FailureAction::ReturnNull);
+        return nullptr;
+    }
     size_t copySize = std::min(oldSize, newSize);
     memcpy(result, object, copySize);
     m_deallocator.deallocate(object);
@@ -147,54 +118,55 @@ void Allocator::scavenge()
     }
 }
 
-BNO_INLINE void Allocator::refillAllocatorSlowCase(BumpAllocator& allocator, size_t sizeClass)
+BNO_INLINE void Allocator::refillAllocatorSlowCase(BumpAllocator& allocator, size_t sizeClass, FailureAction action)
 {
     BumpRangeCache& bumpRangeCache = m_bumpRangeCaches[sizeClass];
 
-    std::unique_lock<Mutex> lock(Heap::mutex());
+    UniqueLockHolder lock(Heap::mutex());
     m_deallocator.processObjectLog(lock);
-    m_heap.allocateSmallBumpRanges(lock, sizeClass, allocator, bumpRangeCache, m_deallocator.lineCache(lock));
+    m_heap.allocateSmallBumpRanges(lock, sizeClass, allocator, bumpRangeCache, m_deallocator.lineCache(lock), action);
 }
 
-BINLINE void Allocator::refillAllocator(BumpAllocator& allocator, size_t sizeClass)
+BINLINE void Allocator::refillAllocator(BumpAllocator& allocator, size_t sizeClass, FailureAction action)
 {
     BumpRangeCache& bumpRangeCache = m_bumpRangeCaches[sizeClass];
     if (!bumpRangeCache.size())
-        return refillAllocatorSlowCase(allocator, sizeClass);
+        return refillAllocatorSlowCase(allocator, sizeClass, action);
     return allocator.refill(bumpRangeCache.pop());
 }
 
-BNO_INLINE void* Allocator::allocateLarge(size_t size)
+BNO_INLINE void* Allocator::allocateLarge(size_t size, FailureAction action)
 {
-    std::unique_lock<Mutex> lock(Heap::mutex());
-    return m_heap.allocateLarge(lock, alignment, size);
+    UniqueLockHolder lock(Heap::mutex());
+    return m_heap.allocateLarge(lock, alignment, size, action);
 }
 
-BNO_INLINE void* Allocator::allocateLogSizeClass(size_t size)
+BNO_INLINE void* Allocator::allocateLogSizeClass(size_t size, FailureAction action)
 {
     size_t sizeClass = bmalloc::sizeClass(size);
     BumpAllocator& allocator = m_bumpAllocators[sizeClass];
     if (!allocator.canAllocate())
-        refillAllocator(allocator, sizeClass);
+        refillAllocator(allocator, sizeClass, action);
+    if (action == FailureAction::ReturnNull && !allocator.canAllocate())
+        return nullptr;
     return allocator.allocate();
 }
 
-void* Allocator::allocateSlowCase(size_t size)
+void* Allocator::allocateSlowCase(size_t size, FailureAction action)
 {
-    if (m_debugHeap)
-        return m_debugHeap->malloc(size);
-
     if (size <= maskSizeClassMax) {
         size_t sizeClass = bmalloc::maskSizeClass(size);
         BumpAllocator& allocator = m_bumpAllocators[sizeClass];
-        refillAllocator(allocator, sizeClass);
+        refillAllocator(allocator, sizeClass, action);
+        if (action == FailureAction::ReturnNull && !allocator.canAllocate())
+            return nullptr;
         return allocator.allocate();
     }
 
     if (size <= smallMax)
-        return allocateLogSizeClass(size);
+        return allocateLogSizeClass(size, action);
 
-    return allocateLarge(size);
+    return allocateLarge(size, action);
 }
 
 } // namespace bmalloc

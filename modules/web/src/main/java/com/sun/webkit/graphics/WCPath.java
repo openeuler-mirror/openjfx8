@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2016, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -82,8 +82,6 @@ public abstract class WCPath<P> extends Ref {
 
     public abstract void closeSubpath();
 
-    public abstract boolean hasCurrentPoint();
-
     public abstract boolean isEmpty();
 
     public abstract void translate(double x, double y);
@@ -99,4 +97,9 @@ public abstract class WCPath<P> extends Ref {
     public abstract P getPlatformPath();
 
     public abstract WCPathIterator getPathIterator();
+
+    public abstract boolean strokeContains(double x, double y,
+                                           double thickness, double miterLimit,
+                                           int cap, int join, double dashOffset,
+                                           double[] dashArray);
 }

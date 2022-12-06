@@ -98,14 +98,17 @@ LayoutRect RenderSVGForeignObject::clippedOverflowRectForRepaint(const RenderLay
     return SVGRenderSupport::clippedOverflowRectForRepaint(*this, repaintContainer);
 }
 
-FloatRect RenderSVGForeignObject::computeFloatRectForRepaint(const FloatRect& repaintRect, const RenderLayerModelObject* repaintContainer, bool fixed) const
+Optional<FloatRect> RenderSVGForeignObject::computeFloatVisibleRectInContainer(const FloatRect& rect, const RenderLayerModelObject* container, VisibleRectContext context) const
 {
-    return SVGRenderSupport::computeFloatRectForRepaint(*this, repaintRect, repaintContainer, fixed);
+    return SVGRenderSupport::computeFloatVisibleRectInContainer(*this, rect, container, context);
 }
 
-LayoutRect RenderSVGForeignObject::computeRectForRepaint(const LayoutRect& repaintRect, const RenderLayerModelObject* repaintContainer, RepaintContext context) const
+Optional<LayoutRect> RenderSVGForeignObject::computeVisibleRectInContainer(const LayoutRect& rect, const RenderLayerModelObject* container, VisibleRectContext context) const
 {
-    return enclosingLayoutRect(computeFloatRectForRepaint(repaintRect, repaintContainer, context.m_hasPositionFixedDescendant));
+    Optional<FloatRect> adjustedRect = computeFloatVisibleRectInContainer(rect, container, context);
+    if (adjustedRect)
+        return enclosingLayoutRect(*adjustedRect);
+    return WTF::nullopt;
 }
 
 const AffineTransform& RenderSVGForeignObject::localToParentTransform() const
@@ -182,7 +185,7 @@ bool RenderSVGForeignObject::nodeAtFloatPoint(const HitTestRequest& request, Hit
     if (hitTestAction != HitTestForeground)
         return false;
 
-    FloatPoint localPoint = localTransform().inverse().value_or(AffineTransform()).mapPoint(pointInParent);
+    FloatPoint localPoint = localTransform().inverse().valueOr(AffineTransform()).mapPoint(pointInParent);
 
     // Early exit if local point is not contained in clipped viewport area
     if (SVGRenderSupport::isOverflowHidden(*this) && !m_viewport.contains(localPoint))
@@ -201,9 +204,9 @@ bool RenderSVGForeignObject::nodeAtPoint(const HitTestRequest&, HitTestResult&, 
     return false;
 }
 
-void RenderSVGForeignObject::mapLocalToContainer(const RenderLayerModelObject* repaintContainer, TransformState& transformState, MapCoordinatesFlags, bool* wasFixed) const
+void RenderSVGForeignObject::mapLocalToContainer(const RenderLayerModelObject* ancestorContainer, TransformState& transformState, MapCoordinatesFlags, bool* wasFixed) const
 {
-    SVGRenderSupport::mapLocalToContainer(*this, repaintContainer, transformState, wasFixed);
+    SVGRenderSupport::mapLocalToContainer(*this, ancestorContainer, transformState, wasFixed);
 }
 
 const RenderObject* RenderSVGForeignObject::pushMappingToContainer(const RenderLayerModelObject* ancestorToStopAt, RenderGeometryMap& geometryMap) const

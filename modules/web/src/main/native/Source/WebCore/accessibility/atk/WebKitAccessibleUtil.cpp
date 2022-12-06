@@ -31,16 +31,19 @@
 #include "config.h"
 #include "WebKitAccessibleUtil.h"
 
-#if HAVE(ACCESSIBILITY)
+#if ENABLE(ACCESSIBILITY)
 
+#include "AXObjectCache.h"
 #include "AccessibilityObject.h"
 #include "FrameView.h"
 #include "IntRect.h"
 #include "Node.h"
 #include "Range.h"
+#include "RenderObject.h"
+#include "TextIterator.h"
 #include "VisibleSelection.h"
 
-#include <wtf/text/AtomicString.h>
+#include <wtf/text/AtomString.h>
 #include <wtf/text/CString.h>
 
 using namespace WebCore;
@@ -155,7 +158,7 @@ bool selectionBelongsToObject(AccessibilityObject* coreObject, VisibleSelection&
     if (selection.isNone())
         return false;
 
-    RefPtr<Range> range = selection.toNormalizedRange();
+    auto range = selection.toNormalizedRange();
     if (!range)
         return false;
 
@@ -165,12 +168,92 @@ bool selectionBelongsToObject(AccessibilityObject* coreObject, VisibleSelection&
     // node is actually inside the region, at least partially.
     auto& node = *coreObject->node();
     auto* lastDescendant = node.lastDescendant();
-    unsigned lastOffset = lastOffsetInNode(lastDescendant);
-    auto intersectsResult = range->intersectsNode(node);
+    unsigned lastOffset = lastDescendant->length();
+    auto intersectsResult = createLiveRange(*range)->intersectsNode(node);
     return !intersectsResult.hasException()
         && intersectsResult.releaseReturnValue()
-        && (&range->endContainer() != &node || range->endOffset())
-        && (&range->startContainer() != lastDescendant || range->startOffset() != lastOffset);
+        && (range->end.container.ptr() != &node || range->end.offset)
+        && (range->start.container.ptr() != lastDescendant || range->start.offset != lastOffset);
+}
+
+AXCoreObject* objectFocusedAndCaretOffsetUnignored(AXCoreObject* referenceObject, int& offset)
+{
+    // Indication that something bogus has transpired.
+    offset = -1;
+
+    Document* document = referenceObject->document();
+    if (!document)
+        return nullptr;
+
+    Node* focusedNode = referenceObject->selection().end().containerNode();
+    if (!focusedNode)
+        return nullptr;
+
+    RenderObject* focusedRenderer = focusedNode->renderer();
+    if (!focusedRenderer)
+        return nullptr;
+
+    AccessibilityObject* focusedObject = document->axObjectCache()->getOrCreate(focusedRenderer);
+    if (!focusedObject)
+        return nullptr;
+
+    // Look for the actual (not ignoring accessibility) selected object.
+    AXCoreObject* firstUnignoredParent = focusedObject;
+    if (firstUnignoredParent->accessibilityIsIgnored())
+        firstUnignoredParent = firstUnignoredParent->parentObjectUnignored();
+    if (!firstUnignoredParent)
+        return nullptr;
+
+    // Don't ignore links if the offset is being requested for a link
+    // or if the link is a block.
+    if (!referenceObject->isLink() && firstUnignoredParent->isLink()
+        && !(firstUnignoredParent->renderer() && !firstUnignoredParent->renderer()->isInline()))
+        firstUnignoredParent = firstUnignoredParent->parentObjectUnignored();
+    if (!firstUnignoredParent)
+        return nullptr;
+
+    // The reference object must either coincide with the focused
+    // object being considered, or be a descendant of it.
+    if (referenceObject->isDescendantOfObject(firstUnignoredParent))
+        referenceObject = firstUnignoredParent;
+
+    Node* startNode = nullptr;
+    if (firstUnignoredParent != referenceObject || firstUnignoredParent->isTextControl()) {
+        // We need to use the first child's node of the reference
+        // object as the start point to calculate the caret offset
+        // because we want it to be relative to the object of
+        // reference, not just to the focused object (which could have
+        // previous siblings which should be taken into account too).
+        AXCoreObject* axFirstChild = referenceObject->firstChild();
+        if (axFirstChild)
+            startNode = axFirstChild->node();
+    }
+    // Getting the Position of a PseudoElement now triggers an assertion.
+    // This can occur when clicking on empty space in a render block.
+    if (!startNode || startNode->isPseudoElement())
+        startNode = firstUnignoredParent->node();
+
+    // Check if the node for the first parent object not ignoring
+    // accessibility is null again before using it. This might happen
+    // with certain kind of accessibility objects, such as the root
+    // one (the scroller containing the webArea object).
+    if (!startNode)
+        return nullptr;
+
+    VisiblePosition startPosition = VisiblePosition(positionBeforeNode(startNode), DOWNSTREAM);
+    VisiblePosition endPosition = firstUnignoredParent->selection().visibleEnd();
+
+    if (startPosition == endPosition)
+        offset = 0;
+    else if (!isStartOfLine(endPosition)) {
+        auto range = makeSimpleRange(startPosition, endPosition.previous());
+        offset = (range ? characterCount(*range, TextIteratorEmitsCharactersBetweenAllVisiblePositions) : 0) + 1;
+    } else {
+        auto range = makeSimpleRange(startPosition, endPosition);
+        offset = range ? characterCount(*range, TextIteratorEmitsCharactersBetweenAllVisiblePositions) : 0;
+    }
+
+    return firstUnignoredParent;
 }
 
 #endif

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,18 +29,27 @@
 #if ENABLE(APPLE_PAY)
 
 #include "PaymentCoordinator.h"
+#include <wtf/text/StringConcatenateNumbers.h>
 
 namespace WebCore {
 
-static ExceptionOr<Vector<String>> convertAndValidate(unsigned version, const Vector<String>& supportedNetworks, const PaymentCoordinator& paymentCoordinator)
+static bool requiresSupportedNetworks(unsigned version, const ApplePayRequestBase& request)
 {
-    if (supportedNetworks.isEmpty())
-        return Exception { TypeError, "At least one supported network must be provided." };
+#if ENABLE(APPLE_PAY_INSTALLMENTS)
+    return version < 8 || !request.installmentConfiguration;
+#else
+    UNUSED_PARAM(version);
+    UNUSED_PARAM(request);
+    return true;
+#endif
+}
 
+static ExceptionOr<Vector<String>> convertAndValidate(Document& document, unsigned version, const Vector<String>& supportedNetworks, const PaymentCoordinator& paymentCoordinator)
+{
     Vector<String> result;
     result.reserveInitialCapacity(supportedNetworks.size());
     for (auto& supportedNetwork : supportedNetworks) {
-        auto validatedNetwork = paymentCoordinator.validatedPaymentNetwork(version, supportedNetwork);
+        auto validatedNetwork = paymentCoordinator.validatedPaymentNetwork(document, version, supportedNetwork);
         if (!validatedNetwork)
             return Exception { TypeError, makeString("\"", supportedNetwork, "\" is not a valid payment network.") };
         result.uncheckedAppend(*validatedNetwork);
@@ -49,8 +58,11 @@ static ExceptionOr<Vector<String>> convertAndValidate(unsigned version, const Ve
     return WTFMove(result);
 }
 
-ExceptionOr<ApplePaySessionPaymentRequest> convertAndValidate(unsigned version, ApplePayRequestBase& request, const PaymentCoordinator& paymentCoordinator)
+ExceptionOr<ApplePaySessionPaymentRequest> convertAndValidate(Document& document, unsigned version, ApplePayRequestBase& request, const PaymentCoordinator& paymentCoordinator)
 {
+    if (!version || !paymentCoordinator.supportsVersion(document, version))
+        return Exception { InvalidAccessError, makeString('"', version, "\" is not a supported version.") };
+
     ApplePaySessionPaymentRequest result;
     result.setVersion(version);
     result.setCountryCode(request.countryCode);
@@ -60,7 +72,10 @@ ExceptionOr<ApplePaySessionPaymentRequest> convertAndValidate(unsigned version, 
         return merchantCapabilities.releaseException();
     result.setMerchantCapabilities(merchantCapabilities.releaseReturnValue());
 
-    auto supportedNetworks = convertAndValidate(version, request.supportedNetworks, paymentCoordinator);
+    if (requiresSupportedNetworks(version, request) && request.supportedNetworks.isEmpty())
+        return Exception { TypeError, "At least one supported network must be provided." };
+
+    auto supportedNetworks = convertAndValidate(document, version, request.supportedNetworks, paymentCoordinator);
     if (supportedNetworks.hasException())
         return supportedNetworks.releaseException();
     result.setSupportedNetworks(supportedNetworks.releaseReturnValue());
@@ -75,6 +90,13 @@ ExceptionOr<ApplePaySessionPaymentRequest> convertAndValidate(unsigned version, 
     if (request.billingContact)
         result.setBillingContact(PaymentContact::fromApplePayPaymentContact(version, *request.billingContact));
 
+    if (request.requiredShippingContactFields) {
+        auto requiredShippingContactFields = convertAndValidate(version, *request.requiredShippingContactFields);
+        if (requiredShippingContactFields.hasException())
+            return requiredShippingContactFields.releaseException();
+        result.setRequiredShippingContactFields(requiredShippingContactFields.releaseReturnValue());
+    }
+
     if (request.shippingContact)
         result.setShippingContact(PaymentContact::fromApplePayPaymentContact(version, *request.shippingContact));
 
@@ -82,6 +104,15 @@ ExceptionOr<ApplePaySessionPaymentRequest> convertAndValidate(unsigned version, 
 
     if (version >= 3)
         result.setSupportedCountries(WTFMove(request.supportedCountries));
+
+#if ENABLE(APPLE_PAY_INSTALLMENTS)
+    if (request.installmentConfiguration) {
+        auto installmentConfiguration = PaymentInstallmentConfiguration::create(*request.installmentConfiguration);
+        if (installmentConfiguration.hasException())
+            return installmentConfiguration.releaseException();
+        result.setInstallmentConfiguration(installmentConfiguration.releaseReturnValue());
+    }
+#endif
 
     return WTFMove(result);
 }

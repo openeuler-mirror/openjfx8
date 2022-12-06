@@ -18,6 +18,9 @@
  */
 
 #include "config.h"
+
+#if ENABLE(OFFSCREEN_CANVAS)
+
 #include "JSOffscreenCanvasRenderingContext2D.h"
 
 namespace WebCore {
@@ -28,8 +31,11 @@ inline void* root(OffscreenCanvas* canvas)
     return canvas;
 }
 
-bool JSOffscreenCanvasRenderingContext2DOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, SlotVisitor& visitor)
+bool JSOffscreenCanvasRenderingContext2DOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, SlotVisitor& visitor, const char** reason)
 {
+    if (UNLIKELY(reason))
+        *reason = "Canvas is opaque root";
+
     JSOffscreenCanvasRenderingContext2D* jsOffscreenCanvasRenderingContext = jsCast<JSOffscreenCanvasRenderingContext2D*>(handle.slot()->asCell());
     void* root = WebCore::root(&jsOffscreenCanvasRenderingContext->wrapped().canvas());
     return visitor.containsOpaqueRoot(root);
@@ -42,3 +48,4 @@ void JSOffscreenCanvasRenderingContext2D::visitAdditionalChildren(SlotVisitor& v
 
 } // namespace WebCore
 
+#endif

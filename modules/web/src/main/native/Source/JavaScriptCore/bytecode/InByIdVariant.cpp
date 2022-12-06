@@ -27,9 +27,6 @@
 #include "config.h"
 #include "InByIdVariant.h"
 
-#include "JSCInlines.h"
-#include <wtf/ListDump.h>
-
 namespace JSC {
 
 InByIdVariant::InByIdVariant(const StructureSet& structureSet, PropertyOffset offset, const ObjectPropertyConditionSet& conditionSet)
@@ -72,18 +69,18 @@ void InByIdVariant::markIfCheap(SlotVisitor& visitor)
     m_structureSet.markIfCheap(visitor);
 }
 
-bool InByIdVariant::finalize()
+bool InByIdVariant::finalize(VM& vm)
 {
-    if (!m_structureSet.isStillAlive())
+    if (!m_structureSet.isStillAlive(vm))
         return false;
-    if (!m_conditionSet.areStillLive())
+    if (!m_conditionSet.areStillLive(vm))
         return false;
     return true;
 }
 
 void InByIdVariant::dump(PrintStream& out) const
 {
-    dumpInContext(out, 0);
+    dumpInContext(out, nullptr);
 }
 
 void InByIdVariant::dumpInContext(PrintStream& out, DumpContext* context) const

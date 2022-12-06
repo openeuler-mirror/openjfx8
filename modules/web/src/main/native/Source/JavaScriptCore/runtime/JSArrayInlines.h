@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2016 Apple Inc. All rights reserved.
+ *  Copyright (C) 2016-2019 Apple Inc. All rights reserved.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Lesser General Public
@@ -19,6 +19,8 @@
 
 #pragma once
 
+#include "ArrayPrototype.h"
+#include "ButterflyInlines.h"
 #include "Error.h"
 #include "JSArray.h"
 #include "JSCellInlines.h"
@@ -70,22 +72,41 @@ inline bool JSArray::canFastCopy(VM& vm, JSArray* otherArray)
     return true;
 }
 
-ALWAYS_INLINE double toLength(ExecState* exec, JSObject* obj)
+inline bool JSArray::canDoFastIndexedAccess(VM& vm)
 {
-    VM& vm = exec->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (isJSArray(obj))
-        return jsCast<JSArray*>(obj)->length();
+    JSGlobalObject* globalObject = this->globalObject();
+    if (!globalObject->arrayPrototypeChainIsSane())
+        return false;
 
-    JSValue lengthValue = obj->get(exec, vm.propertyNames->length);
-    RETURN_IF_EXCEPTION(scope, PNaN);
-    scope.release();
-    return lengthValue.toLength(exec);
+    Structure* structure = this->structure(vm);
+    // This is the fast case. Many arrays will be an original array.
+    if (globalObject->isOriginalArrayStructure(structure))
+        return true;
+
+    if (structure->mayInterceptIndexedAccesses())
+        return false;
+
+    if (getPrototypeDirect(vm) != globalObject->arrayPrototype())
+        return false;
+
+    return true;
 }
 
-ALWAYS_INLINE void JSArray::pushInline(ExecState* exec, JSValue value)
+ALWAYS_INLINE double toLength(JSGlobalObject* globalObject, JSObject* obj)
 {
-    VM& vm = exec->vm();
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (LIKELY(isJSArray(obj)))
+        return jsCast<JSArray*>(obj)->length();
+
+    JSValue lengthValue = obj->get(globalObject, vm.propertyNames->length);
+    RETURN_IF_EXCEPTION(scope, PNaN);
+    RELEASE_AND_RETURN(scope, lengthValue.toLength(globalObject));
+}
+
+ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     ensureWritable(vm);
@@ -101,7 +122,7 @@ ALWAYS_INLINE void JSArray::pushInline(ExecState* exec, JSValue value)
     case ArrayWithUndecided: {
         convertUndecidedForValue(vm, value);
         scope.release();
-        push(exec, value);
+        push(globalObject, value);
         return;
     }
 
@@ -109,7 +130,7 @@ ALWAYS_INLINE void JSArray::pushInline(ExecState* exec, JSValue value)
         if (!value.isInt32()) {
             convertInt32ForValue(vm, value);
             scope.release();
-            push(exec, value);
+            push(globalObject, value);
             return;
         }
 
@@ -122,14 +143,14 @@ ALWAYS_INLINE void JSArray::pushInline(ExecState* exec, JSValue value)
         }
 
         if (UNLIKELY(length > MAX_ARRAY_INDEX)) {
-            methodTable(vm)->putByIndex(this, exec, length, value, true);
+            methodTable(vm)->putByIndex(this, globalObject, length, value, true);
             if (!scope.exception())
-                throwException(exec, scope, createRangeError(exec, LengthExceededTheMaximumArrayLengthError));
+                throwException(globalObject, scope, createRangeError(globalObject, LengthExceededTheMaximumArrayLengthError));
             return;
         }
 
         scope.release();
-        putByIndexBeyondVectorLengthWithoutAttributes<Int32Shape>(exec, length, value);
+        putByIndexBeyondVectorLengthWithoutAttributes<Int32Shape>(globalObject, length, value);
         return;
     }
 
@@ -137,20 +158,21 @@ ALWAYS_INLINE void JSArray::pushInline(ExecState* exec, JSValue value)
         unsigned length = butterfly->publicLength();
         ASSERT(length <= butterfly->vectorLength());
         if (length < butterfly->vectorLength()) {
-            butterfly->contiguous().at(this, length).set(vm, this, value);
+            butterfly->contiguous().at(this, length).setWithoutWriteBarrier(value);
             butterfly->setPublicLength(length + 1);
+            vm.heap.writeBarrier(this, value);
             return;
         }
 
         if (UNLIKELY(length > MAX_ARRAY_INDEX)) {
-            methodTable(vm)->putByIndex(this, exec, length, value, true);
+            methodTable(vm)->putByIndex(this, globalObject, length, value, true);
             if (!scope.exception())
-                throwException(exec, scope, createRangeError(exec, LengthExceededTheMaximumArrayLengthError));
+                throwException(globalObject, scope, createRangeError(globalObject, LengthExceededTheMaximumArrayLengthError));
             return;
         }
 
         scope.release();
-        putByIndexBeyondVectorLengthWithoutAttributes<ContiguousShape>(exec, length, value);
+        putByIndexBeyondVectorLengthWithoutAttributes<ContiguousShape>(globalObject, length, value);
         return;
     }
 
@@ -158,14 +180,14 @@ ALWAYS_INLINE void JSArray::pushInline(ExecState* exec, JSValue value)
         if (!value.isNumber()) {
             convertDoubleToContiguous(vm);
             scope.release();
-            push(exec, value);
+            push(globalObject, value);
             return;
         }
         double valueAsDouble = value.asNumber();
         if (valueAsDouble != valueAsDouble) {
             convertDoubleToContiguous(vm);
             scope.release();
-            push(exec, value);
+            push(globalObject, value);
             return;
         }
 
@@ -178,24 +200,26 @@ ALWAYS_INLINE void JSArray::pushInline(ExecState* exec, JSValue value)
         }
 
         if (UNLIKELY(length > MAX_ARRAY_INDEX)) {
-            methodTable(vm)->putByIndex(this, exec, length, value, true);
+            methodTable(vm)->putByIndex(this, globalObject, length, value, true);
             if (!scope.exception())
-                throwException(exec, scope, createRangeError(exec, LengthExceededTheMaximumArrayLengthError));
+                throwException(globalObject, scope, createRangeError(globalObject, LengthExceededTheMaximumArrayLengthError));
             return;
         }
 
         scope.release();
-        putByIndexBeyondVectorLengthWithoutAttributes<DoubleShape>(exec, length, value);
+        putByIndexBeyondVectorLengthWithoutAttributes<DoubleShape>(globalObject, length, value);
         return;
     }
 
     case ArrayWithSlowPutArrayStorage: {
         unsigned oldLength = length();
         bool putResult = false;
-        if (attemptToInterceptPutByIndexOnHole(exec, oldLength, value, true, putResult)) {
-            if (!scope.exception() && oldLength < 0xFFFFFFFFu) {
+        bool result = attemptToInterceptPutByIndexOnHole(globalObject, oldLength, value, true, putResult);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (result) {
+            if (oldLength < 0xFFFFFFFFu) {
                 scope.release();
-                setLength(exec, oldLength + 1, true);
+                setLength(globalObject, oldLength + 1, true);
             }
             return;
         }
@@ -216,16 +240,16 @@ ALWAYS_INLINE void JSArray::pushInline(ExecState* exec, JSValue value)
 
         // Pushing to an array of invalid length (2^31-1) stores the property, but throws a range error.
         if (UNLIKELY(storage->length() > MAX_ARRAY_INDEX)) {
-            methodTable(vm)->putByIndex(this, exec, storage->length(), value, true);
+            methodTable(vm)->putByIndex(this, globalObject, storage->length(), value, true);
             // Per ES5.1 15.4.4.7 step 6 & 15.4.5.1 step 3.d.
             if (!scope.exception())
-                throwException(exec, scope, createRangeError(exec, LengthExceededTheMaximumArrayLengthError));
+                throwException(globalObject, scope, createRangeError(globalObject, LengthExceededTheMaximumArrayLengthError));
             return;
         }
 
         // Handled the same as putIndex.
         scope.release();
-        putByIndexBeyondVectorLengthWithArrayStorage(exec, storage->length(), value, true, storage);
+        putByIndexBeyondVectorLengthWithArrayStorage(globalObject, storage->length(), value, true, storage);
         return;
     }
 

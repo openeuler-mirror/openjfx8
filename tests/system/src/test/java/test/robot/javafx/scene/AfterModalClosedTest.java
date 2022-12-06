@@ -42,6 +42,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.fail;
+import static org.junit.Assume.assumeTrue;
 
 public class AfterModalClosedTest {
     static CountDownLatch startupLatch;
@@ -90,6 +91,7 @@ public class AfterModalClosedTest {
 
     @Test
     public void testResizability() throws Exception {
+        assumeTrue(Boolean.getBoolean("unstable.test")); // JDK-8176776
         Assert.assertTrue(stage.isResizable());
         CountDownLatch resizeLatch = new CountDownLatch(2);
         Platform.runLater(() -> {

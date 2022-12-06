@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2013, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -36,7 +36,7 @@ MAC.compileFXPackager = true;
 MAC.includeNull3d = true
 
 // Lambda for naming the generated libs
-MAC.library = { name -> return "lib${name}.dylib" as String }
+MAC.library = { name -> return (IS_STATIC_BUILD ? "lib${name}.a" : "lib${name}.dylib") as String }
 
 MAC.libDest = "lib"
 
@@ -46,7 +46,7 @@ MAC.libDest = "lib"
  * In extreme cases you can provide your own properties in your home dir to
  * override these settings or pass them on the command line.
  */
-def prefSdkVersion = "10.11"
+def prefSdkVersion = "11.1"
 def defaultSdkPath = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX${prefSdkVersion}.sdk";
 
 // Set the minimum API version that we require (developers do not need to override this)
@@ -118,9 +118,10 @@ def ccFlags = [
         ccBaseFlags,
         "-std=c99",
         "-c",
+        IS_STATIC_BUILD ? "-DSTATIC_BUILD" : "",
         IS_DEBUG_NATIVE ? "-DDEBUG" : ["-O3", "-DNDEBUG"]].flatten()
 
-def linkFlags = [
+def dynamicLinkFlags = [
         commonParams,
         "-framework", "AppKit",
         "-framework", "ApplicationServices",
@@ -128,6 +129,13 @@ def linkFlags = [
         "-framework", "QuartzCore",
         "-framework", "Security",
         "-dynamiclib", "-lobjc"].flatten();
+def dynamicLinkFlagsAlt = ["-dynamiclib", commonParams].flatten()
+
+def staticLinkFlags = ["-static"].flatten();
+
+def linkFlags = IS_STATIC_BUILD ? staticLinkFlags : dynamicLinkFlags
+
+def linkFlagsAlt = IS_STATIC_BUILD ? staticLinkFlags : dynamicLinkFlagsAlt
 
 def toolchainDir
 if (hasProperty('toolchainDir')) {
@@ -137,7 +145,7 @@ if (hasProperty('toolchainDir')) {
 }
 
 def compiler = IS_COMPILE_PARFAIT ? "parfait-clang" : "${toolchainDir}clang";
-def linker = IS_COMPILE_PARFAIT ? "parfait-clang++" : "${toolchainDir}clang++";
+def linker = IS_STATIC_BUILD ? "libtool" : IS_COMPILE_PARFAIT ? "parfait-clang++" : "${toolchainDir}clang++";
 
 MAC.glass = [:]
 MAC.glass.javahInclude = [
@@ -155,7 +163,7 @@ MAC.decora = [:]
 MAC.decora.compiler = compiler
 MAC.decora.ccFlags = ["-O1", "-ffast-math", "-c", ccBaseFlags].flatten()
 MAC.decora.linker = linker
-MAC.decora.linkFlags = ["-dynamiclib", commonParams].flatten()
+MAC.decora.linkFlags = linkFlagsAlt
 MAC.decora.lib = "decora_sse"
 
 MAC.prism = [:]
@@ -164,7 +172,7 @@ MAC.prism.nativeSource = file("modules/graphics/src/main/native-prism")
 MAC.prism.compiler = compiler
 MAC.prism.ccFlags = ["-O3", "-DINLINE=inline", "-c", ccBaseFlags].flatten()
 MAC.prism.linker = linker
-MAC.prism.linkFlags = ["-dynamiclib", commonParams].flatten()
+MAC.prism.linkFlags = linkFlagsAlt
 MAC.prism.lib = "prism_common"
 
 MAC.prismSW = [:]
@@ -192,11 +200,11 @@ MAC.launcherlibrary.ccFlags = [
         "-c",
         ccBaseFlags,
         IS_DEBUG_NATIVE ? ["-DDEBUG", "-O0"] : ["-O3", "-DNDEBUG"]].flatten()
-    MAC.launcherlibrary.ccFlags += "-stdlib=libstdc++"
+    MAC.launcherlibrary.ccFlags += "-stdlib=libc++"
 MAC.launcherlibrary.linker = linker
 MAC.launcherlibrary.linkFlags = ["-ldl", "-dynamiclib",
         "-framework", "Cocoa",
-        "-stdlib=libstdc++"]
+        "-stdlib=libc++"]
 
 MAC.iio = [:]
 MAC.iio.javahInclude = ["com/sun/javafx/iio/**/*"]
@@ -233,17 +241,6 @@ MAC.font.ccFlags = ["-DJFXFONT_PLUS", ccFlags].flatten()
 MAC.font.linker = linker
 MAC.font.linkFlags = [linkFlags].flatten()
 MAC.font.lib = "javafx_font"
-
-MAC.fontT2K = [:]
-MAC.fontT2K.javahInclude = ["com/sun/javafx/font/t2k/**/*"]
-MAC.fontT2K.nativeSource = [
-        file("$closedDir/javafx-font-t2k-native/src"),
-        file("$closedDir/javafx-font-t2k-native/src/layout")]
-MAC.fontT2K.compiler = compiler
-MAC.fontT2K.ccFlags = ["-DJFXFONT_PLUS", "-DLE_STANDALONE", ccFlags].flatten()
-MAC.fontT2K.linker = linker
-MAC.fontT2K.linkFlags = [linkFlags].flatten()
-MAC.fontT2K.lib = "javafx_font_t2k"
 
 MAC.media = [:]
 MAC.media.compiler = "${compiler} ${ccBaseFlags.join(" ")}"

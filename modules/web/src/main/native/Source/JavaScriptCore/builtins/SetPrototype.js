@@ -23,38 +23,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-@constructor
-@globalPrivate
-function createSetIterator(iteratedObject, kind)
-{
-    "use strict";
-
-    @assert(@isSet(iteratedObject));
-    @putByIdDirectPrivate(this, "iteratedObject", iteratedObject);
-    @putByIdDirectPrivate(this, "setIteratorKind", kind);
-    @putByIdDirectPrivate(this, "setBucket", @setBucketHead(iteratedObject));
-}
-
-function values()
-{
-    "use strict";
-
-    if (!@isSet(this))
-        @throwTypeError("Set.prototype.values requires that |this| be Set");
-
-    return new @createSetIterator(this, @iterationKindValue);
-}
-
-function entries()
-{
-    "use strict";
-
-    if (!@isSet(this))
-        @throwTypeError("Set.prototype.entries requires that |this| be Set");
-
-    return new @createSetIterator(this, @iterationKindKeyValue);
-}
-
 function forEach(callback /*, thisArg */)
 {
     "use strict";

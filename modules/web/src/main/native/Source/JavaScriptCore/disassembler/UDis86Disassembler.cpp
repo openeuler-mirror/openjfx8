@@ -26,7 +26,7 @@
 #include "config.h"
 #include "UDis86Disassembler.h"
 
-#if USE(UDIS86)
+#if ENABLE(UDIS86)
 
 #include "MacroAssemblerCodeRef.h"
 #include "udis86.h"
@@ -49,7 +49,7 @@ bool tryToDisassembleWithUDis86(const MacroAssemblerCodePtr<DisassemblyPtrTag>& 
     uint64_t currentPC = disassembler.pc;
     while (ud_disassemble(&disassembler)) {
         char pcString[20];
-        snprintf(pcString, sizeof(pcString), "0x%lx", static_cast<unsigned long>(currentPC));
+        snprintf(pcString, sizeof(pcString), "0x%" PRIxPTR, static_cast<uintptr_t>(currentPC));
         out.printf("%s%16s: %s\n", prefix, pcString, ud_insn_asm(&disassembler));
         currentPC = disassembler.pc;
     }
@@ -59,5 +59,5 @@ bool tryToDisassembleWithUDis86(const MacroAssemblerCodePtr<DisassemblyPtrTag>& 
 
 } // namespace JSC
 
-#endif // USE(UDIS86)
+#endif // ENABLE(UDIS86)
 

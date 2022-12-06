@@ -65,17 +65,21 @@ class Setting
   attr_accessor :name
   attr_accessor :type
   attr_accessor :initial
+  attr_accessor :excludeFromInternalSettings
   attr_accessor :conditional
   attr_accessor :onChange
   attr_accessor :getter
+  attr_accessor :inspectorOverride
   
   def initialize(name, opts)
     @name = name
     @type = opts["type"] || "bool"
     @initial = opts["initial"]
+    @excludeFromInternalSettings = opts["excludeFromInternalSettings"] || false
     @conditional = opts["conditional"]
     @onChange = opts["onChange"]
     @getter = opts["getter"]
+    @inspectorOverride = opts["inspectorOverride"]
   end
 
   def valueType?
@@ -113,8 +117,12 @@ class Setting
     @onChange != nil
   end
 
+  def hasComplexGetter?
+    hasInspectorOverride?
+  end
+
   def setterFunctionName
-    if @name.start_with?("css", "xss", "ftp", "dom", "dns")
+    if @name.start_with?("css", "xss", "ftp", "dom", "dns", "ice", "hdr")
       "set" + @name[0..2].upcase + @name[3..@name.length]
     else
       "set" + @name[0].upcase + @name[1..@name.length]
@@ -124,6 +132,10 @@ class Setting
   def getterFunctionName
     @getter || @name
   end
+
+  def hasInspectorOverride?
+    @inspectorOverride == true
+  end
 end
 
 class Conditional
@@ -131,6 +143,7 @@ class Conditional
   attr_accessor :settings
   attr_accessor :boolSettings
   attr_accessor :nonBoolSettings
+  attr_accessor :settingsWithComplexGetters
   attr_accessor :settingsWithComplexSetters
 
   def initialize(condition, settings)
@@ -139,6 +152,7 @@ class Conditional
     
     @boolSettings = @settings.select { |setting| setting.type == "bool" }
     @nonBoolSettings = @settings.reject { |setting| setting.type == "bool" }
+    @settingsWithComplexGetters = @settings.select { |setting| setting.hasComplexGetter? }
     @settingsWithComplexSetters = @settings.select { |setting| setting.hasComplexSetter? }
   end
 end
@@ -148,6 +162,7 @@ class Settings
   attr_accessor :unconditionalSetting
   attr_accessor :unconditionalBoolSetting
   attr_accessor :unconditionalNonBoolSetting
+  attr_accessor :unconditionalSettingWithComplexGetters
   attr_accessor :unconditionalSettingWithComplexSetters
   attr_accessor :conditionals
   
@@ -161,7 +176,9 @@ class Settings
     @unconditionalSetting = @settings.reject { |setting| setting.conditional }
     @unconditionalBoolSetting = @unconditionalSetting.select { |setting| setting.type == "bool" }
     @unconditionalNonBoolSetting = @unconditionalSetting.reject { |setting| setting.type == "bool" }
+    @unconditionalSettingWithComplexGetters = @unconditionalSetting.select { |setting| setting.hasComplexGetter? }
     @unconditionalSettingWithComplexSetters = @unconditionalSetting.select { |setting| setting.hasComplexSetter? }
+    @inspectorOverrideSettings = @settings.select { |setting| setting.hasInspectorOverride? }
 
     @conditionals = []
     conditionalsMap = {}

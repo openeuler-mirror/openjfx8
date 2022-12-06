@@ -26,6 +26,7 @@
 #pragma once
 
 #include "BlockDirectoryInlines.h"
+#include "HeapCellType.h"
 #include "JSCast.h"
 #include "MarkedBlock.h"
 #include "MarkedSpace.h"
@@ -59,9 +60,9 @@ void Subspace::forEachNotEmptyMarkedBlock(const Func& func)
 }
 
 template<typename Func>
-void Subspace::forEachLargeAllocation(const Func& func)
+void Subspace::forEachPreciseAllocation(const Func& func)
 {
-    for (LargeAllocation* allocation = m_largeAllocations.begin(); allocation != m_largeAllocations.end(); allocation = allocation->next())
+    for (PreciseAllocation* allocation = m_preciseAllocations.begin(); allocation != m_preciseAllocations.end(); allocation = allocation->next())
         func(allocation);
 }
 
@@ -76,17 +77,18 @@ void Subspace::forEachMarkedCell(const Func& func)
                     return IterationStatus::Continue;
                 });
         });
-    forEachLargeAllocation(
-        [&] (LargeAllocation* allocation) {
+    CellAttributes attributes = this->attributes();
+    forEachPreciseAllocation(
+        [&] (PreciseAllocation* allocation) {
             if (allocation->isMarked())
-                func(allocation->cell(), m_attributes.cellKind);
+                func(allocation->cell(), attributes.cellKind);
         });
 }
 
 template<typename Func>
-RefPtr<SharedTask<void(SlotVisitor&)>> Subspace::forEachMarkedCellInParallel(const Func& func)
+Ref<SharedTask<void(SlotVisitor&)>> Subspace::forEachMarkedCellInParallel(const Func& func)
 {
-    class Task : public SharedTask<void(SlotVisitor&)> {
+    class Task final : public SharedTask<void(SlotVisitor&)> {
     public:
         Task(Subspace& subspace, const Func& func)
             : m_subspace(subspace)
@@ -95,7 +97,7 @@ RefPtr<SharedTask<void(SlotVisitor&)>> Subspace::forEachMarkedCellInParallel(con
         {
         }
 
-        void run(SlotVisitor& visitor) override
+        void run(SlotVisitor& visitor) final
         {
             while (MarkedBlock::Handle* handle = m_blockSource->run()) {
                 handle->forEachMarkedCell(
@@ -107,27 +109,28 @@ RefPtr<SharedTask<void(SlotVisitor&)>> Subspace::forEachMarkedCellInParallel(con
 
             {
                 auto locker = holdLock(m_lock);
-                if (!m_needToVisitLargeAllocations)
+                if (!m_needToVisitPreciseAllocations)
                     return;
-                m_needToVisitLargeAllocations = false;
+                m_needToVisitPreciseAllocations = false;
             }
 
-            m_subspace.forEachLargeAllocation(
-                [&] (LargeAllocation* allocation) {
+            CellAttributes attributes = m_subspace.attributes();
+            m_subspace.forEachPreciseAllocation(
+                [&] (PreciseAllocation* allocation) {
                     if (allocation->isMarked())
-                        m_func(visitor, allocation->cell(), m_subspace.m_attributes.cellKind);
+                        m_func(visitor, allocation->cell(), attributes.cellKind);
                 });
         }
 
     private:
         Subspace& m_subspace;
-        RefPtr<SharedTask<MarkedBlock::Handle*()>> m_blockSource;
+        Ref<SharedTask<MarkedBlock::Handle*()>> m_blockSource;
         Func m_func;
         Lock m_lock;
-        bool m_needToVisitLargeAllocations { true };
+        bool m_needToVisitPreciseAllocations { true };
     };
 
-    return adoptRef(new Task(*this, func));
+    return adoptRef(*new Task(*this, func));
 }
 
 template<typename Func>
@@ -141,11 +144,17 @@ void Subspace::forEachLiveCell(const Func& func)
                     return IterationStatus::Continue;
                 });
         });
-    forEachLargeAllocation(
-        [&] (LargeAllocation* allocation) {
+    CellAttributes attributes = this->attributes();
+    forEachPreciseAllocation(
+        [&] (PreciseAllocation* allocation) {
             if (allocation->isLive())
-                func(allocation->cell(), m_attributes.cellKind);
+                func(allocation->cell(), attributes.cellKind);
         });
+}
+
+inline const CellAttributes& Subspace::attributes() const
+{
+    return m_heapCellType->attributes();
 }
 
 } // namespace JSC

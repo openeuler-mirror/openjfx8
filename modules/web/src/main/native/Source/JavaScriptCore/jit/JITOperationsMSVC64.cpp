@@ -25,7 +25,7 @@
 
 #include "config.h"
 
-#if !ENABLE(JIT) && COMPILER(MSVC) && CPU(X86_64)
+#if ENABLE(C_LOOP) && COMPILER(MSVC) && CPU(X86_64)
 
 #include "CallFrame.h"
 #include "JSCJSValue.h"
@@ -36,11 +36,11 @@ namespace JSC {
 // FIXME: The following is a workaround that is only needed because JITStubsMSVC64.asm
 // is built unconditionally even when the JIT is disable, and it references this function.
 // We only need to provide a stub to satisfy the linkage. It will never be called.
-extern "C" EncodedJSValue getHostCallReturnValueWithExecState(ExecState*)
+extern "C" EncodedJSValue getHostCallReturnValueWithExecState(JSGlobalObject*)
 {
     return JSValue::encode(JSValue());
 }
 
 } // namespace JSC
 
-#endif // !ENABLE(JIT) && COMPILER(MSVC) && CPU(X86_64)
+#endif // ENABLE(C_LOOP) && COMPILER(MSVC) && CPU(X86_64)

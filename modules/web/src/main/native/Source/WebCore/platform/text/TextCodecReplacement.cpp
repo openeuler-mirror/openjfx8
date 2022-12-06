@@ -26,6 +26,8 @@
 #include "config.h"
 #include "TextCodecReplacement.h"
 
+#include <wtf/Function.h>
+#include <wtf/text/WTFString.h>
 #include <wtf/unicode/CharacterNames.h>
 
 namespace WebCore {
@@ -47,7 +49,7 @@ void TextCodecReplacement::registerEncodingNames(EncodingNameRegistrar registrar
 void TextCodecReplacement::registerCodecs(TextCodecRegistrar registrar)
 {
     registrar("replacement", [] {
-        return std::make_unique<TextCodecReplacement>();
+        return makeUnique<TextCodecReplacement>();
     });
 }
 

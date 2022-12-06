@@ -38,7 +38,7 @@ namespace WebCore {
 
 class GeolocationClient;
 class GeolocationError;
-class GeolocationPosition;
+class GeolocationPositionData;
 
 class GeolocationController : public Supplement<Page>, private ActivityStateChangeObserver {
     WTF_MAKE_FAST_ALLOCATED;
@@ -53,15 +53,17 @@ public:
     void requestPermission(Geolocation&);
     void cancelPermissionRequest(Geolocation&);
 
-    WEBCORE_EXPORT void positionChanged(const std::optional<GeolocationPosition>&);
+    WEBCORE_EXPORT void positionChanged(const Optional<GeolocationPositionData>&);
     WEBCORE_EXPORT void errorOccurred(GeolocationError&);
 
-    std::optional<GeolocationPosition> lastPosition();
+    Optional<GeolocationPositionData> lastPosition();
 
     GeolocationClient& client() { return m_client; }
 
     WEBCORE_EXPORT static const char* supplementName();
     static GeolocationController* from(Page* page) { return static_cast<GeolocationController*>(Supplement<Page>::from(page, supplementName())); }
+
+    void revokeAuthorizationToken(const String&);
 
 private:
     Page& m_page;
@@ -69,7 +71,7 @@ private:
 
     void activityStateDidChange(OptionSet<ActivityState::Flag> oldActivityState, OptionSet<ActivityState::Flag> newActivityState) override;
 
-    std::optional<GeolocationPosition> m_lastPosition;
+    Optional<GeolocationPositionData> m_lastPosition;
 
     typedef HashSet<Ref<Geolocation>> ObserversSet;
     // All observers; both those requesting high accuracy and those not.

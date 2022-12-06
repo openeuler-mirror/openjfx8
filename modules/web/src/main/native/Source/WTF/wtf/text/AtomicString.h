@@ -18,14 +18,17 @@
  *
  */
 
-#ifndef AtomicString_h
-#define AtomicString_h
+#pragma once
 
 #include <utility>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/text/AtomicStringImpl.h>
 #include <wtf/text/IntegerToStringConversion.h>
 #include <wtf/text/WTFString.h>
+
+#if OS(WINDOWS)
+#include <wtf/text/win/WCharStringExtras.h>
+#endif
 
 // Define 'NO_IMPLICIT_ATOMICSTRING' before including this header,
 // to disallow (expensive) implicit String-->AtomicString conversions.
@@ -108,6 +111,7 @@ public:
     WTF_EXPORT_PRIVATE static AtomicString number(unsigned);
     WTF_EXPORT_PRIVATE static AtomicString number(unsigned long);
     WTF_EXPORT_PRIVATE static AtomicString number(unsigned long long);
+    WTF_EXPORT_PRIVATE static AtomicString number(float);
     WTF_EXPORT_PRIVATE static AtomicString number(double);
     // If we need more overloads of the number function, we can add all the others that String has, but these seem to do for now.
 
@@ -151,6 +155,14 @@ public:
 #ifdef __OBJC__
     AtomicString(NSString*);
     operator NSString*() const { return m_string; }
+#endif
+
+#if OS(WINDOWS) && U_ICU_VERSION_MAJOR_NUM >= 59 && !PLATFORM(JAVA)
+    AtomicString(const wchar_t* characters, unsigned length)
+        : AtomicString(ucharFrom(characters), length) { }
+
+    AtomicString(const wchar_t* characters)
+        : AtomicString(ucharFrom(characters)) { }
 #endif
 
     // AtomicString::fromUTF8 will return a null string if the input data contains invalid UTF-8 sequences.
@@ -363,5 +375,3 @@ using WTF::xmlnsAtom;
 #endif
 
 #include <wtf/text/StringConcatenate.h>
-
-#endif // AtomicString_h

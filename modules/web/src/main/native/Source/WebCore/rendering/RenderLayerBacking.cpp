@@ -34,7 +34,7 @@
 #include "CachedImage.h"
 #include "Chrome.h"
 #include "DocumentTimeline.h"
-#include "FilterEffectRenderer.h"
+#include "EventRegion.h"
 #include "Frame.h"
 #include "FrameView.h"
 #include "GraphicsContext.h"
@@ -47,6 +47,7 @@
 #include "HTMLPlugInElement.h"
 #include "InspectorInstrumentation.h"
 #include "KeyframeList.h"
+#include "LayerAncestorClippingStack.h"
 #include "Logging.h"
 #include "Page.h"
 #include "PerformanceLoggingClient.h"
@@ -67,9 +68,10 @@
 #include "Settings.h"
 #include "StyleResolver.h"
 #include "TiledBacking.h"
+#include <wtf/SystemTracing.h>
 #include <wtf/text/TextStream.h>
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
 #include "RuntimeApplicationChecks.h"
 #endif
 
@@ -237,7 +239,12 @@ RenderLayerBacking::RenderLayerBacking(RenderLayer& layer)
 
 RenderLayerBacking::~RenderLayerBacking()
 {
-    updateAncestorClippingLayer(false);
+#if USE(OWNING_LAYER_BEAR_TRAP)
+    RELEASE_ASSERT_WITH_MESSAGE(m_owningLayerBearTrap == BEAR_TRAP_VALUE, "~RenderLayerBacking: m_owningLayerBearTrap caught the bear (55699292)");
+    RELEASE_ASSERT_WITH_MESSAGE(&m_owningLayer, "~RenderLayerBacking: m_owningLayer is null (55699292)");
+#endif
+    // Note that m_owningLayer->backing() is null here.
+    updateAncestorClipping(false, nullptr);
     updateChildClippingStrategy(false);
     updateDescendantClippingLayer(false);
     updateOverflowControlsLayers(false, false, false);
@@ -245,8 +252,26 @@ RenderLayerBacking::~RenderLayerBacking()
     updateBackgroundLayer(false);
     updateMaskingLayer(false, false);
     updateScrollingLayers(false);
-    detachFromScrollingCoordinator({Scrolling, ViewportConstrained });
+
+    ASSERT(!m_viewportConstrainedNodeID);
+    ASSERT(!m_scrollingNodeID);
+    ASSERT(!m_frameHostingNodeID);
+    ASSERT(!m_positioningNodeID);
+
     destroyGraphicsLayers();
+}
+
+void RenderLayerBacking::willBeDestroyed()
+{
+#if USE(OWNING_LAYER_BEAR_TRAP)
+    RELEASE_ASSERT_WITH_MESSAGE(m_owningLayerBearTrap == BEAR_TRAP_VALUE, "RenderLayerBacking::willBeDestroyed(): m_owningLayerBearTrap caught the bear (55699292)");
+    RELEASE_ASSERT_WITH_MESSAGE(&m_owningLayer, "RenderLayerBacking::willBeDestroyed(): m_owningLayer is null (55699292)");
+#endif
+
+    ASSERT(m_owningLayer.backing() == this);
+    compositor().removeFromScrollCoordinatedLayers(m_owningLayer);
+
+    clearBackingSharingLayers();
 }
 
 void RenderLayerBacking::willDestroyLayer(const GraphicsLayer* layer)
@@ -255,11 +280,69 @@ void RenderLayerBacking::willDestroyLayer(const GraphicsLayer* layer)
         compositor().layerTiledBackingUsageChanged(layer, false);
 }
 
-std::unique_ptr<GraphicsLayer> RenderLayerBacking::createGraphicsLayer(const String& name, GraphicsLayer::Type layerType)
+static void clearBackingSharingLayerProviders(Vector<WeakPtr<RenderLayer>>& sharingLayers, const RenderLayer& providerLayer)
+{
+    for (auto& layerWeakPtr : sharingLayers) {
+        if (!layerWeakPtr)
+            continue;
+        if (layerWeakPtr->backingProviderLayer() == &providerLayer)
+            layerWeakPtr->setBackingProviderLayer(nullptr);
+    }
+}
+
+void RenderLayerBacking::setBackingSharingLayers(Vector<WeakPtr<RenderLayer>>&& sharingLayers)
+{
+    bool sharingLayersChanged = m_backingSharingLayers != sharingLayers;
+    if (sharingLayersChanged) {
+        // For layers that used to share and no longer do, and are not composited, recompute repaint rects.
+        for (auto& oldSharingLayer : m_backingSharingLayers) {
+            // Layers that go from shared to composited have their repaint rects recomputed in RenderLayerCompositor::updateBacking().
+            // FIXME: Two O(n^2) traversals in this funtion. Probably OK because sharing lists are usually small, but still.
+            if (!sharingLayers.contains(oldSharingLayer) && !oldSharingLayer->isComposited())
+                oldSharingLayer->computeRepaintRectsIncludingDescendants();
+        }
+    }
+
+    clearBackingSharingLayerProviders(m_backingSharingLayers, m_owningLayer);
+
+    if (sharingLayers != m_backingSharingLayers) {
+        if (sharingLayers.size())
+            setRequiresOwnBackingStore(true);
+        setContentsNeedDisplay(); // This could be optimized to only repaint rects for changed layers.
+    }
+
+    auto oldSharingLayers = WTFMove(m_backingSharingLayers);
+    m_backingSharingLayers = WTFMove(sharingLayers);
+
+    for (auto& layerWeakPtr : m_backingSharingLayers)
+        layerWeakPtr->setBackingProviderLayer(&m_owningLayer);
+
+    if (sharingLayersChanged) {
+        // For layers that are newly sharing, recompute repaint rects.
+        for (auto& currentSharingLayer : m_backingSharingLayers) {
+            if (!oldSharingLayers.contains(currentSharingLayer))
+                currentSharingLayer->computeRepaintRectsIncludingDescendants();
+        }
+    }
+}
+
+void RenderLayerBacking::removeBackingSharingLayer(RenderLayer& layer)
+{
+    layer.setBackingProviderLayer(nullptr);
+    m_backingSharingLayers.removeAll(&layer);
+}
+
+void RenderLayerBacking::clearBackingSharingLayers()
+{
+    clearBackingSharingLayerProviders(m_backingSharingLayers, m_owningLayer);
+    m_backingSharingLayers.clear();
+}
+
+Ref<GraphicsLayer> RenderLayerBacking::createGraphicsLayer(const String& name, GraphicsLayer::Type layerType)
 {
     auto* graphicsLayerFactory = renderer().page().chrome().client().graphicsLayerFactory();
 
-    std::unique_ptr<GraphicsLayer> graphicsLayer = GraphicsLayer::create(graphicsLayerFactory, *this, layerType);
+    auto graphicsLayer = GraphicsLayer::create(graphicsLayerFactory, *this, layerType);
 
     graphicsLayer->setName(name);
 
@@ -307,14 +390,13 @@ TiledBacking* RenderLayerBacking::tiledBacking() const
     return m_graphicsLayer->tiledBacking();
 }
 
-static TiledBacking::TileCoverage computePageTiledBackingCoverage(RenderLayerBacking* backing)
+static TiledBacking::TileCoverage computePageTiledBackingCoverage(const RenderLayer& layer)
 {
-    // FIXME: When we use TiledBacking for overflow, this should look at RenderView scrollability.
-    auto& frameView = backing->owningLayer().renderer().view().frameView();
-
     // If the page is non-visible, don't incur the cost of keeping extra tiles for scrolling.
-    if (!backing->owningLayer().page().isVisible())
+    if (!layer.page().isVisible())
         return TiledBacking::CoverageForVisibleArea;
+
+    auto& frameView = layer.renderer().view().frameView();
 
     TiledBacking::TileCoverage tileCoverage = TiledBacking::CoverageForVisibleArea;
     bool useMinimalTilesDuringLiveResize = frameView.inLiveResize();
@@ -329,13 +411,40 @@ static TiledBacking::TileCoverage computePageTiledBackingCoverage(RenderLayerBac
     return tileCoverage;
 }
 
+static TiledBacking::TileCoverage computeOverflowTiledBackingCoverage(const RenderLayer& layer)
+{
+    // If the page is non-visible, don't incur the cost of keeping extra tiles for scrolling.
+    if (!layer.page().isVisible())
+        return TiledBacking::CoverageForVisibleArea;
+
+    auto& frameView = layer.renderer().view().frameView();
+
+    TiledBacking::TileCoverage tileCoverage = TiledBacking::CoverageForVisibleArea;
+    bool useMinimalTilesDuringLiveResize = frameView.inLiveResize();
+    if (!useMinimalTilesDuringLiveResize) {
+        if (layer.hasScrollableHorizontalOverflow())
+            tileCoverage |= TiledBacking::CoverageForHorizontalScrolling;
+
+        if (layer.hasScrollableVerticalOverflow())
+            tileCoverage |= TiledBacking::CoverageForVerticalScrolling;
+    }
+    return tileCoverage;
+}
+
 void RenderLayerBacking::adjustTiledBackingCoverage()
 {
-    if (!m_isFrameLayerWithTiledBacking)
-        return;
+    if (m_isFrameLayerWithTiledBacking) {
+        auto tileCoverage = computePageTiledBackingCoverage(m_owningLayer);
+        if (auto* tiledBacking = this->tiledBacking())
+            tiledBacking->setTileCoverage(tileCoverage);
+    }
 
-    TiledBacking::TileCoverage tileCoverage = computePageTiledBackingCoverage(this);
-    tiledBacking()->setTileCoverage(tileCoverage);
+    if (m_owningLayer.hasCompositedScrollableOverflow() && m_scrolledContentsLayer) {
+        if (auto* tiledBacking = m_scrolledContentsLayer->tiledBacking()) {
+            auto tileCoverage = computeOverflowTiledBackingCoverage(m_owningLayer);
+            tiledBacking->setTileCoverage(tileCoverage);
+        }
+    }
 }
 
 void RenderLayerBacking::setTiledBackingHasMargins(bool hasExtendedBackgroundOnLeftAndRight, bool hasExtendedBackgroundOnTopAndBottom)
@@ -351,8 +460,10 @@ void RenderLayerBacking::updateDebugIndicators(bool showBorder, bool showRepaint
     m_graphicsLayer->setShowDebugBorder(showBorder);
     m_graphicsLayer->setShowRepaintCounter(showRepaintCounter);
 
-    if (m_ancestorClippingLayer)
-        m_ancestorClippingLayer->setShowDebugBorder(showBorder);
+    if (m_ancestorClippingStack) {
+        for (auto& entry : m_ancestorClippingStack->stack())
+            entry.clippingLayer->setShowDebugBorder(showBorder);
+    }
 
     if (m_foregroundLayer) {
         m_foregroundLayer->setShowDebugBorder(showBorder);
@@ -361,6 +472,9 @@ void RenderLayerBacking::updateDebugIndicators(bool showBorder, bool showRepaint
 
     if (m_contentsContainmentLayer)
         m_contentsContainmentLayer->setShowDebugBorder(showBorder);
+
+    if (m_childContainmentLayer)
+        m_childContainmentLayer->setShowDebugBorder(showBorder);
 
     if (m_backgroundLayer) {
         m_backgroundLayer->setShowDebugBorder(showBorder);
@@ -381,13 +495,16 @@ void RenderLayerBacking::updateDebugIndicators(bool showBorder, bool showRepaint
     if (m_layerForScrollCorner)
         m_layerForScrollCorner->setShowDebugBorder(showBorder);
 
-    if (m_scrollingLayer)
-        m_scrollingLayer->setShowDebugBorder(showBorder);
+    if (m_scrollContainerLayer)
+        m_scrollContainerLayer->setShowDebugBorder(showBorder);
 
-    if (m_scrollingContentsLayer) {
-        m_scrollingContentsLayer->setShowDebugBorder(showBorder);
-        m_scrollingContentsLayer->setShowRepaintCounter(showRepaintCounter);
+    if (m_scrolledContentsLayer) {
+        m_scrolledContentsLayer->setShowDebugBorder(showBorder);
+        m_scrolledContentsLayer->setShowRepaintCounter(showRepaintCounter);
     }
+
+    if (m_overflowControlsContainer)
+        m_overflowControlsContainer->setShowDebugBorder(showBorder);
 }
 
 void RenderLayerBacking::createPrimaryGraphicsLayer()
@@ -402,10 +519,10 @@ void RenderLayerBacking::createPrimaryGraphicsLayer()
 
     if (m_isFrameLayerWithTiledBacking) {
         m_childContainmentLayer = createGraphicsLayer("Page TiledBacking containment");
-        m_graphicsLayer->addChild(m_childContainmentLayer.get());
+        m_graphicsLayer->addChild(*m_childContainmentLayer);
     }
 
-#if !PLATFORM(IOS)
+#if !PLATFORM(IOS_FAMILY)
     if (m_isMainFrameRenderViewLayer) {
         // Page scale is applied above the RenderView on iOS.
         m_graphicsLayer->setContentsOpaque(!compositor().viewHasTransparentBackground());
@@ -433,7 +550,7 @@ void RenderLayerBacking::createPrimaryGraphicsLayer()
     updateCustomAppearance(renderer().style());
 }
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
 void RenderLayerBacking::layerWillBeDestroyed()
 {
     auto& renderer = this->renderer();
@@ -459,21 +576,48 @@ bool RenderLayerBacking::needsIOSDumpRenderTreeMainFrameRenderViewLayerIsAlwaysO
 void RenderLayerBacking::destroyGraphicsLayers()
 {
     if (m_graphicsLayer) {
+        m_graphicsLayer->setMaskLayer(nullptr);
+        m_graphicsLayer->setReplicatedByLayer(nullptr);
         willDestroyLayer(m_graphicsLayer.get());
-        m_graphicsLayer->removeFromParent();
     }
 
-    m_ancestorClippingLayer = nullptr;
-    m_contentsContainmentLayer = nullptr;
-    m_graphicsLayer = nullptr;
-    m_foregroundLayer = nullptr;
-    m_backgroundLayer = nullptr;
-    m_childContainmentLayer = nullptr;
-    m_maskLayer = nullptr;
-    m_childClippingMaskLayer = nullptr;
+    GraphicsLayer::clear(m_maskLayer);
 
-    m_scrollingLayer = nullptr;
-    m_scrollingContentsLayer = nullptr;
+    if (m_ancestorClippingStack) {
+        for (auto& entry : m_ancestorClippingStack->stack())
+            GraphicsLayer::unparentAndClear(entry.clippingLayer);
+    }
+
+    GraphicsLayer::unparentAndClear(m_contentsContainmentLayer);
+    GraphicsLayer::unparentAndClear(m_foregroundLayer);
+    GraphicsLayer::unparentAndClear(m_backgroundLayer);
+    GraphicsLayer::unparentAndClear(m_childContainmentLayer);
+    GraphicsLayer::unparentAndClear(m_childClippingMaskLayer);
+    GraphicsLayer::unparentAndClear(m_scrollContainerLayer);
+    GraphicsLayer::unparentAndClear(m_scrolledContentsLayer);
+    GraphicsLayer::unparentAndClear(m_graphicsLayer);
+}
+
+static LayoutRect scrollContainerLayerBox(const RenderBox& renderBox)
+{
+    return renderBox.paddingBoxRect();
+}
+
+static LayoutRect clippingLayerBox(const RenderBox& renderBox)
+{
+    LayoutRect result = LayoutRect::infiniteRect();
+    if (renderBox.hasOverflowClip())
+        result = renderBox.overflowClipRect({ }, 0); // FIXME: Incorrect for CSS regions.
+
+    if (renderBox.hasClip())
+        result.intersect(renderBox.clipRect({ }, 0)); // FIXME: Incorrect for CSS regions.
+
+    return result;
+}
+
+static LayoutRect overflowControlsHostLayerRect(const RenderBox& renderBox)
+{
+    return renderBox.paddingBoxRectIncludingScrollbar();
 }
 
 void RenderLayerBacking::updateOpacity(const RenderStyle& style)
@@ -494,9 +638,80 @@ void RenderLayerBacking::updateTransform(const RenderStyle& style)
 
     if (m_contentsContainmentLayer) {
         m_contentsContainmentLayer->setTransform(t);
-        m_graphicsLayer->setTransform(TransformationMatrix());
+        m_graphicsLayer->setTransform({ });
     } else
         m_graphicsLayer->setTransform(t);
+}
+
+void RenderLayerBacking::updateChildrenTransformAndAnchorPoint(const LayoutRect& primaryGraphicsLayerRect, LayoutSize offsetFromParentGraphicsLayer)
+{
+    if (!renderer().hasTransformRelatedProperty()) {
+        auto defaultAnchorPoint = FloatPoint3D { 0.5, 0.5, 0 };
+        m_graphicsLayer->setAnchorPoint(defaultAnchorPoint);
+        if (m_contentsContainmentLayer)
+            m_contentsContainmentLayer->setAnchorPoint(defaultAnchorPoint);
+
+        if (m_scrolledContentsLayer)
+            m_scrolledContentsLayer->setPreserves3D(false);
+        return;
+    }
+
+    auto& renderBox = downcast<RenderBox>(renderer());
+    const auto deviceScaleFactor = this->deviceScaleFactor();
+    auto borderBoxRect = renderBox.borderBoxRect();
+    auto transformOrigin = computeTransformOriginForPainting(borderBoxRect);
+    auto layerOffset = roundPointToDevicePixels(toLayoutPoint(offsetFromParentGraphicsLayer), deviceScaleFactor);
+    auto anchor = FloatPoint3D {
+        primaryGraphicsLayerRect.width() ? ((layerOffset.x() - primaryGraphicsLayerRect.x()) + transformOrigin.x()) / primaryGraphicsLayerRect.width() : 0.5f,
+        primaryGraphicsLayerRect.height() ? ((layerOffset.y() - primaryGraphicsLayerRect.y())+ transformOrigin.y()) / primaryGraphicsLayerRect.height() : 0.5f,
+        transformOrigin.z()
+    };
+
+    if (m_contentsContainmentLayer)
+        m_contentsContainmentLayer->setAnchorPoint(anchor);
+    else
+        m_graphicsLayer->setAnchorPoint(anchor);
+
+    auto removeChildrenTransformFromLayers = [&](GraphicsLayer* layerToIgnore = nullptr) {
+        auto* clippingLayer = this->clippingLayer();
+        if (clippingLayer && clippingLayer != layerToIgnore)
+            clippingLayer->setChildrenTransform({ });
+
+        if (m_scrollContainerLayer && m_scrollContainerLayer != layerToIgnore) {
+            m_scrollContainerLayer->setChildrenTransform({ });
+            m_scrolledContentsLayer->setPreserves3D(false);
+        }
+
+        if (m_graphicsLayer != layerToIgnore)
+            m_graphicsLayer->setChildrenTransform({ });
+    };
+
+    if (!renderer().style().hasPerspective()) {
+        removeChildrenTransformFromLayers();
+        return;
+    }
+
+    auto layerForChildrenTransform = [&] {
+        if (m_scrollContainerLayer)
+            return std::make_tuple(m_scrollContainerLayer.get(), scrollContainerLayerBox(renderBox));
+
+        if (auto* layer = clippingLayer())
+            return std::make_tuple(layer, clippingLayerBox(renderBox));
+
+        return std::make_tuple(m_graphicsLayer.get(), borderBoxRect);
+    };
+
+    auto [layerForPerspective, perspectiveRelativeBox] = layerForChildrenTransform();
+    // FIXME: perspectiveRelativeBox isn't quite right here. This needs work: webkit.org/b/211787.
+    auto perspectiveTransform = owningLayer().perspectiveTransform(perspectiveRelativeBox);
+
+    // If we have scrolling layers, we need the children transform on m_scrollContainerLayer to
+    // affect children of m_scrolledContentsLayer, so set setPreserves3D(true).
+    if (layerForPerspective == m_scrollContainerLayer)
+        m_scrolledContentsLayer->setPreserves3D(true);
+
+    layerForPerspective->setChildrenTransform(perspectiveTransform);
+    removeChildrenTransformFromLayers(layerForPerspective);
 }
 
 void RenderLayerBacking::updateFilters(const RenderStyle& style)
@@ -518,17 +733,20 @@ void RenderLayerBacking::updateBackdropFiltersGeometry()
     if (!is<RenderBox>(renderer()))
         return;
 
-    auto& renderer = downcast<RenderBox>(this->renderer());
-    LayoutRect boxRect = renderer.borderBoxRect();
-    if (renderer.hasClip())
-        boxRect.intersect(renderer.clipRect(LayoutPoint(), nullptr));
-    boxRect.move(contentOffsetInCompostingLayer());
+    auto& renderBox = downcast<RenderBox>(this->renderer());
 
     FloatRoundedRect backdropFiltersRect;
-    if (renderer.style().hasBorderRadius() && !renderer.hasClip())
-        backdropFiltersRect = renderer.style().getRoundedInnerBorderFor(boxRect).pixelSnappedRoundedRectForPainting(deviceScaleFactor());
-    else
+    if (renderBox.style().hasBorderRadius() && !renderBox.hasClip()) {
+        auto roundedBoxRect = renderBox.roundedBorderBoxRect();
+        roundedBoxRect.move(contentOffsetInCompositingLayer());
+        backdropFiltersRect = roundedBoxRect.pixelSnappedRoundedRectForPainting(deviceScaleFactor());
+    } else {
+        auto boxRect = renderBox.borderBoxRect();
+        if (renderBox.hasClip())
+            boxRect.intersect(renderBox.clipRect(LayoutPoint(), nullptr));
+        boxRect.move(contentOffsetInCompositingLayer());
         backdropFiltersRect = FloatRoundedRect(snapRectToDevicePixels(boxRect, deviceScaleFactor()));
+    }
 
     m_graphicsLayer->setBackdropFiltersRect(backdropFiltersRect);
 }
@@ -537,9 +755,9 @@ void RenderLayerBacking::updateBackdropFiltersGeometry()
 #if ENABLE(CSS_COMPOSITING)
 void RenderLayerBacking::updateBlendMode(const RenderStyle& style)
 {
-    // FIXME: where is the blend mode updated when m_ancestorClippingLayers come and go?
-    if (m_ancestorClippingLayer) {
-        m_ancestorClippingLayer->setBlendMode(style.blendMode());
+    // FIXME: where is the blend mode updated when m_ancestorClippingStacks come and go?
+    if (m_ancestorClippingStack) {
+        m_ancestorClippingStack->stack().first().clippingLayer->setBlendMode(style.blendMode());
         m_graphicsLayer->setBlendMode(BlendMode::Normal);
     } else
         m_graphicsLayer->setBlendMode(style.blendMode());
@@ -560,7 +778,7 @@ void RenderLayerBacking::updateCustomAppearance(const RenderStyle& style)
 static bool layerOrAncestorIsTransformedOrUsingCompositedScrolling(RenderLayer& layer)
 {
     for (auto* curr = &layer; curr; curr = curr->parent()) {
-        if (curr->hasTransform() || curr->usesAcceleratedScrolling())
+        if (curr->hasTransform() || curr->hasCompositedScrollableOverflow())
             return true;
     }
 
@@ -569,7 +787,7 @@ static bool layerOrAncestorIsTransformedOrUsingCompositedScrolling(RenderLayer& 
 
 bool RenderLayerBacking::shouldClipCompositedBounds() const
 {
-#if !PLATFORM(IOS)
+#if !PLATFORM(IOS_FAMILY)
     // Scrollbar layers use this layer for relative positioning, so don't clip.
     if (layerForHorizontalScrollbar() || layerForVerticalScrollbar())
         return false;
@@ -591,9 +809,14 @@ static bool hasNonZeroTransformOrigin(const RenderObject& renderer)
         || (style.transformOriginY().type() == Fixed && style.transformOriginY().value());
 }
 
-void RenderLayerBacking::updateCompositedBounds()
+bool RenderLayerBacking::updateCompositedBounds()
 {
-    LayoutRect layerBounds = m_owningLayer.calculateLayerBounds(&m_owningLayer, LayoutSize(), RenderLayer::defaultCalculateLayerBoundsFlags() | RenderLayer::ExcludeHiddenDescendants | RenderLayer::DontConstrainForMask);
+#if USE(OWNING_LAYER_BEAR_TRAP)
+    RELEASE_ASSERT_WITH_MESSAGE(m_owningLayerBearTrap == BEAR_TRAP_VALUE, "RenderLayerBacking::updateCompositedBounds(): m_owningLayerBearTrap caught the bear (55699292)");
+    RELEASE_ASSERT_WITH_MESSAGE(&m_owningLayer, "RenderLayerBacking::updateCompositedBounds(): m_owningLayer is null (55699292)");
+#endif
+
+    LayoutRect layerBounds = m_owningLayer.calculateLayerBounds(&m_owningLayer, { }, RenderLayer::defaultCalculateLayerBoundsFlags() | RenderLayer::ExcludeHiddenDescendants | RenderLayer::DontConstrainForMask);
     // Clip to the size of the document or enclosing overflow-scroll layer.
     // If this or an ancestor is transformed, we can't currently compute the correct rect to intersect with.
     // We'd need RenderObject::convertContainerToLocalQuad(), which doesn't yet exist.
@@ -616,6 +839,17 @@ void RenderLayerBacking::updateCompositedBounds()
         layerBounds.intersect(clippingBounds);
     }
 
+    // If the backing provider has overflow:clip, we know all sharing layers are affected by the clip because they are containing-block descendants.
+    if (!renderer().hasOverflowClip()) {
+        for (auto& layerWeakPtr : m_backingSharingLayers) {
+            auto* boundsRootLayer = &m_owningLayer;
+            ASSERT(layerWeakPtr->isDescendantOf(m_owningLayer));
+            auto offset = layerWeakPtr->offsetFromAncestor(&m_owningLayer);
+            auto bounds = layerWeakPtr->calculateLayerBounds(boundsRootLayer, offset, RenderLayer::defaultCalculateLayerBoundsFlags() | RenderLayer::ExcludeHiddenDescendants | RenderLayer::DontConstrainForMask);
+            layerBounds.unite(bounds);
+        }
+    }
+
     // If the element has a transform-origin that has fixed lengths, and the renderer has zero size,
     // then we need to ensure that the compositing layer has non-zero size so that we can apply
     // the transform-origin via the GraphicsLayer anchorPoint (which is expressed as a fractional value).
@@ -626,80 +860,138 @@ void RenderLayerBacking::updateCompositedBounds()
     } else
         m_artificiallyInflatedBounds = false;
 
-    setCompositedBounds(layerBounds);
+    return setCompositedBounds(layerBounds);
+}
+
+void RenderLayerBacking::updateAllowsBackingStoreDetaching(const LayoutRect& absoluteBounds)
+{
+    auto setAllowsBackingStoreDetaching = [&](bool allowDetaching) {
+        m_graphicsLayer->setAllowsBackingStoreDetaching(allowDetaching);
+        if (m_foregroundLayer)
+            m_foregroundLayer->setAllowsBackingStoreDetaching(allowDetaching);
+        if (m_backgroundLayer)
+            m_backgroundLayer->setAllowsBackingStoreDetaching(allowDetaching);
+        if (m_scrolledContentsLayer)
+            m_scrolledContentsLayer->setAllowsBackingStoreDetaching(allowDetaching);
+    };
+
+    if (!m_owningLayer.behavesAsFixed()) {
+        setAllowsBackingStoreDetaching(true);
+        return;
+    }
+
+    // We'll allow detaching if the layer is outside the layout viewport. Fixed layers inside
+    // the layout viewport can be revealed by async scrolling, so we want to pin their backing store.
+    FrameView& frameView = renderer().view().frameView();
+    LayoutRect fixedLayoutRect;
+    if (frameView.useFixedLayout())
+        fixedLayoutRect = renderer().view().unscaledDocumentRect();
+    else
+        fixedLayoutRect = frameView.rectForFixedPositionLayout();
+
+    bool allowDetaching = !fixedLayoutRect.intersects(absoluteBounds);
+    LOG_WITH_STREAM(Compositing, stream << "RenderLayerBacking (layer " << &m_owningLayer << ") updateAllowsBackingStoreDetaching - absoluteBounds " << absoluteBounds << " layoutViewportRect " << fixedLayoutRect << ", allowDetaching " << allowDetaching);
+    setAllowsBackingStoreDetaching(allowDetaching);
 }
 
 void RenderLayerBacking::updateAfterWidgetResize()
 {
     if (!is<RenderWidget>(renderer()))
         return;
-    if (auto* innerCompositor = RenderLayerCompositor::frameContentsCompositor(&downcast<RenderWidget>(renderer()))) {
+
+    if (auto* innerCompositor = RenderLayerCompositor::frameContentsCompositor(downcast<RenderWidget>(renderer()))) {
         innerCompositor->frameViewDidChangeSize();
         innerCompositor->frameViewDidChangeLocation(flooredIntPoint(contentsBox().location()));
     }
 }
 
-void RenderLayerBacking::updateAfterLayout(OptionSet<UpdateAfterLayoutFlags> flags)
+void RenderLayerBacking::updateAfterLayout(bool needsClippingUpdate, bool needsFullRepaint)
 {
+#if USE(OWNING_LAYER_BEAR_TRAP)
+    RELEASE_ASSERT_WITH_MESSAGE(m_owningLayerBearTrap == BEAR_TRAP_VALUE, "RenderLayerBacking::updateAfterLayout(): m_owningLayerBearTrap caught the bear (55699292)");
+    RELEASE_ASSERT_WITH_MESSAGE(&m_owningLayer, "RenderLayerBacking::updateAfterLayout(): m_owningLayer is null (55699292)");
+#endif
+
     LOG(Compositing, "RenderLayerBacking %p updateAfterLayout (layer %p)", this, &m_owningLayer);
 
-    if (!compositor().compositingLayersNeedRebuild()) {
-        // Calling updateGeometry() here gives incorrect results, because the
-        // position of this layer's GraphicsLayer depends on the position of our compositing
-        // ancestor's GraphicsLayer. That cannot be determined until all the descendant
-        // RenderLayers of that ancestor have been processed via updateLayerPositions().
-        //
-        // The solution is to update compositing children of this layer here,
-        // via updateCompositingChildrenGeometry().
-        updateCompositedBounds();
-        compositor().updateCompositingDescendantGeometry(m_owningLayer, m_owningLayer);
-
-        if (flags.contains(UpdateAfterLayoutFlags::IsUpdateRoot)) {
-            updateGeometry();
-            updateAfterDescendants();
-            compositor().updateRootLayerPosition();
-            auto* stackingContainer = m_owningLayer.enclosingStackingContainer();
-            if (!compositor().compositingLayersNeedRebuild() && stackingContainer && (stackingContainer != &m_owningLayer))
-                compositor().updateCompositingDescendantGeometry(*stackingContainer, *stackingContainer);
-        }
+    // This is the main trigger for layout changing layer geometry, but we have to do the work again in updateBackingAndHierarchy()
+    // when we know the final compositing hierarchy. We can't just set dirty bits from RenderLayer::setSize() because that doesn't
+    // take overflow into account.
+    if (updateCompositedBounds()) {
+        m_owningLayer.setNeedsCompositingGeometryUpdate();
+        // This layer's geometry affects those of its children.
+        m_owningLayer.setChildrenNeedCompositingGeometryUpdate();
+    } else if (needsClippingUpdate) {
+        m_owningLayer.setNeedsCompositingConfigurationUpdate();
+        m_owningLayer.setNeedsCompositingGeometryUpdate();
     }
 
-    if (flags.contains(UpdateAfterLayoutFlags::NeedsFullRepaint) && canIssueSetNeedsDisplay())
+    if (needsFullRepaint && canIssueSetNeedsDisplay())
         setContentsNeedDisplay();
 }
 
-bool RenderLayerBacking::updateConfiguration()
+// This can only update things that don't require up-to-date layout.
+void RenderLayerBacking::updateConfigurationAfterStyleChange()
 {
-    m_owningLayer.updateDescendantDependentFlags();
-    m_owningLayer.updateZOrderLists();
+    updateMaskingLayer(renderer().hasMask(), renderer().hasClipPath());
+
+    if (m_owningLayer.hasReflection()) {
+        if (m_owningLayer.reflectionLayer()->backing()) {
+            auto* reflectionLayer = m_owningLayer.reflectionLayer()->backing()->graphicsLayer();
+            m_graphicsLayer->setReplicatedByLayer(reflectionLayer);
+        }
+    } else
+        m_graphicsLayer->setReplicatedByLayer(nullptr);
+
+    // FIXME: do we care if opacity is animating?
+    auto& style = renderer().style();
+    updateOpacity(style);
+    updateFilters(style);
+
+#if ENABLE(FILTERS_LEVEL_2)
+    updateBackdropFilters(style);
+#endif
+#if ENABLE(CSS_COMPOSITING)
+    updateBlendMode(style);
+#endif
+    updateCustomAppearance(style);
+}
+
+bool RenderLayerBacking::updateConfiguration(const RenderLayer* compositingAncestor)
+{
+    ASSERT(!m_owningLayer.normalFlowListDirty());
+    ASSERT(!m_owningLayer.zOrderListsDirty());
+    ASSERT(!renderer().view().needsLayout());
 
     bool layerConfigChanged = false;
-    setBackgroundLayerPaintsFixedRootBackground(compositor().needsFixedRootBackgroundLayer(m_owningLayer));
+    auto& compositor = this->compositor();
 
-    // The background layer is currently only used for fixed root backgrounds.
+    setBackgroundLayerPaintsFixedRootBackground(compositor.needsFixedRootBackgroundLayer(m_owningLayer));
+
     if (updateBackgroundLayer(m_backgroundLayerPaintsFixedRootBackground || m_requiresBackgroundLayer))
         layerConfigChanged = true;
 
-    if (updateForegroundLayer(compositor().needsContentsCompositingLayer(m_owningLayer)))
+    if (updateForegroundLayer(compositor.needsContentsCompositingLayer(m_owningLayer)))
         layerConfigChanged = true;
 
-    bool needsDescendantsClippingLayer = compositor().clipsCompositingDescendants(m_owningLayer);
+    bool needsDescendantsClippingLayer = false;
+    bool usesCompositedScrolling = m_owningLayer.hasCompositedScrollableOverflow();
 
-    if (!renderer().view().needsLayout()) {
-        bool usesCompositedScrolling = m_owningLayer.usesAcceleratedScrolling();
+    if (usesCompositedScrolling) {
+        // If it's scrollable, it has to be a box.
+        FloatRoundedRect contentsClippingRect = downcast<RenderBox>(renderer()).roundedBorderBoxRect().pixelSnappedRoundedRectForPainting(deviceScaleFactor());
+        needsDescendantsClippingLayer = contentsClippingRect.isRounded();
+    } else
+        needsDescendantsClippingLayer = RenderLayerCompositor::clipsCompositingDescendants(m_owningLayer);
 
-        // Our scrolling layer will clip.
-        if (usesCompositedScrolling)
-            needsDescendantsClippingLayer = false;
+    if (updateScrollingLayers(usesCompositedScrolling))
+        layerConfigChanged = true;
 
-        if (updateScrollingLayers(usesCompositedScrolling))
-            layerConfigChanged = true;
+    if (updateDescendantClippingLayer(needsDescendantsClippingLayer))
+        layerConfigChanged = true;
 
-        if (updateDescendantClippingLayer(needsDescendantsClippingLayer))
-            layerConfigChanged = true;
-    }
-
-    if (updateAncestorClippingLayer(compositor().clippedByAncestor(m_owningLayer)))
+    ASSERT(compositingAncestor == m_owningLayer.ancestorCompositingLayer());
+    if (updateAncestorClipping(compositor.clippedByAncestor(m_owningLayer, compositingAncestor), compositingAncestor))
         layerConfigChanged = true;
 
     if (updateOverflowControlsLayers(requiresHorizontalScrollbarLayer(), requiresVerticalScrollbarLayer(), requiresScrollCornerLayer()))
@@ -710,10 +1002,11 @@ bool RenderLayerBacking::updateConfiguration()
 
     if (auto* flatteningLayer = tileCacheFlatteningLayer()) {
         if (layerConfigChanged || flatteningLayer->parent() != m_graphicsLayer.get())
-            m_graphicsLayer->addChild(flatteningLayer);
+            m_graphicsLayer->addChild(*flatteningLayer);
     }
 
-    updateMaskingLayer(renderer().hasMask(), renderer().hasClipPath());
+    if (updateMaskingLayer(renderer().hasMask(), renderer().hasClipPath()))
+        layerConfigChanged = true;
 
     updateChildClippingStrategy(needsDescendantsClippingLayer);
 
@@ -727,18 +1020,20 @@ bool RenderLayerBacking::updateConfiguration()
 
     PaintedContentsInfo contentsInfo(*this);
 
+    // Requires layout.
     if (!m_owningLayer.isRenderViewLayer()) {
         bool didUpdateContentsRect = false;
         updateDirectlyCompositedBoxDecorations(contentsInfo, didUpdateContentsRect);
     } else
         updateRootLayerConfiguration();
 
+    // Requires layout.
     if (contentsInfo.isDirectlyCompositedImage())
         updateImageContents(contentsInfo);
 
     if (is<RenderEmbeddedObject>(renderer()) && downcast<RenderEmbeddedObject>(renderer()).allowsAcceleratedCompositing()) {
         auto* pluginViewBase = downcast<PluginViewBase>(downcast<RenderWidget>(renderer()).widget());
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
         if (pluginViewBase && !m_graphicsLayer->contentsLayerForMedia()) {
             pluginViewBase->detachPluginLayer();
             pluginViewBase->attachPluginLayer();
@@ -752,33 +1047,45 @@ bool RenderLayerBacking::updateConfiguration()
     else if (is<RenderVideo>(renderer()) && downcast<RenderVideo>(renderer()).shouldDisplayVideo()) {
         auto* mediaElement = downcast<HTMLMediaElement>(renderer().element());
         m_graphicsLayer->setContentsToPlatformLayer(mediaElement->platformLayer(), GraphicsLayer::ContentsLayerPurpose::Media);
-        resetContentsRect();
+        updateContentsRects();
     }
 #endif
-#if ENABLE(WEBGL) || ENABLE(ACCELERATED_2D_CANVAS)
+#if ENABLE(WEBGL) || ENABLE(ACCELERATED_2D_CANVAS) || ENABLE(WEBGPU)
     else if (renderer().isCanvas() && canvasCompositingStrategy(renderer()) == CanvasAsLayerContents) {
         const HTMLCanvasElement* canvas = downcast<HTMLCanvasElement>(renderer().element());
         if (auto* context = canvas->renderingContext())
             m_graphicsLayer->setContentsToPlatformLayer(context->platformLayer(), GraphicsLayer::ContentsLayerPurpose::Canvas);
+
         layerConfigChanged = true;
     }
 #endif
-    if (is<RenderWidget>(renderer()))
-        layerConfigChanged = RenderLayerCompositor::parentFrameContentLayers(&downcast<RenderWidget>(renderer()));
+    if (is<RenderWidget>(renderer()) && compositor.parentFrameContentLayers(downcast<RenderWidget>(renderer()))) {
+        m_owningLayer.setNeedsCompositingGeometryUpdate();
+        layerConfigChanged = true;
+    }
+
+    if (RenderLayerCompositor::isCompositedSubframeRenderer(renderer())) {
+        m_graphicsLayer->setContentsRectClipsDescendants(true);
+        updateContentsRects();
+    }
+
+    if (is<RenderImage>(renderer()) && downcast<RenderImage>(renderer()).isEditableImage()) {
+        auto element = renderer().element();
+        if (is<HTMLImageElement>(element)) {
+            m_graphicsLayer->setContentsToEmbeddedView(GraphicsLayer::ContentsLayerEmbeddedViewType::EditableImage, downcast<HTMLImageElement>(element)->editableImageViewID());
+            layerConfigChanged = true;
+        }
+    }
+
+    if (layerConfigChanged)
+        updatePaintingPhases();
+
+#if USE(OWNING_LAYER_BEAR_TRAP)
+    RELEASE_ASSERT_WITH_MESSAGE(m_owningLayerBearTrap == BEAR_TRAP_VALUE, "RenderLayerBacking::updateConfiguration(): m_owningLayerBearTrap caught the bear (55699292)");
+    RELEASE_ASSERT_WITH_MESSAGE(&m_owningLayer, "RenderLayerBacking::updateConfiguration(): m_owningLayer is null (55699292)");
+#endif
 
     return layerConfigChanged;
-}
-
-static LayoutRect clipBox(RenderBox& renderer)
-{
-    LayoutRect result = LayoutRect::infiniteRect();
-    if (renderer.hasOverflowClip())
-        result = renderer.overflowClipRect(LayoutPoint(), 0); // FIXME: Incorrect for CSS regions.
-
-    if (renderer.hasClip())
-        result.intersect(renderer.clipRect(LayoutPoint(), 0)); // FIXME: Incorrect for CSS regions.
-
-    return result;
 }
 
 static bool subpixelOffsetFromRendererChanged(const LayoutSize& oldSubpixelOffsetFromRenderer, const LayoutSize& newSubpixelOffsetFromRenderer, float deviceScaleFactor)
@@ -825,12 +1132,12 @@ static SnappedRectInfo snappedGraphicsLayer(const LayoutSize& offset, const Layo
     return snappedGraphicsLayer;
 }
 
-static LayoutSize computeOffsetFromAncestorGraphicsLayer(RenderLayer* compositedAncestor, const LayoutPoint& location, float deviceScaleFactor)
+static LayoutSize computeOffsetFromAncestorGraphicsLayer(const RenderLayer* compositedAncestor, const LayoutPoint& location, float deviceScaleFactor)
 {
     if (!compositedAncestor)
         return toLayoutSize(location);
 
-    // FIXME: This is a workaround until after webkit.org/162634 gets fixed. ancestorSubpixelOffsetFromRenderer
+    // FIXME: This is a workaround until after webkit.org/b/162634 gets fixed. ancestorSubpixelOffsetFromRenderer
     // could be stale when a dynamic composited state change triggers a pre-order updateGeometry() traversal.
     LayoutSize ancestorSubpixelOffsetFromRenderer = compositedAncestor->backing()->subpixelOffsetFromRenderer();
     LayoutRect ancestorCompositedBounds = compositedAncestor->backing()->compositedBounds();
@@ -841,8 +1148,9 @@ static LayoutSize computeOffsetFromAncestorGraphicsLayer(RenderLayer* composited
 
 class ComputedOffsets {
 public:
-    ComputedOffsets(const RenderLayer& renderLayer, const LayoutRect& localRect, const LayoutRect& parentGraphicsLayerRect, const LayoutRect& primaryGraphicsLayerRect)
+    ComputedOffsets(const RenderLayer& renderLayer, const RenderLayer* compositingAncestor, const LayoutRect& localRect, const LayoutRect& parentGraphicsLayerRect, const LayoutRect& primaryGraphicsLayerRect)
         : m_renderLayer(renderLayer)
+        , m_compositingAncestor(compositingAncestor)
         , m_location(localRect.location())
         , m_parentGraphicsLayerOffset(toLayoutSize(parentGraphicsLayerRect.location()))
         , m_primaryGraphicsLayerOffset(toLayoutSize(primaryGraphicsLayerRect.location()))
@@ -868,18 +1176,18 @@ private:
     LayoutSize fromAncestorGraphicsLayer()
     {
         if (!m_fromAncestorGraphicsLayer) {
-            auto* compositedAncestor = m_renderLayer.ancestorCompositingLayer();
-            LayoutPoint localPointInAncestorRenderLayerCoords = m_renderLayer.convertToLayerCoords(compositedAncestor, m_location, RenderLayer::AdjustForColumns);
-            m_fromAncestorGraphicsLayer = computeOffsetFromAncestorGraphicsLayer(compositedAncestor, localPointInAncestorRenderLayerCoords, m_deviceScaleFactor);
+            LayoutPoint localPointInAncestorRenderLayerCoords = m_renderLayer.convertToLayerCoords(m_compositingAncestor, m_location, RenderLayer::AdjustForColumns);
+            m_fromAncestorGraphicsLayer = computeOffsetFromAncestorGraphicsLayer(m_compositingAncestor, localPointInAncestorRenderLayerCoords, m_deviceScaleFactor);
         }
         return m_fromAncestorGraphicsLayer.value();
     }
 
-    std::optional<LayoutSize> m_fromAncestorGraphicsLayer;
-    std::optional<LayoutSize> m_fromParentGraphicsLayer;
-    std::optional<LayoutSize> m_fromPrimaryGraphicsLayer;
+    Optional<LayoutSize> m_fromAncestorGraphicsLayer;
+    Optional<LayoutSize> m_fromParentGraphicsLayer;
+    Optional<LayoutSize> m_fromPrimaryGraphicsLayer;
 
     const RenderLayer& m_renderLayer;
+    const RenderLayer* m_compositingAncestor;
     // Location is relative to the renderer.
     const LayoutPoint m_location;
     const LayoutSize m_parentGraphicsLayerOffset;
@@ -887,96 +1195,69 @@ private:
     float m_deviceScaleFactor;
 };
 
-LayoutRect RenderLayerBacking::computePrimaryGraphicsLayerRect(const LayoutRect& parentGraphicsLayerRect) const
+LayoutRect RenderLayerBacking::computePrimaryGraphicsLayerRect(const RenderLayer* compositedAncestor, const LayoutRect& parentGraphicsLayerRect) const
 {
-    ComputedOffsets compositedBoundsOffset(m_owningLayer, compositedBounds(), parentGraphicsLayerRect, LayoutRect());
+    ComputedOffsets compositedBoundsOffset(m_owningLayer, compositedAncestor, compositedBounds(), parentGraphicsLayerRect, { });
     return LayoutRect(encloseRectToDevicePixels(LayoutRect(toLayoutPoint(compositedBoundsOffset.fromParentGraphicsLayer()), compositedBounds().size()),
         deviceScaleFactor()));
 }
 
-LayoutRect RenderLayerBacking::computeParentGraphicsLayerRect(RenderLayer* compositedAncestor, LayoutSize& ancestorClippingLayerOffset) const
+// FIXME: See if we need this now that updateGeometry() is always called in post-order traversal.
+LayoutRect RenderLayerBacking::computeParentGraphicsLayerRect(const RenderLayer* compositedAncestor) const
 {
     if (!compositedAncestor || !compositedAncestor->backing())
         return renderer().view().documentRect();
 
-    auto* ancestorBackingLayer = compositedAncestor->backing();
+    auto* ancestorBacking = compositedAncestor->backing();
     LayoutRect parentGraphicsLayerRect;
     if (m_owningLayer.isInsideFragmentedFlow()) {
         // FIXME: flows/columns need work.
-        LayoutRect ancestorCompositedBounds = ancestorBackingLayer->compositedBounds();
+        LayoutRect ancestorCompositedBounds = ancestorBacking->compositedBounds();
         ancestorCompositedBounds.setLocation(LayoutPoint());
         parentGraphicsLayerRect = ancestorCompositedBounds;
     }
 
-    if (ancestorBackingLayer->hasClippingLayer()) {
+    if (!is<RenderBox>(compositedAncestor->renderer()))
+        return parentGraphicsLayerRect;
+
+    auto& ancestorRenderBox = downcast<RenderBox>(compositedAncestor->renderer());
+
+    if (ancestorBacking->hasClippingLayer()) {
         // If the compositing ancestor has a layer to clip children, we parent in that, and therefore position relative to it.
-        LayoutRect clippingBox = clipBox(downcast<RenderBox>(compositedAncestor->renderer()));
+        LayoutRect clippingBox = clippingLayerBox(ancestorRenderBox);
         LayoutSize clippingBoxOffset = computeOffsetFromAncestorGraphicsLayer(compositedAncestor, clippingBox.location(), deviceScaleFactor());
         parentGraphicsLayerRect = snappedGraphicsLayer(clippingBoxOffset, clippingBox.size(), deviceScaleFactor()).m_snappedRect;
     }
 
-#if PLATFORM(IOS)
-    if (compositedAncestor->hasTouchScrollableOverflow()) {
-        LayoutRect ancestorCompositedBounds = ancestorBackingLayer->compositedBounds();
-        auto& renderBox = downcast<RenderBox>(compositedAncestor->renderer());
-        LayoutRect paddingBox(renderBox.borderLeft(), renderBox.borderTop(), renderBox.width() - renderBox.borderLeft() - renderBox.borderRight(), renderBox.height() - renderBox.borderTop() - renderBox.borderBottom());
+    if (compositedAncestor->hasCompositedScrollableOverflow()) {
+        LayoutRect ancestorCompositedBounds = ancestorBacking->compositedBounds();
+        LayoutRect scrollContainerBox = scrollContainerLayerBox(ancestorRenderBox);
         ScrollOffset scrollOffset = compositedAncestor->scrollOffset();
-        parentGraphicsLayerRect = LayoutRect((paddingBox.location() - toLayoutSize(ancestorCompositedBounds.location()) - toLayoutSize(scrollOffset)), paddingBox.size());
+        parentGraphicsLayerRect = LayoutRect((scrollContainerBox.location() - toLayoutSize(ancestorCompositedBounds.location()) - toLayoutSize(scrollOffset)), scrollContainerBox.size());
     }
-#else
-    if (compositedAncestor->needsCompositedScrolling()) {
-        auto& renderBox = downcast<RenderBox>(compositedAncestor->renderer());
-        LayoutPoint scrollOrigin(renderBox.borderLeft(), renderBox.borderTop());
-        parentGraphicsLayerRect = LayoutRect(scrollOrigin - toLayoutSize(compositedAncestor->scrollOffset()), renderBox.borderBoxRect().size());
-    }
-#endif
 
-    if (m_ancestorClippingLayer) {
-        // Call calculateRects to get the backgroundRect which is what is used to clip the contents of this
-        // layer. Note that we call it with temporaryClipRects = true because normally when computing clip rects
-        // for a compositing layer, rootLayer is the layer itself.
-        ShouldRespectOverflowClip shouldRespectOverflowClip = compositedAncestor->isolatesCompositedBlending() ? RespectOverflowClip : IgnoreOverflowClip;
-        RenderLayer::ClipRectsContext clipRectsContext(compositedAncestor, TemporaryClipRects, IgnoreOverlayScrollbarSize, shouldRespectOverflowClip);
-        LayoutRect parentClipRect = m_owningLayer.backgroundClipRect(clipRectsContext).rect(); // FIXME: Incorrect for CSS regions.
-        ASSERT(!parentClipRect.isInfinite());
-        LayoutSize clippingOffset = computeOffsetFromAncestorGraphicsLayer(compositedAncestor, parentClipRect.location(), deviceScaleFactor());
-        LayoutRect snappedClippingLayerRect = snappedGraphicsLayer(clippingOffset, parentClipRect.size(), deviceScaleFactor()).m_snappedRect;
-        // The primary layer is then parented in, and positioned relative to this clipping layer.
-        ancestorClippingLayerOffset = snappedClippingLayerRect.location() - parentGraphicsLayerRect.location();
-        parentGraphicsLayerRect = snappedClippingLayerRect;
-    }
     return parentGraphicsLayerRect;
 }
 
-void RenderLayerBacking::updateGeometry()
+void RenderLayerBacking::updateGeometry(const RenderLayer* compositedAncestor)
 {
-    // If we haven't built z-order lists yet, wait until later.
-    if (m_owningLayer.isStackingContainer() && m_owningLayer.m_zOrderListsDirty)
-        return;
+    ASSERT(!m_owningLayer.normalFlowListDirty());
+    ASSERT(!m_owningLayer.zOrderListsDirty());
+    ASSERT(!m_owningLayer.descendantDependentFlagsAreDirty());
+    ASSERT(!renderer().view().needsLayout());
 
     const RenderStyle& style = renderer().style();
+    const auto deviceScaleFactor = this->deviceScaleFactor();
 
     bool isRunningAcceleratedTransformAnimation = false;
-    bool isRunningAcceleratedOpacityAnimation = false;
     if (RuntimeEnabledFeatures::sharedFeatures().webAnimationsCSSIntegrationEnabled()) {
-        if (auto* timeline = renderer().documentTimeline()) {
+        if (auto* timeline = renderer().documentTimeline())
             isRunningAcceleratedTransformAnimation = timeline->isRunningAcceleratedAnimationOnRenderer(renderer(), CSSPropertyTransform);
-            isRunningAcceleratedOpacityAnimation = timeline->isRunningAcceleratedAnimationOnRenderer(renderer(), CSSPropertyOpacity);
-        }
-    } else {
-        isRunningAcceleratedTransformAnimation = renderer().animation().isRunningAcceleratedAnimationOnRenderer(renderer(), CSSPropertyTransform, AnimationBase::Running | AnimationBase::Paused);
-        isRunningAcceleratedOpacityAnimation = renderer().animation().isRunningAcceleratedAnimationOnRenderer(renderer(), CSSPropertyOpacity, AnimationBase::Running | AnimationBase::Paused);
-    }
+    } else
+        isRunningAcceleratedTransformAnimation = renderer().legacyAnimation().isRunningAcceleratedAnimationOnRenderer(renderer(), CSSPropertyTransform);
 
-    // Set transform property, if it is not animating. We have to do this here because the transform
-    // is affected by the layer dimensions.
-    if (!isRunningAcceleratedTransformAnimation)
-        updateTransform(style);
-
-    // Set opacity, if it is not animating.
-    if (!isRunningAcceleratedOpacityAnimation)
-        updateOpacity(style);
-
+    updateTransform(style);
+    updateOpacity(style);
     updateFilters(style);
 #if ENABLE(FILTERS_LEVEL_2)
     updateBackdropFilters(style);
@@ -984,81 +1265,102 @@ void RenderLayerBacking::updateGeometry()
 #if ENABLE(CSS_COMPOSITING)
     updateBlendMode(style);
 #endif
-    m_owningLayer.updateDescendantDependentFlags();
+
+    ASSERT(compositedAncestor == m_owningLayer.ancestorCompositingLayer());
+    LayoutRect parentGraphicsLayerRect = computeParentGraphicsLayerRect(compositedAncestor);
+
+    if (m_ancestorClippingStack) {
+        // All clipRects in the stack are computed relative to m_owningLayer, so convert them back to compositedAncestor.
+        auto offsetFromCompositedAncestor = toLayoutSize(m_owningLayer.convertToLayerCoords(compositedAncestor, { }, RenderLayer::AdjustForColumns));
+        LayoutRect lastClipLayerRect = parentGraphicsLayerRect;
+
+        for (auto& entry : m_ancestorClippingStack->stack()) {
+            auto clipRect = entry.clipData.clipRect;
+            LayoutSize clippingOffset = computeOffsetFromAncestorGraphicsLayer(compositedAncestor, clipRect.location() + offsetFromCompositedAncestor, deviceScaleFactor);
+            LayoutRect snappedClippingLayerRect = snappedGraphicsLayer(clippingOffset, clipRect.size(), deviceScaleFactor).m_snappedRect;
+
+            entry.clippingLayer->setPosition(toLayoutPoint(snappedClippingLayerRect.location() - lastClipLayerRect.location()));
+            lastClipLayerRect = snappedClippingLayerRect;
+
+            entry.clippingLayer->setSize(snappedClippingLayerRect.size());
+
+            if (entry.clipData.isOverflowScroll) {
+                ScrollOffset scrollOffset = entry.clipData.clippingLayer->scrollOffset();
+
+                entry.clippingLayer->setBoundsOrigin(scrollOffset);
+                lastClipLayerRect.moveBy(-scrollOffset);
+            } else
+                entry.clippingLayer->setBoundsOrigin({ });
+        }
+
+        parentGraphicsLayerRect = lastClipLayerRect;
+    }
+
+    LayoutRect primaryGraphicsLayerRect = computePrimaryGraphicsLayerRect(compositedAncestor, parentGraphicsLayerRect);
+
+    ComputedOffsets compositedBoundsOffset(m_owningLayer, compositedAncestor, compositedBounds(), parentGraphicsLayerRect, primaryGraphicsLayerRect);
+    ComputedOffsets rendererOffset(m_owningLayer, compositedAncestor, { }, parentGraphicsLayerRect, primaryGraphicsLayerRect);
+
+    m_compositedBoundsOffsetFromGraphicsLayer = compositedBoundsOffset.fromPrimaryGraphicsLayer();
+
+    auto primaryLayerPosition = primaryGraphicsLayerRect.location();
 
     // FIXME: reflections should force transform-style to be flat in the style: https://bugs.webkit.org/show_bug.cgi?id=106959
     bool preserves3D = style.transformStyle3D() == TransformStyle3D::Preserve3D && !renderer().hasReflection();
-    m_graphicsLayer->setPreserves3D(preserves3D);
-    m_graphicsLayer->setBackfaceVisibility(style.backfaceVisibility() == BackfaceVisibility::Visible);
+    if (m_contentsContainmentLayer) {
+        m_contentsContainmentLayer->setPreserves3D(preserves3D);
+        m_contentsContainmentLayer->setPosition(primaryLayerPosition);
+        primaryLayerPosition = { };
+        // Use the same size as m_graphicsLayer so transforms behave correctly.
+        m_contentsContainmentLayer->setSize(primaryGraphicsLayerRect.size());
+    }
 
-    auto* compositedAncestor = m_owningLayer.ancestorCompositingLayer();
-    LayoutSize ancestorClippingLayerOffset;
-    LayoutRect parentGraphicsLayerRect = computeParentGraphicsLayerRect(compositedAncestor, ancestorClippingLayerOffset);
-    LayoutRect primaryGraphicsLayerRect = computePrimaryGraphicsLayerRect(parentGraphicsLayerRect);
-
-    ComputedOffsets compositedBoundsOffset(m_owningLayer, compositedBounds(), parentGraphicsLayerRect, primaryGraphicsLayerRect);
-    m_compositedBoundsOffsetFromGraphicsLayer = compositedBoundsOffset.fromPrimaryGraphicsLayer();
-    m_graphicsLayer->setPosition(primaryGraphicsLayerRect.location());
-    m_graphicsLayer->setSize(primaryGraphicsLayerRect.size());
-
-    auto computeAnimationExtent = [&] () -> std::optional<FloatRect> {
+    auto computeAnimationExtent = [&] () -> Optional<FloatRect> {
         LayoutRect animatedBounds;
         if (isRunningAcceleratedTransformAnimation && m_owningLayer.getOverlapBoundsIncludingChildrenAccountingForTransformAnimations(animatedBounds, RenderLayer::IncludeCompositedDescendants))
             return FloatRect(animatedBounds);
         return { };
     };
     m_graphicsLayer->setAnimationExtent(computeAnimationExtent());
+    m_graphicsLayer->setPreserves3D(preserves3D);
+    m_graphicsLayer->setBackfaceVisibility(style.backfaceVisibility() == BackfaceVisibility::Visible);
 
-    ComputedOffsets rendererOffset(m_owningLayer, LayoutRect(), parentGraphicsLayerRect, primaryGraphicsLayerRect);
-    if (m_ancestorClippingLayer) {
-        // Clipping layer is parented in the ancestor layer.
-        m_ancestorClippingLayer->setPosition(toLayoutPoint(ancestorClippingLayerOffset));
-        m_ancestorClippingLayer->setSize(parentGraphicsLayerRect.size());
-        m_ancestorClippingLayer->setOffsetFromRenderer(-rendererOffset.fromParentGraphicsLayer());
-    }
+    m_graphicsLayer->setPosition(primaryLayerPosition);
+    m_graphicsLayer->setSize(primaryGraphicsLayerRect.size());
 
-    if (m_contentsContainmentLayer) {
-        m_contentsContainmentLayer->setPreserves3D(preserves3D);
-        m_contentsContainmentLayer->setPosition(primaryGraphicsLayerRect.location());
-        m_graphicsLayer->setPosition(FloatPoint());
-        // Use the same size as m_graphicsLayer so transforms behave correctly.
-        m_contentsContainmentLayer->setSize(primaryGraphicsLayerRect.size());
-    }
-
-    // Compute renderer offset from primary graphics layer. Note that primaryGraphicsLayerRect is in parentGraphicsLayer's coordidate system which is not necessarily
+    // Compute renderer offset from primary graphics layer. Note that primaryGraphicsLayerRect is in parentGraphicsLayer's coordinate system which is not necessarily
     // the same as the ancestor graphics layer.
     OffsetFromRenderer primaryGraphicsLayerOffsetFromRenderer;
     LayoutSize oldSubpixelOffsetFromRenderer = m_subpixelOffsetFromRenderer;
-    primaryGraphicsLayerOffsetFromRenderer = computeOffsetFromRenderer(-rendererOffset.fromPrimaryGraphicsLayer(), deviceScaleFactor());
+    primaryGraphicsLayerOffsetFromRenderer = computeOffsetFromRenderer(-rendererOffset.fromPrimaryGraphicsLayer(), deviceScaleFactor);
     m_subpixelOffsetFromRenderer = primaryGraphicsLayerOffsetFromRenderer.m_subpixelOffset;
+    m_hasSubpixelRounding = !m_subpixelOffsetFromRenderer.isZero() || compositedBounds().size() != primaryGraphicsLayerRect.size();
 
-    if (primaryGraphicsLayerOffsetFromRenderer.m_devicePixelOffset != m_graphicsLayer->offsetFromRenderer()) {
+    if (primaryGraphicsLayerOffsetFromRenderer.m_devicePixelOffset != m_graphicsLayer->offsetFromRenderer())
         m_graphicsLayer->setOffsetFromRenderer(primaryGraphicsLayerOffsetFromRenderer.m_devicePixelOffset);
-        positionOverflowControlsLayers();
-    }
-
-    if (!m_isMainFrameRenderViewLayer && !m_isFrameLayerWithTiledBacking && !m_requiresBackgroundLayer) {
-        // For non-root layers, background is always painted by the primary graphics layer.
-        ASSERT(!m_backgroundLayer);
-        // Subpixel offset from graphics layer or size changed.
-        bool hadSubpixelRounding = !m_subpixelOffsetFromRenderer.isZero() || compositedBounds().size() != primaryGraphicsLayerRect.size();
-        m_graphicsLayer->setContentsOpaque(!hadSubpixelRounding && m_owningLayer.backgroundIsKnownToBeOpaqueInRect(compositedBounds()));
-    }
 
     // If we have a layer that clips children, position it.
     LayoutRect clippingBox;
     if (auto* clipLayer = clippingLayer()) {
-        clippingBox = clipBox(downcast<RenderBox>(renderer()));
+        auto& renderBox = downcast<RenderBox>(renderer());
+        // clipLayer is the m_childContainmentLayer.
+        clippingBox = clippingLayerBox(renderBox);
         // Clipping layer is parented in the primary graphics layer.
         LayoutSize clipBoxOffsetFromGraphicsLayer = toLayoutSize(clippingBox.location()) + rendererOffset.fromPrimaryGraphicsLayer();
-        SnappedRectInfo snappedClippingGraphicsLayer = snappedGraphicsLayer(clipBoxOffsetFromGraphicsLayer, clippingBox.size(), deviceScaleFactor());
+        SnappedRectInfo snappedClippingGraphicsLayer = snappedGraphicsLayer(clipBoxOffsetFromGraphicsLayer, clippingBox.size(), deviceScaleFactor);
         clipLayer->setPosition(snappedClippingGraphicsLayer.m_snappedRect.location());
         clipLayer->setSize(snappedClippingGraphicsLayer.m_snappedRect.size());
         clipLayer->setOffsetFromRenderer(toLayoutSize(clippingBox.location() - snappedClippingGraphicsLayer.m_snapDelta));
 
-        if (m_childClippingMaskLayer && !m_scrollingLayer) {
+        if ((renderer().style().clipPath() || renderer().style().hasBorderRadius()) && !m_childClippingMaskLayer) {
+            FloatRoundedRect contentsClippingRect = renderBox.roundedBorderBoxRect().pixelSnappedRoundedRectForPainting(deviceScaleFactor);
+            contentsClippingRect.move(LayoutSize(-clipLayer->offsetFromRenderer()));
+            clipLayer->setMasksToBoundsRect(contentsClippingRect);
+        }
+
+        if (m_childClippingMaskLayer && !m_scrollContainerLayer) {
             m_childClippingMaskLayer->setSize(clipLayer->size());
-            m_childClippingMaskLayer->setPosition(FloatPoint());
+            m_childClippingMaskLayer->setPosition({ });
             m_childClippingMaskLayer->setOffsetFromRenderer(clipLayer->offsetFromRenderer());
         }
     }
@@ -1066,57 +1368,83 @@ void RenderLayerBacking::updateGeometry()
     if (m_maskLayer)
         updateMaskingLayerGeometry();
 
-    if (renderer().hasTransformRelatedProperty()) {
-        // Update properties that depend on layer dimensions.
-        FloatPoint3D transformOrigin = computeTransformOriginForPainting(downcast<RenderBox>(renderer()).borderBoxRect());
-        FloatPoint layerOffset = roundPointToDevicePixels(toLayoutPoint(rendererOffset.fromParentGraphicsLayer()), deviceScaleFactor());
-        // Compute the anchor point, which is in the center of the renderer box unless transform-origin is set.
-        FloatPoint3D anchor(
-            primaryGraphicsLayerRect.width() ? ((layerOffset.x() - primaryGraphicsLayerRect.x()) + transformOrigin.x()) / primaryGraphicsLayerRect.width() : 0.5,
-            primaryGraphicsLayerRect.height() ? ((layerOffset.y() - primaryGraphicsLayerRect.y())+ transformOrigin.y()) / primaryGraphicsLayerRect.height() : 0.5,
-            transformOrigin.z());
+    updateChildrenTransformAndAnchorPoint(primaryGraphicsLayerRect, rendererOffset.fromParentGraphicsLayer());
 
-        if (m_contentsContainmentLayer)
-            m_contentsContainmentLayer->setAnchorPoint(anchor);
-        else
-            m_graphicsLayer->setAnchorPoint(anchor);
+    if (m_owningLayer.reflectionLayer() && m_owningLayer.reflectionLayer()->isComposited()) {
+        auto* reflectionBacking = m_owningLayer.reflectionLayer()->backing();
+        reflectionBacking->updateGeometry(&m_owningLayer);
 
-        auto* clipLayer = clippingLayer();
-        if (style.hasPerspective()) {
-            TransformationMatrix t = owningLayer().perspectiveTransform();
+        // The reflection layer has the bounds of m_owningLayer.reflectionLayer(),
+        // but the reflected layer is the bounds of this layer, so we need to position it appropriately.
+        FloatRect layerBounds = this->compositedBounds();
+        FloatRect reflectionLayerBounds = reflectionBacking->compositedBounds();
+        reflectionBacking->graphicsLayer()->setReplicatedLayerPosition(FloatPoint(layerBounds.location() - reflectionLayerBounds.location()));
+    }
 
-            if (clipLayer) {
-                clipLayer->setChildrenTransform(t);
-                m_graphicsLayer->setChildrenTransform(TransformationMatrix());
-            }
-            else
-                m_graphicsLayer->setChildrenTransform(t);
-        } else {
-            if (clipLayer)
-                clipLayer->setChildrenTransform(TransformationMatrix());
-            else
-                m_graphicsLayer->setChildrenTransform(TransformationMatrix());
+    if (m_scrollContainerLayer) {
+        ASSERT(m_scrolledContentsLayer);
+        LayoutRect scrollContainerBox = scrollContainerLayerBox(downcast<RenderBox>(renderer()));
+        LayoutRect parentLayerBounds = clippingLayer() ? scrollContainerBox : compositedBounds();
+
+        // FIXME: need to do some pixel snapping here.
+        m_scrollContainerLayer->setPosition(FloatPoint(scrollContainerBox.location() - parentLayerBounds.location()));
+        m_scrollContainerLayer->setSize(roundedIntSize(LayoutSize(scrollContainerBox.width(), scrollContainerBox.height())));
+
+        ScrollOffset scrollOffset = m_owningLayer.scrollOffset();
+        updateScrollOffset(scrollOffset);
+
+        FloatSize oldScrollingLayerOffset = m_scrollContainerLayer->offsetFromRenderer();
+        m_scrollContainerLayer->setOffsetFromRenderer(toFloatSize(scrollContainerBox.location()));
+
+        if (m_childClippingMaskLayer) {
+            m_childClippingMaskLayer->setPosition(m_scrollContainerLayer->position());
+            m_childClippingMaskLayer->setSize(m_scrollContainerLayer->size());
+            m_childClippingMaskLayer->setOffsetFromRenderer(toFloatSize(scrollContainerBox.location()));
         }
-    } else {
-        m_graphicsLayer->setAnchorPoint(FloatPoint3D(0.5, 0.5, 0));
-        if (m_contentsContainmentLayer)
-            m_contentsContainmentLayer->setAnchorPoint(FloatPoint3D(0.5, 0.5, 0));
+
+        bool paddingBoxOffsetChanged = oldScrollingLayerOffset != m_scrollContainerLayer->offsetFromRenderer();
+
+        IntSize scrollSize(m_owningLayer.scrollWidth(), m_owningLayer.scrollHeight());
+        if (scrollSize != m_scrolledContentsLayer->size() || paddingBoxOffsetChanged)
+            m_scrolledContentsLayer->setNeedsDisplay();
+
+        m_scrolledContentsLayer->setSize(scrollSize);
+        m_scrolledContentsLayer->setScrollOffset(scrollOffset, GraphicsLayer::DontSetNeedsDisplay);
+        m_scrolledContentsLayer->setOffsetFromRenderer(toLayoutSize(scrollContainerBox.location()), GraphicsLayer::DontSetNeedsDisplay);
+
+        adjustTiledBackingCoverage();
+    }
+
+    if (m_overflowControlsContainer) {
+        LayoutRect overflowControlsBox = overflowControlsHostLayerRect(downcast<RenderBox>(renderer()));
+        LayoutSize boxOffsetFromGraphicsLayer = toLayoutSize(overflowControlsBox.location()) + rendererOffset.fromPrimaryGraphicsLayer();
+        SnappedRectInfo snappedBoxInfo = snappedGraphicsLayer(boxOffsetFromGraphicsLayer, overflowControlsBox.size(), deviceScaleFactor);
+
+        m_overflowControlsContainer->setPosition(snappedBoxInfo.m_snappedRect.location());
+        m_overflowControlsContainer->setSize(snappedBoxInfo.m_snappedRect.size());
     }
 
     if (m_foregroundLayer) {
-        FloatPoint foregroundPosition;
-        FloatSize foregroundSize = primaryGraphicsLayerRect.size();
-        FloatSize foregroundOffset = m_graphicsLayer->offsetFromRenderer();
-        if (hasClippingLayer()) {
+        FloatSize foregroundSize;
+        FloatSize foregroundOffset;
+        GraphicsLayer::ShouldSetNeedsDisplay needsDisplayOnOffsetChange = GraphicsLayer::SetNeedsDisplay;
+        if (m_scrolledContentsLayer) {
+            foregroundSize = m_scrolledContentsLayer->size();
+            foregroundOffset = m_scrolledContentsLayer->offsetFromRenderer() - toLayoutSize(m_scrolledContentsLayer->scrollOffset());
+            needsDisplayOnOffsetChange = GraphicsLayer::DontSetNeedsDisplay;
+        } else if (hasClippingLayer()) {
             // If we have a clipping layer (which clips descendants), then the foreground layer is a child of it,
             // so that it gets correctly sorted with children. In that case, position relative to the clipping layer.
             foregroundSize = FloatSize(clippingBox.size());
             foregroundOffset = toFloatSize(clippingBox.location());
+        } else {
+            foregroundSize = primaryGraphicsLayerRect.size();
+            foregroundOffset = m_graphicsLayer->offsetFromRenderer();
         }
 
-        m_foregroundLayer->setPosition(foregroundPosition);
+        m_foregroundLayer->setPosition({ });
         m_foregroundLayer->setSize(foregroundSize);
-        m_foregroundLayer->setOffsetFromRenderer(foregroundOffset);
+        m_foregroundLayer->setOffsetFromRenderer(foregroundOffset, needsDisplayOnOffsetChange);
     }
 
     if (m_backgroundLayer) {
@@ -1136,87 +1464,6 @@ void RenderLayerBacking::updateGeometry()
         m_backgroundLayer->setOffsetFromRenderer(m_graphicsLayer->offsetFromRenderer());
     }
 
-    if (m_owningLayer.reflectionLayer() && m_owningLayer.reflectionLayer()->isComposited()) {
-        auto* reflectionBacking = m_owningLayer.reflectionLayer()->backing();
-        reflectionBacking->updateGeometry();
-
-        // The reflection layer has the bounds of m_owningLayer.reflectionLayer(),
-        // but the reflected layer is the bounds of this layer, so we need to position it appropriately.
-        FloatRect layerBounds = this->compositedBounds();
-        FloatRect reflectionLayerBounds = reflectionBacking->compositedBounds();
-        reflectionBacking->graphicsLayer()->setReplicatedLayerPosition(FloatPoint(layerBounds.location() - reflectionLayerBounds.location()));
-    }
-
-    if (m_scrollingLayer) {
-        ASSERT(m_scrollingContentsLayer);
-        auto& renderBox = downcast<RenderBox>(renderer());
-        LayoutRect paddingBox(renderBox.borderLeft(), renderBox.borderTop(), renderBox.width() - renderBox.borderLeft() - renderBox.borderRight(), renderBox.height() - renderBox.borderTop() - renderBox.borderBottom());
-        ScrollOffset scrollOffset = m_owningLayer.scrollOffset();
-
-        // FIXME: need to do some pixel snapping here.
-        m_scrollingLayer->setPosition(FloatPoint(paddingBox.location() - compositedBounds().location()));
-
-        m_scrollingLayer->setSize(roundedIntSize(LayoutSize(renderBox.clientWidth(), renderBox.clientHeight())));
-#if PLATFORM(IOS)
-        FloatSize oldScrollingLayerOffset = m_scrollingLayer->offsetFromRenderer();
-        m_scrollingLayer->setOffsetFromRenderer(FloatPoint() - paddingBox.location());
-        bool paddingBoxOffsetChanged = oldScrollingLayerOffset != m_scrollingLayer->offsetFromRenderer();
-
-        if (m_owningLayer.isInUserScroll()) {
-            // If scrolling is happening externally, we don't want to touch the layer bounds origin here because that will cause jitter.
-            m_scrollingLayer->syncBoundsOrigin(scrollOffset);
-            m_owningLayer.setRequiresScrollBoundsOriginUpdate(true);
-        } else {
-            // Note that we implement the contents offset via the bounds origin on this layer, rather than a position on the sublayer.
-            m_scrollingLayer->setBoundsOrigin(scrollOffset);
-            m_owningLayer.setRequiresScrollBoundsOriginUpdate(false);
-        }
-
-        IntSize scrollSize(m_owningLayer.scrollWidth(), m_owningLayer.scrollHeight());
-
-        m_scrollingContentsLayer->setPosition(FloatPoint());
-
-        if (scrollSize != m_scrollingContentsLayer->size() || paddingBoxOffsetChanged)
-            m_scrollingContentsLayer->setNeedsDisplay();
-
-        m_scrollingContentsLayer->setSize(scrollSize);
-        // Scrolling the content layer does not need to trigger a repaint. The offset will be compensated away during painting.
-        // FIXME: The paint offset and the scroll offset should really be separate concepts.
-        LayoutSize scrollingContentsOffset = toLayoutSize(paddingBox.location() - toLayoutSize(scrollOffset));
-        m_scrollingContentsLayer->setOffsetFromRenderer(scrollingContentsOffset, GraphicsLayer::DontSetNeedsDisplay);
-#else
-        m_scrollingContentsLayer->setPosition(-scrollOffset);
-
-        FloatSize oldScrollingLayerOffset = m_scrollingLayer->offsetFromRenderer();
-        m_scrollingLayer->setOffsetFromRenderer(-toFloatSize(paddingBox.location()));
-
-        if (m_childClippingMaskLayer) {
-            m_childClippingMaskLayer->setPosition(m_scrollingLayer->position());
-            m_childClippingMaskLayer->setSize(m_scrollingLayer->size());
-            m_childClippingMaskLayer->setOffsetFromRenderer(toFloatSize(paddingBox.location()));
-        }
-
-        bool paddingBoxOffsetChanged = oldScrollingLayerOffset != m_scrollingLayer->offsetFromRenderer();
-
-        IntSize scrollSize(m_owningLayer.scrollWidth(), m_owningLayer.scrollHeight());
-        if (scrollSize != m_scrollingContentsLayer->size() || paddingBoxOffsetChanged)
-            m_scrollingContentsLayer->setNeedsDisplay();
-
-        LayoutSize scrollingContentsOffset = toLayoutSize(paddingBox.location() - toLayoutSize(scrollOffset));
-        if (scrollingContentsOffset != m_scrollingContentsLayer->offsetFromRenderer() || scrollSize != m_scrollingContentsLayer->size())
-            compositor().scrollingLayerDidChange(m_owningLayer);
-
-        m_scrollingContentsLayer->setSize(scrollSize);
-        // FIXME: The paint offset and the scroll offset should really be separate concepts.
-        m_scrollingContentsLayer->setOffsetFromRenderer(scrollingContentsOffset, GraphicsLayer::DontSetNeedsDisplay);
-#endif
-
-        if (m_foregroundLayer) {
-            m_foregroundLayer->setSize(m_scrollingContentsLayer->size());
-            m_foregroundLayer->setOffsetFromRenderer(m_scrollingContentsLayer->offsetFromRenderer());
-        }
-    }
-
     // If this layer was created just for clipping or to apply perspective, it doesn't need its own backing store.
     LayoutRect ancestorCompositedBounds = compositedAncestor ? compositedAncestor->backing()->compositedBounds() : LayoutRect();
     setRequiresOwnBackingStore(compositor().requiresOwnBackingStore(m_owningLayer, compositedAncestor,
@@ -1226,17 +1473,40 @@ void RenderLayerBacking::updateGeometry()
 #endif
     updateAfterWidgetResize();
 
-    if (subpixelOffsetFromRendererChanged(oldSubpixelOffsetFromRenderer, m_subpixelOffsetFromRenderer, deviceScaleFactor()) && canIssueSetNeedsDisplay())
-        setContentsNeedDisplay();
+    positionOverflowControlsLayers();
 
-    compositor().updateScrollCoordinatedStatus(m_owningLayer, { RenderLayerCompositor::ScrollingNodeChangeFlags::Layer, RenderLayerCompositor::ScrollingNodeChangeFlags::LayerGeometry });
+    if (subpixelOffsetFromRendererChanged(oldSubpixelOffsetFromRenderer, m_subpixelOffsetFromRenderer, deviceScaleFactor) && canIssueSetNeedsDisplay())
+        setContentsNeedDisplay();
+}
+
+void RenderLayerBacking::setLocationOfScrolledContents(ScrollOffset scrollOffset, ScrollingLayerPositionAction setOrSync)
+{
+    if (setOrSync == ScrollingLayerPositionAction::Sync)
+        m_scrollContainerLayer->syncBoundsOrigin(scrollOffset);
+    else
+        m_scrollContainerLayer->setBoundsOrigin(scrollOffset);
+}
+
+void RenderLayerBacking::updateScrollOffset(ScrollOffset scrollOffset)
+{
+    if (m_owningLayer.currentScrollType() == ScrollType::User) {
+        // If scrolling is happening externally, we don't want to touch the layer bounds origin here because that will cause jitter.
+        setLocationOfScrolledContents(scrollOffset, ScrollingLayerPositionAction::Sync);
+        m_owningLayer.setRequiresScrollPositionReconciliation(true);
+    } else {
+        // Note that we implement the contents offset via the bounds origin on this layer, rather than a position on the sublayer.
+        setLocationOfScrolledContents(scrollOffset, ScrollingLayerPositionAction::Set);
+        m_owningLayer.setRequiresScrollPositionReconciliation(false);
+    }
+
+    ASSERT(m_scrolledContentsLayer->position().isZero());
 }
 
 void RenderLayerBacking::updateAfterDescendants()
 {
     // FIXME: this potentially duplicates work we did in updateConfiguration().
     PaintedContentsInfo contentsInfo(*this);
-    contentsInfo.setWantsSubpixelAntialiasedTextState(GraphicsLayer::supportsSubpixelAntialiasedLayerText());
+    contentsInfo.setWantsSubpixelAntialiasedTextState(GraphicsLayer::supportsSubpixelAntialiasedLayerText() && FontCascade::isSubpixelAntialiasingAvailable());
 
     if (!m_owningLayer.isRenderViewLayer()) {
         bool didUpdateContentsRect = false;
@@ -1247,11 +1517,22 @@ void RenderLayerBacking::updateAfterDescendants()
 
     updateDrawsContent(contentsInfo);
 
-    m_graphicsLayer->setContentsVisible(m_owningLayer.hasVisibleContent() || hasVisibleNonCompositedDescendants());
-    if (m_scrollingLayer) {
-        m_scrollingLayer->setContentsVisible(renderer().style().visibility() == Visibility::Visible);
-        m_scrollingLayer->setUserInteractionEnabled(renderer().style().pointerEvents() != PointerEvents::None);
+    if (!m_isMainFrameRenderViewLayer && !m_isFrameLayerWithTiledBacking && !m_requiresBackgroundLayer) {
+        // For non-root layers, background is always painted by the primary graphics layer.
+        ASSERT(!m_backgroundLayer);
+        m_graphicsLayer->setContentsOpaque(!m_hasSubpixelRounding && m_owningLayer.backgroundIsKnownToBeOpaqueInRect(compositedBounds()));
     }
+
+    m_graphicsLayer->setContentsVisible(m_owningLayer.hasVisibleContent() || hasVisibleNonCompositedDescendants());
+    if (m_scrollContainerLayer) {
+        m_scrollContainerLayer->setContentsVisible(renderer().style().visibility() == Visibility::Visible);
+        m_scrollContainerLayer->setUserInteractionEnabled(renderer().style().pointerEvents() != PointerEvents::None);
+    }
+
+#if USE(OWNING_LAYER_BEAR_TRAP)
+    RELEASE_ASSERT_WITH_MESSAGE(m_owningLayerBearTrap == BEAR_TRAP_VALUE, "RenderLayerBacking::updateAfterDescendants(): m_owningLayerBearTrap caught the bear (55699292)");
+    RELEASE_ASSERT_WITH_MESSAGE(&m_owningLayer, "RenderLayerBacking::updateAfterDescendants(): m_owningLayer is null (55699292)");
+#endif
 }
 
 // FIXME: Avoid repaints when clip path changes.
@@ -1297,62 +1578,73 @@ void RenderLayerBacking::updateInternalHierarchy()
 {
     // m_foregroundLayer has to be inserted in the correct order with child layers,
     // so it's not inserted here.
-    if (m_ancestorClippingLayer)
-        m_ancestorClippingLayer->removeAllChildren();
+    GraphicsLayer* lastClippingLayer = nullptr;
+    if (m_ancestorClippingStack) {
+        auto& clippingStack = m_ancestorClippingStack->stack();
+        for (unsigned i = 0; i < clippingStack.size() - 1; ++i) {
+            auto& entry = clippingStack.at(i);
+            Vector<Ref<GraphicsLayer>> children;
+            children.append(*clippingStack.at(i + 1).clippingLayer);
+            entry.clippingLayer->setChildren(WTFMove(children));
+        }
+
+        lastClippingLayer = clippingStack.last().clippingLayer.get();
+        lastClippingLayer->removeAllChildren();
+    }
 
     if (m_contentsContainmentLayer) {
         m_contentsContainmentLayer->removeAllChildren();
-        if (m_ancestorClippingLayer)
-            m_ancestorClippingLayer->addChild(m_contentsContainmentLayer.get());
+        if (lastClippingLayer)
+            lastClippingLayer->addChild(*m_contentsContainmentLayer);
     }
 
     if (m_backgroundLayer)
-        m_contentsContainmentLayer->addChild(m_backgroundLayer.get());
+        m_contentsContainmentLayer->addChild(*m_backgroundLayer);
 
     if (m_contentsContainmentLayer)
-        m_contentsContainmentLayer->addChild(m_graphicsLayer.get());
-    else if (m_ancestorClippingLayer)
-        m_ancestorClippingLayer->addChild(m_graphicsLayer.get());
+        m_contentsContainmentLayer->addChild(*m_graphicsLayer);
+    else if (lastClippingLayer)
+        lastClippingLayer->addChild(*m_graphicsLayer);
 
-    if (m_childContainmentLayer) {
-        m_childContainmentLayer->removeFromParent();
-        m_graphicsLayer->addChild(m_childContainmentLayer.get());
-    }
+    if (m_childContainmentLayer)
+        m_graphicsLayer->addChild(*m_childContainmentLayer);
 
-    if (m_scrollingLayer) {
+    if (m_scrollContainerLayer) {
         auto* superlayer = m_childContainmentLayer ? m_childContainmentLayer.get() : m_graphicsLayer.get();
-        m_scrollingLayer->removeFromParent();
-        superlayer->addChild(m_scrollingLayer.get());
+        superlayer->addChild(*m_scrollContainerLayer);
     }
 
     // The clip for child layers does not include space for overflow controls, so they exist as
     // siblings of the clipping layer if we have one. Normal children of this layer are set as
     // children of the clipping layer.
-    if (m_layerForHorizontalScrollbar) {
-        m_layerForHorizontalScrollbar->removeFromParent();
-        m_graphicsLayer->addChild(m_layerForHorizontalScrollbar.get());
+    if (m_overflowControlsContainer) {
+    if (m_layerForHorizontalScrollbar)
+            m_overflowControlsContainer->addChild(*m_layerForHorizontalScrollbar);
+
+    if (m_layerForVerticalScrollbar)
+            m_overflowControlsContainer->addChild(*m_layerForVerticalScrollbar);
+
+    if (m_layerForScrollCorner)
+            m_overflowControlsContainer->addChild(*m_layerForScrollCorner);
+
+        m_graphicsLayer->addChild(*m_overflowControlsContainer);
     }
-    if (m_layerForVerticalScrollbar) {
-        m_layerForVerticalScrollbar->removeFromParent();
-        m_graphicsLayer->addChild(m_layerForVerticalScrollbar.get());
-    }
-    if (m_layerForScrollCorner) {
-        m_layerForScrollCorner->removeFromParent();
-        m_graphicsLayer->addChild(m_layerForScrollCorner.get());
+}
+
+void RenderLayerBacking::updateContentsRects()
+{
+    m_graphicsLayer->setContentsRect(snapRectToDevicePixels(contentsBox(), deviceScaleFactor()));
+
+    if (is<RenderReplaced>(renderer())) {
+        FloatRoundedRect contentsClippingRect = downcast<RenderReplaced>(renderer()).roundedContentBoxRect().pixelSnappedRoundedRectForPainting(deviceScaleFactor());
+        contentsClippingRect.move(contentOffsetInCompositingLayer());
+        m_graphicsLayer->setContentsClippingRect(contentsClippingRect);
     }
 }
 
 void RenderLayerBacking::resetContentsRect()
 {
-    m_graphicsLayer->setContentsRect(snapRectToDevicePixels(contentsBox(), deviceScaleFactor()));
-
-    if (is<RenderBox>(renderer())) {
-        LayoutRect boxRect(LayoutPoint(), downcast<RenderBox>(renderer()).size());
-        boxRect.move(contentOffsetInCompostingLayer());
-        FloatRoundedRect contentsClippingRect = renderer().style().getRoundedInnerBorderFor(boxRect).pixelSnappedRoundedRectForPainting(deviceScaleFactor());
-        m_graphicsLayer->setContentsClippingRect(contentsClippingRect);
-    }
-
+    updateContentsRects();
     m_graphicsLayer->setContentsTileSize(IntSize());
     m_graphicsLayer->setContentsTilePhase(IntSize());
 }
@@ -1367,16 +1659,16 @@ void RenderLayerBacking::updateDrawsContent()
 
 void RenderLayerBacking::updateDrawsContent(PaintedContentsInfo& contentsInfo)
 {
-    if (m_scrollingLayer) {
+    if (m_scrollContainerLayer) {
         // We don't have to consider overflow controls, because we know that the scrollbars are drawn elsewhere.
         // m_graphicsLayer only needs backing store if the non-scrolling parts (background, outlines, borders, shadows etc) need to paint.
-        // m_scrollingLayer never has backing store.
-        // m_scrollingContentsLayer only needs backing store if the scrolled contents need to paint.
+        // m_scrollContainerLayer never has backing store.
+        // m_scrolledContentsLayer only needs backing store if the scrolled contents need to paint.
         bool hasNonScrollingPaintedContent = m_owningLayer.hasVisibleContent() && m_owningLayer.hasVisibleBoxDecorationsOrBackground();
         m_graphicsLayer->setDrawsContent(hasNonScrollingPaintedContent);
 
-        bool hasScrollingPaintedContent = m_owningLayer.hasVisibleContent() && (renderer().hasBackground() || contentsInfo.paintsContent());
-        m_scrollingContentsLayer->setDrawsContent(hasScrollingPaintedContent);
+        bool hasScrollingPaintedContent = hasBackingSharingLayers() || (m_owningLayer.hasVisibleContent() && (renderer().hasBackground() || contentsInfo.paintsContent()));
+        m_scrolledContentsLayer->setDrawsContent(hasScrollingPaintedContent);
         return;
     }
 
@@ -1399,21 +1691,156 @@ void RenderLayerBacking::updateDrawsContent(PaintedContentsInfo& contentsInfo)
         m_backgroundLayer->setDrawsContent(m_backgroundLayerPaintsFixedRootBackground ? hasPaintedContent : contentsInfo.paintsBoxDecorations());
 }
 
+#if ENABLE(ASYNC_SCROLLING)
+bool RenderLayerBacking::maintainsEventRegion() const
+{
+    if (!m_owningLayer.page().scrollingCoordinator())
+        return false;
+
+    if (paintsIntoCompositedAncestor())
+        return false;
+
+    if (renderer().view().needsEventRegionUpdateForNonCompositedFrame())
+        return true;
+
+#if ENABLE(TOUCH_ACTION_REGIONS)
+    if (renderer().document().mayHaveElementsWithNonAutoTouchAction())
+        return true;
+#endif
+#if ENABLE(EDITABLE_REGION)
+    LOG_WITH_STREAM(EventRegions, stream << "RenderLayerBacking: " << this << " maintainsEventRegion - mayHaveEditableElements: " << renderer().document().mayHaveEditableElements() << " shouldBuildEditableRegion: " << renderer().page().shouldBuildEditableRegion());
+    if (renderer().document().mayHaveEditableElements() && renderer().page().shouldBuildEditableRegion())
+        return true;
+#endif
+#if !PLATFORM(IOS_FAMILY)
+    if (renderer().document().wheelEventTargets())
+        return true;
+#endif
+    if (m_owningLayer.isRenderViewLayer())
+        return false;
+
+    auto& settings = renderer().settings();
+    if (!settings.asyncFrameScrollingEnabled() && !settings.asyncOverflowScrollingEnabled())
+        return false;
+
+    return true;
+}
+
+void RenderLayerBacking::updateEventRegion()
+{
+    LOG_WITH_STREAM(EventRegions, stream << m_owningLayer << " " << this << " updateEventRegion (needs update: " << needsEventRegionUpdate() << ", maintainsEventRegion: " << maintainsEventRegion() << ")");
+
+    if (!maintainsEventRegion())
+        return;
+
+    if (!needsEventRegionUpdate())
+        return;
+
+    TraceScope scope(ComputeEventRegionsStart, ComputeEventRegionsEnd);
+
+    auto updateEventRegionForLayer = [&](GraphicsLayer& graphicsLayer) {
+        GraphicsContext nullContext(nullptr);
+        EventRegion eventRegion;
+#if ENABLE(EDITABLE_REGION)
+        if (renderer().page().shouldBuildEditableRegion())
+            eventRegion.ensureEditableRegion();
+#endif
+        auto eventRegionContext = eventRegion.makeContext();
+        auto layerOffset = graphicsLayer.scrollOffset() - roundedIntSize(graphicsLayer.offsetFromRenderer());
+
+        if (renderer().visibleToHitTesting()) {
+            if (&graphicsLayer == m_scrollContainerLayer) {
+                eventRegionContext.unite(enclosingIntRect(FloatRect({ }, graphicsLayer.size())), renderer().style());
+                graphicsLayer.setEventRegion(WTFMove(eventRegion));
+                return;
+            }
+
+            if (&graphicsLayer == m_scrolledContentsLayer) {
+            // Initialize scrolled contents layer with layer-sized event region as it can all used for scrolling.
+            // This avoids generating unnecessarily complex event regions. We still need to to do the paint to capture touch-action regions.
+                eventRegionContext.unite(enclosingIntRect(FloatRect(-layerOffset, graphicsLayer.size())), renderer().style());
+            }
+        }
+
+        auto dirtyRect = enclosingIntRect(FloatRect(FloatPoint(graphicsLayer.offsetFromRenderer()), graphicsLayer.size()));
+        paintIntoLayer(&graphicsLayer, nullContext, dirtyRect, { }, &eventRegionContext);
+
+        eventRegion.translate(toIntSize(layerOffset));
+
+        graphicsLayer.setEventRegion(WTFMove(eventRegion));
+    };
+
+    updateEventRegionForLayer(*m_graphicsLayer);
+
+    if (m_scrollContainerLayer)
+        updateEventRegionForLayer(*m_scrollContainerLayer);
+
+    if (m_scrolledContentsLayer)
+        updateEventRegionForLayer(*m_scrolledContentsLayer);
+
+    if (m_foregroundLayer)
+        updateEventRegionForLayer(*m_foregroundLayer);
+
+    renderer().view().setNeedsEventRegionUpdateForNonCompositedFrame(false);
+
+    setNeedsEventRegionUpdate(false);
+}
+#endif
+
+bool RenderLayerBacking::updateAncestorClippingStack(Vector<CompositedClipData>&& clippingData)
+{
+    if (!m_ancestorClippingStack && clippingData.isEmpty())
+        return false;
+
+    auto* scrollingCoordinator = m_owningLayer.page().scrollingCoordinator();
+
+    if (m_ancestorClippingStack && clippingData.isEmpty()) {
+        m_ancestorClippingStack->clear(scrollingCoordinator);
+        m_ancestorClippingStack = nullptr;
+        return true;
+    }
+
+    if (!m_ancestorClippingStack) {
+        m_ancestorClippingStack = makeUnique<LayerAncestorClippingStack>(WTFMove(clippingData));
+        LOG_WITH_STREAM(Compositing, stream << "layer " << &m_owningLayer << " ancestorClippingStack " << *m_ancestorClippingStack);
+        return true;
+    }
+
+    if (m_ancestorClippingStack->equalToClipData(clippingData)) {
+        LOG_WITH_STREAM(Compositing, stream << "layer " << &m_owningLayer << " ancestorClippingStack " << *m_ancestorClippingStack);
+        return false;
+    }
+
+    m_ancestorClippingStack->updateWithClipData(scrollingCoordinator, WTFMove(clippingData));
+    LOG_WITH_STREAM(Compositing, stream << "layer " << &m_owningLayer << " ancestorClippingStack " << *m_ancestorClippingStack);
+    return true;
+}
+
 // Return true if the layer changed.
-bool RenderLayerBacking::updateAncestorClippingLayer(bool needsAncestorClip)
+bool RenderLayerBacking::updateAncestorClipping(bool needsAncestorClip, const RenderLayer* compositingAncestor)
 {
     bool layersChanged = false;
 
     if (needsAncestorClip) {
-        if (!m_ancestorClippingLayer) {
-            m_ancestorClippingLayer = createGraphicsLayer("ancestor clipping");
-            m_ancestorClippingLayer->setMasksToBounds(true);
+        if (compositor().updateAncestorClippingStack(m_owningLayer, compositingAncestor)) {
+            // Make any layers we don't have.
+            if (m_ancestorClippingStack) {
+                for (auto& entry : m_ancestorClippingStack->stack()) {
+                    if (!entry.clippingLayer) {
+                        entry.clippingLayer = createGraphicsLayer(entry.clipData.isOverflowScroll ? "clip for scroller" : "ancestor clipping");
+                        entry.clippingLayer->setMasksToBounds(true);
+                        entry.clippingLayer->setPaintingPhase({ });
+                    }
+                }
+            }
+
             layersChanged = true;
         }
-    } else if (hasAncestorClippingLayer()) {
-        willDestroyLayer(m_ancestorClippingLayer.get());
-        m_ancestorClippingLayer->removeFromParent();
-        m_ancestorClippingLayer = nullptr;
+    } else if (m_ancestorClippingStack) {
+        for (auto& entry : m_ancestorClippingStack->stack())
+            GraphicsLayer::unparentAndClear(entry.clippingLayer);
+
+        m_ancestorClippingStack = nullptr;
         layersChanged = true;
     }
 
@@ -1433,12 +1860,22 @@ bool RenderLayerBacking::updateDescendantClippingLayer(bool needsDescendantClip)
         }
     } else if (hasClippingLayer()) {
         willDestroyLayer(m_childContainmentLayer.get());
-        m_childContainmentLayer->removeFromParent();
-        m_childContainmentLayer = nullptr;
+        GraphicsLayer::unparentAndClear(m_childContainmentLayer);
         layersChanged = true;
     }
 
     return layersChanged;
+}
+
+bool RenderLayerBacking::needsRepaintOnCompositedScroll() const
+{
+    if (!hasScrollingLayer())
+        return false;
+
+    if (auto scrollingCoordinator = m_owningLayer.page().scrollingCoordinator())
+        return scrollingCoordinator->hasSynchronousScrollingReasons(m_scrollingNodeID);
+
+    return false;
 }
 
 void RenderLayerBacking::setBackgroundLayerPaintsFixedRootBackground(bool backgroundLayerPaintsFixedRootBackground)
@@ -1456,70 +1893,76 @@ void RenderLayerBacking::setBackgroundLayerPaintsFixedRootBackground(bool backgr
 
 void RenderLayerBacking::setRequiresBackgroundLayer(bool requiresBackgroundLayer)
 {
+    if (requiresBackgroundLayer == m_requiresBackgroundLayer)
+        return;
+
     m_requiresBackgroundLayer = requiresBackgroundLayer;
+    m_owningLayer.setNeedsCompositingConfigurationUpdate();
+}
+
+bool RenderLayerBacking::requiresLayerForScrollbar(Scrollbar* scrollbar) const
+{
+    return scrollbar && (scrollbar->isOverlayScrollbar()
+#if !PLATFORM(IOS_FAMILY) // FIXME: This should be an #if ENABLE(): webkit.org/b/210460
+        || renderer().settings().asyncOverflowScrollingEnabled()
+#endif
+        );
 }
 
 bool RenderLayerBacking::requiresHorizontalScrollbarLayer() const
 {
-    if (!m_owningLayer.hasOverlayScrollbars() && !m_owningLayer.needsCompositedScrolling())
-        return false;
-    return m_owningLayer.horizontalScrollbar();
+    return requiresLayerForScrollbar(m_owningLayer.horizontalScrollbar());
 }
 
 bool RenderLayerBacking::requiresVerticalScrollbarLayer() const
 {
-    if (!m_owningLayer.hasOverlayScrollbars() && !m_owningLayer.needsCompositedScrolling())
-        return false;
-    return m_owningLayer.verticalScrollbar();
+    return requiresLayerForScrollbar(m_owningLayer.verticalScrollbar());
 }
 
 bool RenderLayerBacking::requiresScrollCornerLayer() const
 {
-    if (!m_owningLayer.hasOverlayScrollbars() && !m_owningLayer.needsCompositedScrolling())
+    if (!is<RenderBox>(m_owningLayer.renderer()))
         return false;
-    return !m_owningLayer.scrollCornerAndResizerRect().isEmpty();
+
+    auto cornerRect = m_owningLayer.overflowControlsRects().scrollCornerOrResizerRect();
+    if (cornerRect.isEmpty())
+        return false;
+
+    auto verticalScrollbar = m_owningLayer.verticalScrollbar();
+    auto scrollbar = verticalScrollbar ? verticalScrollbar : m_owningLayer.horizontalScrollbar();
+    return requiresLayerForScrollbar(scrollbar);
 }
 
 bool RenderLayerBacking::updateOverflowControlsLayers(bool needsHorizontalScrollbarLayer, bool needsVerticalScrollbarLayer, bool needsScrollCornerLayer)
 {
-    bool horizontalScrollbarLayerChanged = false;
-    if (needsHorizontalScrollbarLayer) {
-        if (!m_layerForHorizontalScrollbar) {
-            m_layerForHorizontalScrollbar = createGraphicsLayer("horizontal scrollbar");
-            m_layerForHorizontalScrollbar->setCanDetachBackingStore(false);
-            horizontalScrollbarLayerChanged = true;
-        }
-    } else if (m_layerForHorizontalScrollbar) {
-        willDestroyLayer(m_layerForHorizontalScrollbar.get());
-        m_layerForHorizontalScrollbar = nullptr;
-        horizontalScrollbarLayerChanged = true;
-    }
+    auto createOrDestroyLayer = [&](RefPtr<GraphicsLayer>& layer, bool needLayer, bool drawsContent, const char* layerName) {
+        if (needLayer == !!layer)
+            return false;
 
-    bool verticalScrollbarLayerChanged = false;
-    if (needsVerticalScrollbarLayer) {
-        if (!m_layerForVerticalScrollbar) {
-            m_layerForVerticalScrollbar = createGraphicsLayer("vertical scrollbar");
-            m_layerForVerticalScrollbar->setCanDetachBackingStore(false);
-            verticalScrollbarLayerChanged = true;
+        if (needLayer) {
+            layer = createGraphicsLayer(layerName);
+            if (drawsContent)
+                layer->setAllowsBackingStoreDetaching(false);
+            else {
+                layer->setPaintingPhase({ });
+                layer->setDrawsContent(false);
         }
-    } else if (m_layerForVerticalScrollbar) {
-        willDestroyLayer(m_layerForVerticalScrollbar.get());
-        m_layerForVerticalScrollbar = nullptr;
-        verticalScrollbarLayerChanged = true;
+        } else {
+            willDestroyLayer(layer.get());
+            GraphicsLayer::unparentAndClear(layer);
     }
+        return true;
+    };
 
-    bool scrollCornerLayerChanged = false;
-    if (needsScrollCornerLayer) {
-        if (!m_layerForScrollCorner) {
-            m_layerForScrollCorner = createGraphicsLayer("scroll corner");
-            m_layerForScrollCorner->setCanDetachBackingStore(false);
-            scrollCornerLayerChanged = true;
-        }
-    } else if (m_layerForScrollCorner) {
-        willDestroyLayer(m_layerForScrollCorner.get());
-        m_layerForScrollCorner = nullptr;
-        scrollCornerLayerChanged = true;
-    }
+    bool layersChanged = createOrDestroyLayer(m_overflowControlsContainer, needsHorizontalScrollbarLayer || needsVerticalScrollbarLayer || needsScrollCornerLayer, false, "overflow controls container");
+
+    bool horizontalScrollbarLayerChanged = createOrDestroyLayer(m_layerForHorizontalScrollbar, needsHorizontalScrollbarLayer, true, "horizontal scrollbar");
+    layersChanged |= horizontalScrollbarLayerChanged;
+
+    bool verticalScrollbarLayerChanged = createOrDestroyLayer(m_layerForVerticalScrollbar, needsVerticalScrollbarLayer, true, "vertical scrollbar");
+    layersChanged |= verticalScrollbarLayerChanged;
+
+    layersChanged |= createOrDestroyLayer(m_layerForScrollCorner, needsScrollCornerLayer, true, "scroll corner");
 
     if (auto* scrollingCoordinator = m_owningLayer.page().scrollingCoordinator()) {
         if (horizontalScrollbarLayerChanged)
@@ -1528,7 +1971,7 @@ bool RenderLayerBacking::updateOverflowControlsLayers(bool needsHorizontalScroll
             scrollingCoordinator->scrollableAreaScrollbarLayerDidChange(m_owningLayer, VerticalScrollbar);
     }
 
-    return horizontalScrollbarLayerChanged || verticalScrollbarLayerChanged || scrollCornerLayerChanged;
+    return layersChanged;
 }
 
 void RenderLayerBacking::positionOverflowControlsLayers()
@@ -1536,59 +1979,43 @@ void RenderLayerBacking::positionOverflowControlsLayers()
     if (!m_owningLayer.hasScrollbars())
         return;
 
-    const IntRect borderBox = snappedIntRect(renderBox()->borderBoxRect());
+    // FIXME: Should do device-pixel snapping.
+    auto box = renderBox();
+    auto borderBox = snappedIntRect(box->borderBoxRect());
 
-    FloatSize offsetFromRenderer = m_graphicsLayer->offsetFromRenderer();
-    if (auto* layer = layerForHorizontalScrollbar()) {
-        IntRect hBarRect = m_owningLayer.rectForHorizontalScrollbar(borderBox);
-        layer->setPosition(hBarRect.location() - offsetFromRenderer);
-        layer->setSize(hBarRect.size());
-        if (layer->usesContentsLayer()) {
-            IntRect barRect = IntRect(IntPoint(), hBarRect.size());
-            layer->setContentsRect(barRect);
-            layer->setContentsClippingRect(FloatRoundedRect(barRect));
+    // m_overflowControlsContainer is positioned using the paddingBoxRectIncludingScrollbar.
+    auto paddingBox = snappedIntRect(box->paddingBoxRectIncludingScrollbar());
+    auto paddingBoxInset = paddingBox.location() - borderBox.location();
+
+    auto positionScrollbarLayer = [](GraphicsLayer& layer, const IntRect& scrollbarRect, IntSize paddingBoxInset) {
+        layer.setPosition(scrollbarRect.location() - paddingBoxInset);
+        layer.setSize(scrollbarRect.size());
+        if (layer.usesContentsLayer()) {
+            IntRect barRect = IntRect(IntPoint(), scrollbarRect.size());
+            layer.setContentsRect(barRect);
+            layer.setContentsClippingRect(FloatRoundedRect(barRect));
         }
+    };
+
+    // These rects are relative to the borderBoxRect.
+    auto rects = m_owningLayer.overflowControlsRects();
+
+    if (auto* layer = layerForHorizontalScrollbar()) {
+        positionScrollbarLayer(*layer, rects.horizontalScrollbar, paddingBoxInset);
         layer->setDrawsContent(m_owningLayer.horizontalScrollbar() && !layer->usesContentsLayer());
     }
 
     if (auto* layer = layerForVerticalScrollbar()) {
-        IntRect vBarRect = m_owningLayer.rectForVerticalScrollbar(borderBox);
-        layer->setPosition(vBarRect.location() - offsetFromRenderer);
-        layer->setSize(vBarRect.size());
-        if (layer->usesContentsLayer()) {
-            IntRect barRect = IntRect(IntPoint(), vBarRect.size());
-            layer->setContentsRect(barRect);
-            layer->setContentsClippingRect(FloatRoundedRect(barRect));
-        }
+        positionScrollbarLayer(*layer, rects.verticalScrollbar, paddingBoxInset);
         layer->setDrawsContent(m_owningLayer.verticalScrollbar() && !layer->usesContentsLayer());
     }
 
     if (auto* layer = layerForScrollCorner()) {
-        const LayoutRect& scrollCornerAndResizer = m_owningLayer.scrollCornerAndResizerRect();
-        layer->setPosition(scrollCornerAndResizer.location() - offsetFromRenderer);
-        layer->setSize(scrollCornerAndResizer.size());
-        layer->setDrawsContent(!scrollCornerAndResizer.isEmpty());
+        auto cornerRect = rects.scrollCornerOrResizerRect();
+        layer->setPosition(cornerRect.location() - paddingBoxInset);
+        layer->setSize(cornerRect.size());
+        layer->setDrawsContent(!cornerRect.isEmpty());
     }
-}
-
-bool RenderLayerBacking::hasUnpositionedOverflowControlsLayers() const
-{
-    if (auto* layer = layerForHorizontalScrollbar()) {
-        if (!layer->drawsContent())
-            return true;
-    }
-
-    if (auto* layer = layerForVerticalScrollbar()) {
-        if (!layer->drawsContent())
-            return true;
-    }
-
-    if (auto* layer = layerForScrollCorner()) {
-        if (!layer->drawsContent())
-            return true;
-    }
-
-    return false;
 }
 
 bool RenderLayerBacking::updateForegroundLayer(bool needsForegroundLayer)
@@ -1599,19 +2026,12 @@ bool RenderLayerBacking::updateForegroundLayer(bool needsForegroundLayer)
             String layerName = m_owningLayer.name() + " (foreground)";
             m_foregroundLayer = createGraphicsLayer(layerName);
             m_foregroundLayer->setDrawsContent(true);
-            m_foregroundLayer->setPaintingPhase(GraphicsLayerPaintForeground);
             layerChanged = true;
         }
     } else if (m_foregroundLayer) {
         willDestroyLayer(m_foregroundLayer.get());
-        m_foregroundLayer->removeFromParent();
-        m_foregroundLayer = nullptr;
+        GraphicsLayer::unparentAndClear(m_foregroundLayer);
         layerChanged = true;
-    }
-
-    if (layerChanged) {
-        m_graphicsLayer->setNeedsDisplay();
-        m_graphicsLayer->setPaintingPhase(paintingPhaseForPrimaryLayer());
     }
 
     return layerChanged;
@@ -1626,7 +2046,6 @@ bool RenderLayerBacking::updateBackgroundLayer(bool needsBackgroundLayer)
             m_backgroundLayer = createGraphicsLayer(layerName);
             m_backgroundLayer->setDrawsContent(true);
             m_backgroundLayer->setAnchorPoint(FloatPoint3D());
-            m_backgroundLayer->setPaintingPhase(GraphicsLayerPaintBackground);
             layerChanged = true;
         }
 
@@ -1640,50 +2059,41 @@ bool RenderLayerBacking::updateBackgroundLayer(bool needsBackgroundLayer)
     } else {
         if (m_backgroundLayer) {
             willDestroyLayer(m_backgroundLayer.get());
-            m_backgroundLayer->removeFromParent();
-            m_backgroundLayer = nullptr;
+            GraphicsLayer::unparentAndClear(m_backgroundLayer);
             layerChanged = true;
         }
         if (m_contentsContainmentLayer) {
             willDestroyLayer(m_contentsContainmentLayer.get());
-            m_contentsContainmentLayer->removeFromParent();
-            m_contentsContainmentLayer = nullptr;
+            GraphicsLayer::unparentAndClear(m_contentsContainmentLayer);
             layerChanged = true;
             m_graphicsLayer->setAppliesPageScale(true);
         }
-    }
-
-    if (layerChanged) {
-        m_graphicsLayer->setNeedsDisplay();
-
-        if (m_backgroundLayerPaintsFixedRootBackground)
-            compositor().fixedRootBackgroundLayerChanged();
     }
 
     return layerChanged;
 }
 
 // Masking layer is used for masks or clip-path.
-void RenderLayerBacking::updateMaskingLayer(bool hasMask, bool hasClipPath)
+bool RenderLayerBacking::updateMaskingLayer(bool hasMask, bool hasClipPath)
 {
     bool layerChanged = false;
     if (hasMask || hasClipPath) {
-        GraphicsLayerPaintingPhase maskPhases = 0;
+        OptionSet<GraphicsLayerPaintingPhase> maskPhases;
         if (hasMask)
-            maskPhases = GraphicsLayerPaintMask;
+            maskPhases = GraphicsLayerPaintingPhase::Mask;
 
         if (hasClipPath) {
             // If we have a mask, we need to paint the combined clip-path and mask into the mask layer.
             if (hasMask || renderer().style().clipPath()->type() == ClipPathOperation::Reference || !GraphicsLayer::supportsLayerType(GraphicsLayer::Type::Shape))
-                maskPhases |= GraphicsLayerPaintClipPath;
+                maskPhases.add(GraphicsLayerPaintingPhase::ClipPath);
         }
 
-        bool paintsContent = maskPhases;
+        bool paintsContent = !maskPhases.isEmpty();
         GraphicsLayer::Type requiredLayerType = paintsContent ? GraphicsLayer::Type::Normal : GraphicsLayer::Type::Shape;
         if (m_maskLayer && m_maskLayer->type() != requiredLayerType) {
             m_graphicsLayer->setMaskLayer(nullptr);
             willDestroyLayer(m_maskLayer.get());
-            m_maskLayer = nullptr;
+            GraphicsLayer::clear(m_maskLayer);
         }
 
         if (!m_maskLayer) {
@@ -1691,130 +2101,178 @@ void RenderLayerBacking::updateMaskingLayer(bool hasMask, bool hasClipPath)
             m_maskLayer->setDrawsContent(paintsContent);
             m_maskLayer->setPaintingPhase(maskPhases);
             layerChanged = true;
-            m_graphicsLayer->setMaskLayer(m_maskLayer.get());
+            m_graphicsLayer->setMaskLayer(m_maskLayer.copyRef());
+            // We need a geometry update to size the new mask layer.
+            m_owningLayer.setNeedsCompositingGeometryUpdate();
         }
     } else if (m_maskLayer) {
         m_graphicsLayer->setMaskLayer(nullptr);
         willDestroyLayer(m_maskLayer.get());
-        m_maskLayer = nullptr;
+        GraphicsLayer::clear(m_maskLayer);
         layerChanged = true;
     }
 
-    if (layerChanged)
-        m_graphicsLayer->setPaintingPhase(paintingPhaseForPrimaryLayer());
+    return layerChanged;
 }
 
 void RenderLayerBacking::updateChildClippingStrategy(bool needsDescendantsClippingLayer)
 {
     if (hasClippingLayer() && needsDescendantsClippingLayer) {
         if (is<RenderBox>(renderer()) && (renderer().style().clipPath() || renderer().style().hasBorderRadius())) {
-            // FIXME: we shouldn't get geometry here as layout may not have been udpated.
-            LayoutRect boxRect(LayoutPoint(), downcast<RenderBox>(renderer()).size());
-            boxRect.move(contentOffsetInCompostingLayer());
-            FloatRoundedRect contentsClippingRect = renderer().style().getRoundedInnerBorderFor(boxRect).pixelSnappedRoundedRectForPainting(deviceScaleFactor());
-            if (clippingLayer()->setMasksToBoundsRect(contentsClippingRect)) {
-                if (m_childClippingMaskLayer)
-                    m_childClippingMaskLayer = nullptr;
+            auto* clipLayer = clippingLayer();
+            FloatRoundedRect contentsClippingRect = downcast<RenderBox>(renderer()).roundedBorderBoxRect().pixelSnappedRoundedRectForPainting(deviceScaleFactor());
+            contentsClippingRect.move(LayoutSize(-clipLayer->offsetFromRenderer()));
+            // Note that we have to set this rounded rect again during the geometry update (clipLayer->offsetFromRenderer() may be stale here).
+            if (clipLayer->setMasksToBoundsRect(contentsClippingRect)) {
+                clipLayer->setMaskLayer(nullptr);
+                GraphicsLayer::clear(m_childClippingMaskLayer);
                 return;
             }
 
             if (!m_childClippingMaskLayer) {
                 m_childClippingMaskLayer = createGraphicsLayer("child clipping mask");
                 m_childClippingMaskLayer->setDrawsContent(true);
-                m_childClippingMaskLayer->setPaintingPhase(GraphicsLayerPaintChildClippingMask);
-                clippingLayer()->setMaskLayer(m_childClippingMaskLayer.get());
+                m_childClippingMaskLayer->setPaintingPhase({ GraphicsLayerPaintingPhase::ChildClippingMask });
+                clippingLayer()->setMaskLayer(m_childClippingMaskLayer.copyRef());
             }
         }
     } else {
         if (m_childClippingMaskLayer) {
             if (hasClippingLayer())
                 clippingLayer()->setMaskLayer(nullptr);
-            m_childClippingMaskLayer = nullptr;
+            GraphicsLayer::clear(m_childClippingMaskLayer);
         } else
             if (hasClippingLayer())
-                clippingLayer()->setMasksToBoundsRect(FloatRoundedRect(FloatRect(FloatPoint(), clippingLayer()->size())));
+                clippingLayer()->setMasksToBoundsRect(FloatRoundedRect(FloatRect({ }, clippingLayer()->size())));
     }
 }
 
 bool RenderLayerBacking::updateScrollingLayers(bool needsScrollingLayers)
 {
-    if (needsScrollingLayers == !!m_scrollingLayer)
+    if (needsScrollingLayers == !!m_scrollContainerLayer)
         return false;
 
-    if (!m_scrollingLayer) {
-        // Outer layer which corresponds with the scroll view.
-        m_scrollingLayer = createGraphicsLayer("scrolling container", GraphicsLayer::Type::Scrolling);
-        m_scrollingLayer->setDrawsContent(false);
-        m_scrollingLayer->setMasksToBounds(true);
+    if (!m_scrollContainerLayer) {
+        // Outer layer which corresponds with the scroll view. This never paints content.
+        m_scrollContainerLayer = createGraphicsLayer("scroll container", GraphicsLayer::Type::ScrollContainer);
+        m_scrollContainerLayer->setPaintingPhase({ });
+        m_scrollContainerLayer->setDrawsContent(false);
+        m_scrollContainerLayer->setMasksToBounds(true);
 
         // Inner layer which renders the content that scrolls.
-        m_scrollingContentsLayer = createGraphicsLayer("scrolled Contents");
-        m_scrollingContentsLayer->setDrawsContent(true);
-
-        GraphicsLayerPaintingPhase paintPhase = GraphicsLayerPaintOverflowContents | GraphicsLayerPaintCompositedScroll;
-        if (!m_foregroundLayer)
-            paintPhase |= GraphicsLayerPaintForeground;
-        m_scrollingContentsLayer->setPaintingPhase(paintPhase);
-        m_scrollingLayer->addChild(m_scrollingContentsLayer.get());
+        m_scrolledContentsLayer = createGraphicsLayer("scrolled contents", GraphicsLayer::Type::ScrolledContents);
+        m_scrolledContentsLayer->setDrawsContent(true);
+        m_scrolledContentsLayer->setAnchorPoint({ });
+        m_scrollContainerLayer->addChild(*m_scrolledContentsLayer);
     } else {
         compositor().willRemoveScrollingLayerWithBacking(m_owningLayer, *this);
 
-        willDestroyLayer(m_scrollingLayer.get());
-        willDestroyLayer(m_scrollingContentsLayer.get());
-        m_scrollingLayer = nullptr;
-        m_scrollingContentsLayer = nullptr;
+        willDestroyLayer(m_scrollContainerLayer.get());
+        willDestroyLayer(m_scrolledContentsLayer.get());
+
+        GraphicsLayer::unparentAndClear(m_scrollContainerLayer);
+        GraphicsLayer::unparentAndClear(m_scrolledContentsLayer);
     }
 
-    m_graphicsLayer->setPaintingPhase(paintingPhaseForPrimaryLayer());
-    m_graphicsLayer->setNeedsDisplay(); // Because painting phases changed.
-
-    if (m_scrollingLayer)
+    if (m_scrollContainerLayer)
         compositor().didAddScrollingLayer(m_owningLayer);
 
     return true;
 }
 
-void RenderLayerBacking::detachFromScrollingCoordinator(OptionSet<LayerScrollCoordinationRole> roles)
+void RenderLayerBacking::detachFromScrollingCoordinator(OptionSet<ScrollCoordinationRole> roles)
 {
-    if (!m_scrollingNodeID && !m_viewportConstrainedNodeID)
+    if (!m_scrollingNodeID && !m_ancestorClippingStack && !m_frameHostingNodeID && !m_viewportConstrainedNodeID && !m_positioningNodeID)
         return;
 
     auto* scrollingCoordinator = m_owningLayer.page().scrollingCoordinator();
     if (!scrollingCoordinator)
         return;
 
-    if ((roles & Scrolling) && m_scrollingNodeID) {
-        LOG(Compositing, "Detaching Scrolling node %" PRIu64, m_scrollingNodeID);
-        scrollingCoordinator->detachFromStateTree(m_scrollingNodeID);
+    if (roles.contains(ScrollCoordinationRole::Scrolling) && m_scrollingNodeID) {
+        LOG_WITH_STREAM(Compositing, stream << "Detaching Scrolling node " << m_scrollingNodeID);
+        scrollingCoordinator->unparentChildrenAndDestroyNode(m_scrollingNodeID);
         m_scrollingNodeID = 0;
+
+#if ENABLE(SCROLLING_THREAD)
+        if (m_scrollContainerLayer)
+            m_scrollContainerLayer->setScrollingNodeID(0);
+#endif
     }
 
-    if ((roles & ViewportConstrained) && m_viewportConstrainedNodeID) {
-        LOG(Compositing, "Detaching ViewportConstrained node %" PRIu64, m_viewportConstrainedNodeID);
-        scrollingCoordinator->detachFromStateTree(m_viewportConstrainedNodeID);
+    if (roles.contains(ScrollCoordinationRole::ScrollingProxy) && m_ancestorClippingStack) {
+        m_ancestorClippingStack->detachFromScrollingCoordinator(*scrollingCoordinator);
+        LOG_WITH_STREAM(Compositing, stream << "Detaching nodes in ancestor clipping stack");
+    }
+
+    if (roles.contains(ScrollCoordinationRole::FrameHosting) && m_frameHostingNodeID) {
+        LOG_WITH_STREAM(Compositing, stream << "Detaching FrameHosting node " << m_frameHostingNodeID);
+        scrollingCoordinator->unparentChildrenAndDestroyNode(m_frameHostingNodeID);
+        m_frameHostingNodeID = 0;
+    }
+
+    if (roles.contains(ScrollCoordinationRole::ViewportConstrained) && m_viewportConstrainedNodeID) {
+        LOG_WITH_STREAM(Compositing, stream << "Detaching ViewportConstrained node " << m_viewportConstrainedNodeID);
+        scrollingCoordinator->unparentChildrenAndDestroyNode(m_viewportConstrainedNodeID);
         m_viewportConstrainedNodeID = 0;
     }
+
+    if (roles.contains(ScrollCoordinationRole::Positioning) && m_positioningNodeID) {
+        LOG_WITH_STREAM(Compositing, stream << "Detaching Positioned node " << m_positioningNodeID);
+        scrollingCoordinator->unparentChildrenAndDestroyNode(m_positioningNodeID);
+        m_positioningNodeID = 0;
+#if ENABLE(SCROLLING_THREAD)
+        m_graphicsLayer->setScrollingNodeID(0);
+#endif
+    }
 }
 
-void RenderLayerBacking::setIsScrollCoordinatedWithViewportConstrainedRole(bool viewportCoordinated)
+void RenderLayerBacking::setScrollingNodeIDForRole(ScrollingNodeID nodeID, ScrollCoordinationRole role)
 {
-    m_graphicsLayer->setIsViewportConstrained(viewportCoordinated);
+    switch (role) {
+    case ScrollCoordinationRole::Scrolling:
+        m_scrollingNodeID = nodeID;
+#if ENABLE(SCROLLING_THREAD)
+        if (m_scrollContainerLayer)
+            m_scrollContainerLayer->setScrollingNodeID(m_scrollingNodeID);
+#endif
+        break;
+    case ScrollCoordinationRole::ScrollingProxy:
+        // These nodeIDs are stored in m_ancestorClippingStack.
+        ASSERT_NOT_REACHED();
+        break;
+    case ScrollCoordinationRole::FrameHosting:
+        m_frameHostingNodeID = nodeID;
+        break;
+    case ScrollCoordinationRole::ViewportConstrained:
+        m_viewportConstrainedNodeID = nodeID;
+        break;
+    case ScrollCoordinationRole::Positioning:
+        m_positioningNodeID = nodeID;
+#if ENABLE(SCROLLING_THREAD)
+        m_graphicsLayer->setScrollingNodeID(m_positioningNodeID);
+#endif
+        break;
+    }
 }
 
-GraphicsLayerPaintingPhase RenderLayerBacking::paintingPhaseForPrimaryLayer() const
+ScrollingNodeID RenderLayerBacking::scrollingNodeIDForChildren() const
 {
-    unsigned phase = 0;
-    if (!m_backgroundLayer)
-        phase |= GraphicsLayerPaintBackground;
-    if (!m_foregroundLayer)
-        phase |= GraphicsLayerPaintForeground;
+    if (m_frameHostingNodeID)
+        return m_frameHostingNodeID;
 
-    if (m_scrollingContentsLayer) {
-        phase &= ~GraphicsLayerPaintForeground;
-        phase |= GraphicsLayerPaintCompositedScroll;
+    if (m_scrollingNodeID)
+        return m_scrollingNodeID;
+
+    if (m_viewportConstrainedNodeID)
+        return m_viewportConstrainedNodeID;
+
+    if (m_ancestorClippingStack) {
+        if (auto lastOverflowScrollProxyNode = m_ancestorClippingStack->lastOverflowScrollProxyNodeID())
+            return lastOverflowScrollProxyNode;
     }
 
-    return static_cast<GraphicsLayerPaintingPhase>(phase);
+    return m_positioningNodeID;
 }
 
 float RenderLayerBacking::compositingOpacity(float rendererOpacity) const
@@ -1824,7 +2282,7 @@ float RenderLayerBacking::compositingOpacity(float rendererOpacity) const
     for (auto* curr = m_owningLayer.parent(); curr; curr = curr->parent()) {
         // We only care about parents that are stacking contexts.
         // Recall that opacity creates stacking context.
-        if (!curr->isStackingContainer())
+        if (!curr->isCSSStackingContext())
             continue;
 
         // If we found a compositing layer, we want to compute opacity
@@ -1866,7 +2324,7 @@ static bool canDirectlyCompositeBackgroundBackgroundImage(const RenderStyle& sty
 
     // FIXME: support gradients with isGeneratedImage.
     auto* styleImage = fillLayer.image();
-    if (!styleImage->isCachedImage())
+    if (!styleImage->hasCachedImage())
         return false;
 
     auto* image = styleImage->cachedImage()->image();
@@ -1944,7 +2402,7 @@ void RenderLayerBacking::updateDirectlyCompositedBackgroundImage(PaintedContents
 
     auto& style = renderer().style();
     if (!contentsInfo.isSimpleContainer() || !style.hasBackgroundImage()) {
-        m_graphicsLayer->setContentsToImage(0);
+        m_graphicsLayer->setContentsToImage(nullptr);
         return;
     }
 
@@ -1985,6 +2443,39 @@ void RenderLayerBacking::updateRootLayerConfiguration()
     }
 }
 
+void RenderLayerBacking::updatePaintingPhases()
+{
+    // Phases for m_childClippingMaskLayer and m_maskLayer are set elsewhere.
+    OptionSet<GraphicsLayerPaintingPhase> primaryLayerPhases = { GraphicsLayerPaintingPhase::Background, GraphicsLayerPaintingPhase::Foreground };
+
+    if (m_foregroundLayer) {
+        OptionSet<GraphicsLayerPaintingPhase> foregroundLayerPhases { GraphicsLayerPaintingPhase::Foreground };
+
+        if (m_scrolledContentsLayer)
+            foregroundLayerPhases.add(GraphicsLayerPaintingPhase::OverflowContents);
+
+        m_foregroundLayer->setPaintingPhase(foregroundLayerPhases);
+        primaryLayerPhases.remove(GraphicsLayerPaintingPhase::Foreground);
+    }
+
+    if (m_backgroundLayer) {
+        m_backgroundLayer->setPaintingPhase(GraphicsLayerPaintingPhase::Background);
+        primaryLayerPhases.remove(GraphicsLayerPaintingPhase::Background);
+    }
+
+    if (m_scrolledContentsLayer) {
+        OptionSet<GraphicsLayerPaintingPhase> scrolledContentLayerPhases = { GraphicsLayerPaintingPhase::OverflowContents, GraphicsLayerPaintingPhase::CompositedScroll };
+        if (!m_foregroundLayer)
+            scrolledContentLayerPhases.add(GraphicsLayerPaintingPhase::Foreground);
+        m_scrolledContentsLayer->setPaintingPhase(scrolledContentLayerPhases);
+
+        primaryLayerPhases.remove(GraphicsLayerPaintingPhase::Foreground);
+        primaryLayerPhases.add(GraphicsLayerPaintingPhase::CompositedScroll);
+    }
+
+    m_graphicsLayer->setPaintingPhase(primaryLayerPhases);
+}
+
 static bool supportsDirectlyCompositedBoxDecorations(const RenderLayerModelObject& renderer)
 {
     if (!GraphicsLayer::supportsBackgroundColorContent())
@@ -2006,7 +2497,7 @@ static bool supportsDirectlyCompositedBoxDecorations(const RenderLayerModelObjec
         return false;
 
     // FIXME: we should be able to allow backgroundComposite; However since this is not a common use case it has been deferred for now.
-    if (style.backgroundComposite() != CompositeSourceOver)
+    if (style.backgroundComposite() != CompositeOperator::SourceOver)
         return false;
 
     return true;
@@ -2022,6 +2513,8 @@ bool RenderLayerBacking::paintsBoxDecorations() const
 
 bool RenderLayerBacking::paintsContent(RenderLayer::PaintedContentRequest& request) const
 {
+    m_owningLayer.updateDescendantDependentFlags();
+
     bool paintsContent = false;
 
     if (m_owningLayer.hasVisibleContent() && m_owningLayer.hasNonEmptyChildRenderers(request))
@@ -2067,6 +2560,12 @@ static bool isCompositedPlugin(RenderObject& renderer)
 // This is a useful optimization, because it allows us to avoid allocating backing store.
 bool RenderLayerBacking::isSimpleContainerCompositingLayer(PaintedContentsInfo& contentsInfo) const
 {
+    if (m_owningLayer.isRenderViewLayer())
+        return false;
+
+    if (hasBackingSharingLayers())
+        return false;
+
     if (renderer().isRenderReplaced() && (!isCompositedPlugin(renderer()) || isRestartedPlugin(renderer())))
         return false;
 
@@ -2082,29 +2581,6 @@ bool RenderLayerBacking::isSimpleContainerCompositingLayer(PaintedContentsInfo& 
     if (renderer().isDocumentElementRenderer() && m_owningLayer.isolatesCompositedBlending())
         return false;
 
-    if (renderer().isRenderView()) {
-        // Look to see if the root object has a non-simple background
-        auto* rootObject = renderer().document().documentElement() ? renderer().document().documentElement()->renderer() : nullptr;
-        if (!rootObject)
-            return false;
-
-        // Reject anything that has a border, a border-radius or outline,
-        // or is not a simple background (no background, or solid color).
-        if (hasPaintedBoxDecorationsOrBackgroundImage(rootObject->style()))
-            return false;
-
-        // Now look at the body's renderer.
-        auto* body = renderer().document().body();
-        if (!body)
-            return false;
-        auto* bodyRenderer = body->renderer();
-        if (!bodyRenderer)
-            return false;
-
-        if (hasPaintedBoxDecorationsOrBackgroundImage(bodyRenderer->style()))
-            return false;
-    }
-
     return true;
 }
 
@@ -2116,51 +2592,45 @@ static LayerTraversal traverseVisibleNonCompositedDescendantLayers(RenderLayer& 
     // FIXME: We shouldn't be called with a stale z-order lists. See bug 85512.
     parent.updateLayerListsIfNeeded();
 
-#if !ASSERT_DISABLED
-    LayerListMutationDetector mutationChecker(&parent);
+#if ASSERT_ENABLED
+    LayerListMutationDetector mutationChecker(parent);
 #endif
 
-    if (auto* normalFlowList = parent.normalFlowList()) {
-        for (auto* childLayer : *normalFlowList) {
-            if (compositedWithOwnBackingStore(*childLayer))
-                continue;
+    for (auto* childLayer : parent.normalFlowLayers()) {
+        if (compositedWithOwnBackingStore(*childLayer))
+            continue;
 
-            if (layerFunc(*childLayer) == LayerTraversal::Stop)
-                return LayerTraversal::Stop;
+        if (layerFunc(*childLayer) == LayerTraversal::Stop)
+            return LayerTraversal::Stop;
 
-            if (traverseVisibleNonCompositedDescendantLayers(*childLayer, layerFunc) == LayerTraversal::Stop)
-                return LayerTraversal::Stop;
-        }
+        if (traverseVisibleNonCompositedDescendantLayers(*childLayer, layerFunc) == LayerTraversal::Stop)
+            return LayerTraversal::Stop;
     }
 
-    if (parent.isStackingContainer() && !parent.hasVisibleDescendant())
+    if (parent.isStackingContext() && !parent.hasVisibleDescendant())
         return LayerTraversal::Continue;
 
     // Use the m_hasCompositingDescendant bit to optimize?
-    if (auto* negZOrderList = parent.negZOrderList()) {
-        for (auto* childLayer : *negZOrderList) {
-            if (compositedWithOwnBackingStore(*childLayer))
-                continue;
+    for (auto* childLayer : parent.negativeZOrderLayers()) {
+        if (compositedWithOwnBackingStore(*childLayer))
+            continue;
 
-            if (layerFunc(*childLayer) == LayerTraversal::Stop)
-                return LayerTraversal::Stop;
+        if (layerFunc(*childLayer) == LayerTraversal::Stop)
+            return LayerTraversal::Stop;
 
-            if (traverseVisibleNonCompositedDescendantLayers(*childLayer, layerFunc) == LayerTraversal::Stop)
-                return LayerTraversal::Stop;
-        }
+        if (traverseVisibleNonCompositedDescendantLayers(*childLayer, layerFunc) == LayerTraversal::Stop)
+            return LayerTraversal::Stop;
     }
 
-    if (auto* posZOrderList = parent.posZOrderList()) {
-        for (auto* childLayer : *posZOrderList) {
-            if (compositedWithOwnBackingStore(*childLayer))
-                continue;
+    for (auto* childLayer : parent.positiveZOrderLayers()) {
+        if (compositedWithOwnBackingStore(*childLayer))
+            continue;
 
-            if (layerFunc(*childLayer) == LayerTraversal::Stop)
-                return LayerTraversal::Stop;
+        if (layerFunc(*childLayer) == LayerTraversal::Stop)
+            return LayerTraversal::Stop;
 
-            if (traverseVisibleNonCompositedDescendantLayers(*childLayer, layerFunc) == LayerTraversal::Stop)
-                return LayerTraversal::Stop;
-        }
+        if (traverseVisibleNonCompositedDescendantLayers(*childLayer, layerFunc) == LayerTraversal::Stop)
+            return LayerTraversal::Stop;
     }
 
     return LayerTraversal::Continue;
@@ -2233,7 +2703,7 @@ bool RenderLayerBacking::isDirectlyCompositedImage() const
         if (!is<BitmapImage>(image))
             return false;
 
-        if (downcast<BitmapImage>(*image).orientationForCurrentFrame() != DefaultImageOrientation)
+        if (downcast<BitmapImage>(*image).orientationForCurrentFrame() != ImageOrientation::None)
             return false;
 
 #if (PLATFORM(GTK) || PLATFORM(WPE))
@@ -2258,17 +2728,22 @@ void RenderLayerBacking::contentChanged(ContentChangeType changeType)
         return;
     }
 
-    if ((changeType == BackgroundImageChanged) && canDirectlyCompositeBackgroundBackgroundImage(renderer().style()))
-        updateGeometry();
-
-    if ((changeType == MaskImageChanged) && m_maskLayer) {
-        // The composited layer bounds relies on box->maskClipRect(), which changes
-        // when the mask image becomes available.
-        updateAfterLayout(UpdateAfterLayoutFlags::IsUpdateRoot);
+    if (changeType == VideoChanged) {
+        compositor().scheduleCompositingLayerUpdate();
+        return;
     }
 
-#if ENABLE(WEBGL) || ENABLE(ACCELERATED_2D_CANVAS)
+    if ((changeType == BackgroundImageChanged) && canDirectlyCompositeBackgroundBackgroundImage(renderer().style()))
+        m_owningLayer.setNeedsCompositingConfigurationUpdate();
+
+    if ((changeType == MaskImageChanged) && m_maskLayer)
+        m_owningLayer.setNeedsCompositingConfigurationUpdate();
+
+#if ENABLE(WEBGL) || ENABLE(ACCELERATED_2D_CANVAS) || ENABLE(WEBGPU)
     if ((changeType == CanvasChanged || changeType == CanvasPixelsChanged) && renderer().isCanvas() && canvasCompositingStrategy(renderer()) == CanvasAsLayerContents) {
+        if (changeType == CanvasChanged)
+            compositor().scheduleCompositingLayerUpdate();
+
         m_graphicsLayer->setContentsNeedsDisplay();
         return;
     }
@@ -2291,14 +2766,7 @@ void RenderLayerBacking::updateImageContents(PaintedContentsInfo& contentsInfo)
     if (!cachedImage->isLoaded())
         return;
 
-    // This is a no-op if the layer doesn't have an inner layer for the image.
-    m_graphicsLayer->setContentsRect(snapRectToDevicePixels(contentsBox(), deviceScaleFactor()));
-
-    LayoutRect boxRect(LayoutPoint(), imageRenderer.size());
-    boxRect.move(contentOffsetInCompostingLayer());
-    FloatRoundedRect contentsClippingRect = renderer().style().getRoundedInnerBorderFor(boxRect).pixelSnappedRoundedRectForPainting(deviceScaleFactor());
-    m_graphicsLayer->setContentsClippingRect(contentsClippingRect);
-
+    updateContentsRects();
     m_graphicsLayer->setContentsToImage(image);
 
     updateDrawsContent(contentsInfo);
@@ -2312,18 +2780,16 @@ void RenderLayerBacking::updateImageContents(PaintedContentsInfo& contentsInfo)
 FloatPoint3D RenderLayerBacking::computeTransformOriginForPainting(const LayoutRect& borderBox) const
 {
     const RenderStyle& style = renderer().style();
-    float deviceScaleFactor = this->deviceScaleFactor();
 
     FloatPoint3D origin;
-    origin.setX(roundToDevicePixel(floatValueForLength(style.transformOriginX(), borderBox.width()), deviceScaleFactor));
-    origin.setY(roundToDevicePixel(floatValueForLength(style.transformOriginY(), borderBox.height()), deviceScaleFactor));
+    origin.setXY(roundPointToDevicePixels(pointForLengthPoint(style.transformOriginXY(), borderBox.size()), deviceScaleFactor()));
     origin.setZ(style.transformOriginZ());
 
     return origin;
 }
 
 // Return the offset from the top-left of this compositing layer at which the renderer's contents are painted.
-LayoutSize RenderLayerBacking::contentOffsetInCompostingLayer() const
+LayoutSize RenderLayerBacking::contentOffsetInCompositingLayer() const
 {
     return LayoutSize(-m_compositedBounds.x() + m_compositedBoundsOffsetFromGraphicsLayer.width(), -m_compositedBounds.y() + m_compositedBoundsOffsetFromGraphicsLayer.height());
 }
@@ -2346,7 +2812,7 @@ LayoutRect RenderLayerBacking::contentsBox() const
     } else
         contentsRect = renderBox.contentBoxRect();
 
-    contentsRect.move(contentOffsetInCompostingLayer());
+    contentsRect.move(contentOffsetInCompositingLayer());
     return contentsRect;
 }
 
@@ -2364,7 +2830,7 @@ static LayoutRect backgroundRectForBox(const RenderBox& box)
     }
 
     ASSERT_NOT_REACHED();
-    return LayoutRect();
+    return { };
 }
 
 FloatRect RenderLayerBacking::backgroundBoxForSimpleContainerPainting() const
@@ -2373,22 +2839,22 @@ FloatRect RenderLayerBacking::backgroundBoxForSimpleContainerPainting() const
         return FloatRect();
 
     LayoutRect backgroundBox = backgroundRectForBox(downcast<RenderBox>(renderer()));
-    backgroundBox.move(contentOffsetInCompostingLayer());
+    backgroundBox.move(contentOffsetInCompositingLayer());
     return snapRectToDevicePixels(backgroundBox, deviceScaleFactor());
 }
 
 GraphicsLayer* RenderLayerBacking::parentForSublayers() const
 {
-    if (m_scrollingContentsLayer)
-        return m_scrollingContentsLayer.get();
+    if (m_scrolledContentsLayer)
+        return m_scrolledContentsLayer.get();
 
     return m_childContainmentLayer ? m_childContainmentLayer.get() : m_graphicsLayer.get();
 }
 
 GraphicsLayer* RenderLayerBacking::childForSuperlayers() const
 {
-    if (m_ancestorClippingLayer)
-        return m_ancestorClippingLayer.get();
+    if (m_ancestorClippingStack)
+        return m_ancestorClippingStack->firstClippingLayer();
 
     if (m_contentsContainmentLayer)
         return m_contentsContainmentLayer.get();
@@ -2398,7 +2864,7 @@ GraphicsLayer* RenderLayerBacking::childForSuperlayers() const
 
 bool RenderLayerBacking::paintsIntoWindow() const
 {
-#if USE(COORDINATED_GRAPHICS_THREADED)
+#if USE(COORDINATED_GRAPHICS)
         return false;
 #endif
 
@@ -2406,7 +2872,7 @@ bool RenderLayerBacking::paintsIntoWindow() const
         return false;
 
     if (m_owningLayer.isRenderViewLayer()) {
-#if PLATFORM(IOS) || USE(COORDINATED_GRAPHICS)
+#if PLATFORM(IOS_FAMILY) || USE(COORDINATED_GRAPHICS)
         if (compositor().inForcedCompositingMode())
             return false;
 #endif
@@ -2436,6 +2902,12 @@ void RenderLayerBacking::setContentsNeedDisplay(GraphicsLayer::ShouldClipToLayer
 {
     ASSERT(!paintsIntoCompositedAncestor());
 
+    // Use the repaint as a trigger to re-evaluate direct compositing (which is never used on the root layer).
+    if (!m_owningLayer.isRenderViewLayer())
+        m_owningLayer.setNeedsCompositingConfigurationUpdate();
+
+    m_owningLayer.invalidateEventRegion(RenderLayer::EventRegionInvalidationReason::Paint);
+
     auto& frameView = renderer().view().frameView();
     if (m_isMainFrameRenderViewLayer && frameView.isTrackingRepaints())
         frameView.addTrackedRepaintRect(owningLayer().absoluteBoundingBoxForPainting());
@@ -2461,14 +2933,20 @@ void RenderLayerBacking::setContentsNeedDisplay(GraphicsLayer::ShouldClipToLayer
     if (m_childClippingMaskLayer && m_childClippingMaskLayer->drawsContent())
         m_childClippingMaskLayer->setNeedsDisplay();
 
-    if (m_scrollingContentsLayer && m_scrollingContentsLayer->drawsContent())
-        m_scrollingContentsLayer->setNeedsDisplay();
+    if (m_scrolledContentsLayer && m_scrolledContentsLayer->drawsContent())
+        m_scrolledContentsLayer->setNeedsDisplay();
 }
 
 // r is in the coordinate space of the layer's render object
 void RenderLayerBacking::setContentsNeedDisplayInRect(const LayoutRect& r, GraphicsLayer::ShouldClipToLayer shouldClip)
 {
     ASSERT(!paintsIntoCompositedAncestor());
+
+    // Use the repaint as a trigger to re-evaluate direct compositing (which is never used on the root layer).
+    if (!m_owningLayer.isRenderViewLayer())
+        m_owningLayer.setNeedsCompositingConfigurationUpdate();
+
+    m_owningLayer.invalidateEventRegion(RenderLayer::EventRegionInvalidationReason::Paint);
 
     FloatRect pixelSnappedRectForPainting = snapRectToDevicePixels(r, deviceScaleFactor());
     auto& frameView = renderer().view().frameView();
@@ -2506,85 +2984,311 @@ void RenderLayerBacking::setContentsNeedDisplayInRect(const LayoutRect& r, Graph
         m_childClippingMaskLayer->setNeedsDisplayInRect(layerDirtyRect);
     }
 
-    if (m_scrollingContentsLayer && m_scrollingContentsLayer->drawsContent()) {
+    if (m_scrolledContentsLayer && m_scrolledContentsLayer->drawsContent()) {
         FloatRect layerDirtyRect = pixelSnappedRectForPainting;
-        layerDirtyRect.move(-m_scrollingContentsLayer->offsetFromRenderer() - m_subpixelOffsetFromRenderer);
-#if PLATFORM(IOS)
-        // Account for the fact that RenderLayerBacking::updateGeometry() bakes scrollOffset into offsetFromRenderer on iOS,
-        // but the repaint rect is computed without taking the scroll position into account (see shouldApplyClipAndScrollPositionForRepaint()).
-        layerDirtyRect.moveBy(-m_owningLayer.scrollPosition());
-#endif
-        m_scrollingContentsLayer->setNeedsDisplayInRect(layerDirtyRect, shouldClip);
+        layerDirtyRect.move(-m_scrolledContentsLayer->offsetFromRenderer() + toLayoutSize(m_owningLayer.scrollOffset()) - m_subpixelOffsetFromRenderer);
+        m_scrolledContentsLayer->setNeedsDisplayInRect(layerDirtyRect, shouldClip);
     }
 }
 
 void RenderLayerBacking::paintIntoLayer(const GraphicsLayer* graphicsLayer, GraphicsContext& context,
     const IntRect& paintDirtyRect, // In the coords of rootLayer.
-    OptionSet<PaintBehavior> paintBehavior, GraphicsLayerPaintingPhase paintingPhase)
+    OptionSet<PaintBehavior> paintBehavior, EventRegionContext* eventRegionContext)
 {
-    if ((paintsIntoWindow() || paintsIntoCompositedAncestor()) && paintingPhase != GraphicsLayerPaintChildClippingMask) {
-#if !PLATFORM(IOS) && !OS(WINDOWS)
+#if USE(OWNING_LAYER_BEAR_TRAP)
+    RELEASE_ASSERT_WITH_MESSAGE(m_owningLayerBearTrap == BEAR_TRAP_VALUE, "RenderLayerBacking::paintIntoLayer(): m_owningLayerBearTrap caught the bear (55699292)");
+    RELEASE_ASSERT_WITH_MESSAGE(&m_owningLayer, "RenderLayerBacking::paintIntoLayer(): m_owningLayer is null (55699292)");
+#endif
+
+    if ((paintsIntoWindow() || paintsIntoCompositedAncestor()) && graphicsLayer->paintingPhase() != OptionSet<GraphicsLayerPaintingPhase>(GraphicsLayerPaintingPhase::ChildClippingMask)) {
+#if !PLATFORM(IOS_FAMILY) && !OS(WINDOWS)
         // FIXME: Looks like the CALayer tree is out of sync with the GraphicsLayer heirarchy
-        // when pages are restored from the PageCache.
-        // <rdar://problem/8712587> ASSERT: When Going Back to Page with Plugins in PageCache
+        // when pages are restored from the BackForwardCache.
+        // <rdar://problem/8712587> ASSERT: When Going Back to Page with Plugins in BackForwardCache
         ASSERT_NOT_REACHED();
 #endif
         return;
     }
 
+    auto paintFlags = paintFlagsForLayer(*graphicsLayer);
+
+    if (eventRegionContext)
+        paintFlags.add(RenderLayer::PaintLayerFlag::CollectingEventRegion);
+
+    RenderObject::SetLayoutNeededForbiddenScope forbidSetNeedsLayout(renderer());
+
+    auto paintOneLayer = [&](RenderLayer& layer, OptionSet<RenderLayer::PaintLayerFlag> paintFlags) {
+        FrameView::PaintingState paintingState;
+        if (!eventRegionContext) {
+            InspectorInstrumentation::willPaint(layer.renderer());
+
+            if (layer.isRenderViewLayer())
+                renderer().view().frameView().willPaintContents(context, paintDirtyRect, paintingState);
+        }
+
+        RenderLayer::LayerPaintingInfo paintingInfo(&m_owningLayer, paintDirtyRect, paintBehavior, -m_subpixelOffsetFromRenderer);
+        paintingInfo.eventRegionContext = eventRegionContext;
+
+        if (&layer == &m_owningLayer) {
+            layer.paintLayerContents(context, paintingInfo, paintFlags);
+
+            if (layer.containsDirtyOverlayScrollbars() && !eventRegionContext)
+                layer.paintLayerContents(context, paintingInfo, paintFlags | RenderLayer::PaintLayerFlag::PaintingOverlayScrollbars);
+        } else
+            layer.paintLayerWithEffects(context, paintingInfo, paintFlags);
+
+        if (!eventRegionContext) {
+            if (layer.isRenderViewLayer())
+                renderer().view().frameView().didPaintContents(context, paintDirtyRect, paintingState);
+
+            InspectorInstrumentation::didPaint(layer.renderer(), paintDirtyRect);
+        }
+
+        ASSERT(!m_owningLayer.m_usedTransparency);
+    };
+
+    paintOneLayer(m_owningLayer, paintFlags);
+
+    // FIXME: Need to check m_foregroundLayer, masking etc. webkit.org/b/197565.
+    GraphicsLayer* destinationForSharingLayers = m_scrolledContentsLayer ? m_scrolledContentsLayer.get() : m_graphicsLayer.get();
+
+    if (graphicsLayer == destinationForSharingLayers) {
+        OptionSet<RenderLayer::PaintLayerFlag> sharingLayerPaintFlags = {
+            RenderLayer::PaintLayerFlag::PaintingCompositingBackgroundPhase,
+            RenderLayer::PaintLayerFlag::PaintingCompositingForegroundPhase };
+
+        if (graphicsLayer->paintingPhase().contains(GraphicsLayerPaintingPhase::OverflowContents))
+            sharingLayerPaintFlags.add(RenderLayer::PaintLayerFlag::PaintingOverflowContents);
+        if (eventRegionContext)
+            sharingLayerPaintFlags.add(RenderLayer::PaintLayerFlag::CollectingEventRegion);
+
+        for (auto& layerWeakPtr : m_backingSharingLayers)
+            paintOneLayer(*layerWeakPtr, sharingLayerPaintFlags);
+    }
+
+    if (!eventRegionContext)
+        compositor().didPaintBacking(this);
+
+#if USE(OWNING_LAYER_BEAR_TRAP)
+    RELEASE_ASSERT_WITH_MESSAGE(m_owningLayerBearTrap == BEAR_TRAP_VALUE, "RenderLayerBacking::paintIntoLayer() end: m_owningLayerBearTrap caught the bear (55699292)");
+    RELEASE_ASSERT_WITH_MESSAGE(&m_owningLayer, "RenderLayerBacking::paintIntoLayer() end: m_owningLayer is null (55699292)");
+#endif
+}
+
+OptionSet<RenderLayer::PaintLayerFlag> RenderLayerBacking::paintFlagsForLayer(const GraphicsLayer& graphicsLayer) const
+{
     OptionSet<RenderLayer::PaintLayerFlag> paintFlags;
-    if (paintingPhase & GraphicsLayerPaintBackground)
-        paintFlags |= RenderLayer::PaintLayerPaintingCompositingBackgroundPhase;
-    if (paintingPhase & GraphicsLayerPaintForeground)
-        paintFlags |= RenderLayer::PaintLayerPaintingCompositingForegroundPhase;
-    if (paintingPhase & GraphicsLayerPaintMask)
-        paintFlags |= RenderLayer::PaintLayerPaintingCompositingMaskPhase;
-    if (paintingPhase & GraphicsLayerPaintClipPath)
-        paintFlags |= RenderLayer::PaintLayerPaintingCompositingClipPathPhase;
-    if (paintingPhase & GraphicsLayerPaintChildClippingMask)
-        paintFlags |= RenderLayer::PaintLayerPaintingChildClippingMaskPhase;
-    if (paintingPhase & GraphicsLayerPaintOverflowContents)
-        paintFlags |= RenderLayer::PaintLayerPaintingOverflowContents;
-    if (paintingPhase & GraphicsLayerPaintCompositedScroll)
-        paintFlags |= RenderLayer::PaintLayerPaintingCompositingScrollingPhase;
 
-    if (graphicsLayer == m_backgroundLayer.get() && m_backgroundLayerPaintsFixedRootBackground)
-        paintFlags |= { RenderLayer::PaintLayerPaintingRootBackgroundOnly, RenderLayer::PaintLayerPaintingCompositingForegroundPhase }; // Need PaintLayerPaintingCompositingForegroundPhase to walk child layers.
+    auto paintingPhase = graphicsLayer.paintingPhase();
+    if (paintingPhase.contains(GraphicsLayerPaintingPhase::Background))
+        paintFlags.add(RenderLayer::PaintLayerFlag::PaintingCompositingBackgroundPhase);
+    if (paintingPhase.contains(GraphicsLayerPaintingPhase::Foreground))
+        paintFlags.add(RenderLayer::PaintLayerFlag::PaintingCompositingForegroundPhase);
+    if (paintingPhase.contains(GraphicsLayerPaintingPhase::Mask))
+        paintFlags.add(RenderLayer::PaintLayerFlag::PaintingCompositingMaskPhase);
+    if (paintingPhase.contains(GraphicsLayerPaintingPhase::ClipPath))
+        paintFlags.add(RenderLayer::PaintLayerFlag::PaintingCompositingClipPathPhase);
+    if (paintingPhase.contains(GraphicsLayerPaintingPhase::ChildClippingMask))
+        paintFlags.add(RenderLayer::PaintLayerFlag::PaintingChildClippingMaskPhase);
+    if (paintingPhase.contains(GraphicsLayerPaintingPhase::OverflowContents))
+        paintFlags.add(RenderLayer::PaintLayerFlag::PaintingOverflowContents);
+    if (paintingPhase.contains(GraphicsLayerPaintingPhase::CompositedScroll))
+        paintFlags.add(RenderLayer::PaintLayerFlag::PaintingCompositingScrollingPhase);
+
+    if (&graphicsLayer == m_backgroundLayer.get() && m_backgroundLayerPaintsFixedRootBackground)
+        paintFlags.add({ RenderLayer::PaintLayerFlag::PaintingRootBackgroundOnly, RenderLayer::PaintLayerFlag::PaintingCompositingForegroundPhase }); // Need PaintLayerFlag::PaintingCompositingForegroundPhase to walk child layers.
     else if (compositor().fixedRootBackgroundLayer())
-        paintFlags |= RenderLayer::PaintLayerPaintingSkipRootBackground;
+        paintFlags.add(RenderLayer::PaintLayerFlag::PaintingSkipRootBackground);
 
-#ifndef NDEBUG
-    RenderElement::SetLayoutNeededForbiddenScope forbidSetNeedsLayout(&renderer());
+    return paintFlags;
+}
+
+#if ENABLE(TOUCH_ACTION_REGIONS) || ENABLE(WHEEL_EVENT_REGIONS)
+struct PatternDescription {
+        ASCIILiteral name;
+        FloatSize phase;
+    SRGBA<uint8_t> fillColor;
+};
+
+static RefPtr<Pattern> patternForDescription(PatternDescription description, FloatSize contentOffset, GraphicsContext& destContext)
+{
+    const FloatSize tileSize { 32, 18 };
+
+    auto imageBuffer = ImageBuffer::createCompatibleBuffer(tileSize, ColorSpace::SRGB, destContext);
+    if (!imageBuffer)
+        return nullptr;
+
+    {
+        GraphicsContext& imageContext = imageBuffer->context();
+
+        FontCascadeDescription fontDescription;
+        fontDescription.setOneFamily("Helvetica");
+        fontDescription.setSpecifiedSize(10);
+        fontDescription.setComputedSize(10);
+        fontDescription.setWeight(FontSelectionValue(500));
+        FontCascade font(WTFMove(fontDescription), 0, 0);
+        font.update(nullptr);
+
+        TextRun textRun = TextRun(description.name);
+        imageContext.setFillColor(description.fillColor);
+
+        constexpr float textGap = 4;
+        constexpr float yOffset = 12;
+        imageContext.drawText(font, textRun, { textGap, yOffset }, 0);
+    }
+
+    auto tileImage = ImageBuffer::sinkIntoImage(WTFMove(imageBuffer));
+    auto fillPattern = Pattern::create(tileImage.releaseNonNull(), true, true);
+    AffineTransform patternOffsetTransform;
+    patternOffsetTransform.translate(contentOffset + description.phase);
+    patternOffsetTransform.scale(1 / destContext.scaleFactor());
+    fillPattern->setPatternSpaceTransform(patternOffsetTransform);
+
+    return fillPattern;
+};
 #endif
 
-    FrameView::PaintingState paintingState;
-    if (m_owningLayer.isRenderViewLayer())
-        renderer().view().frameView().willPaintContents(context, paintDirtyRect, paintingState);
+#if ENABLE(TOUCH_ACTION_REGIONS)
+static RefPtr<Pattern> patternForTouchAction(TouchAction touchAction, FloatSize contentOffset, GraphicsContext& destContext)
+{
+    auto toIndex = [](TouchAction touchAction) -> unsigned {
+        switch (touchAction) {
+        case TouchAction::None:
+            return 1;
+        case TouchAction::Manipulation:
+            return 2;
+        case TouchAction::PanX:
+            return 3;
+        case TouchAction::PanY:
+            return 4;
+        case TouchAction::PinchZoom:
+            return 5;
+        case TouchAction::Auto:
+            break;
+        }
+        return 0;
+    };
 
-    // FIXME: GraphicsLayers need a way to split for RenderFragmentContainers.
-    RenderLayer::LayerPaintingInfo paintingInfo(&m_owningLayer, paintDirtyRect, paintBehavior, -m_subpixelOffsetFromRenderer);
-    m_owningLayer.paintLayerContents(context, paintingInfo, paintFlags);
+    constexpr auto fillColor = Color::black.colorWithAlphaByte(128);
 
-    if (m_owningLayer.containsDirtyOverlayScrollbars())
-        m_owningLayer.paintLayerContents(context, paintingInfo, paintFlags | RenderLayer::PaintLayerPaintingOverlayScrollbars);
+    static const PatternDescription patternDescriptions[] = {
+        { "auto"_s, { }, fillColor },
+        { "none"_s, { }, fillColor },
+        { "manip"_s, { }, fillColor },
+        { "pan-x"_s, { }, fillColor },
+        { "pan-y"_s, { 0, 9 }, fillColor },
+        { "p-z"_s, { 16, 4.5 }, fillColor },
+    };
 
-    if (m_owningLayer.isRenderViewLayer())
-        renderer().view().frameView().didPaintContents(context, paintDirtyRect, paintingState);
+    auto actionIndex = toIndex(touchAction);
+    if (!actionIndex || actionIndex >= ARRAY_SIZE(patternDescriptions))
+        return nullptr;
 
-    compositor().didPaintBacking(this);
+    return patternForDescription(patternDescriptions[actionIndex], contentOffset, destContext);
+}
+#endif
 
-    ASSERT(!m_owningLayer.m_usedTransparency);
+#if ENABLE(WHEEL_EVENT_REGIONS)
+static RefPtr<Pattern> patternForEventListenerRegionType(EventListenerRegionType type, FloatSize contentOffset, GraphicsContext& destContext)
+{
+    constexpr auto fillColor = Color::darkGreen.colorWithAlphaByte(128);
+
+    auto patternAndPhase = [&]() -> PatternDescription {
+        switch (type) {
+        case EventListenerRegionType::Wheel:
+            return { "wheel"_s, { }, fillColor };
+        case EventListenerRegionType::NonPassiveWheel:
+            return { "sync"_s, { 0, 9 }, fillColor };
+        }
+        ASSERT_NOT_REACHED();
+        return { ""_s, { }, fillColor };
+    }();
+
+    return patternForDescription(patternAndPhase, contentOffset, destContext);
+}
+#endif
+
+void RenderLayerBacking::paintDebugOverlays(const GraphicsLayer* graphicsLayer, GraphicsContext& context)
+{
+    auto& eventRegion = graphicsLayer->eventRegion();
+    if (eventRegion.isEmpty())
+        return;
+
+    GraphicsContextStateSaver stateSaver(context);
+
+    // The region is offset by contentOffsetInCompositingLayer() so undo that.
+    auto contentOffset = roundedIntSize(contentOffsetInCompositingLayer());
+    context.translate(-contentOffset);
+
+#if ENABLE(TOUCH_ACTION_REGIONS) || ENABLE(WHEEL_EVENT_REGIONS) || ENABLE(EDITABLE_REGION)
+    auto visibleDebugOverlayRegions = renderer().settings().visibleDebugOverlayRegions();
+#endif
+
+    // The interactive part.
+#if ENABLE(TOUCH_ACTION_REGIONS)
+    // Paint rects for touch action.
+    if (visibleDebugOverlayRegions & TouchActionRegion) {
+        constexpr auto regionColor = Color::blue.colorWithAlphaByte(50);
+    context.setFillColor(regionColor);
+    for (auto rect : eventRegion.region().rects())
+        context.fillRect(rect);
+
+    const TouchAction touchActionList[] = {
+        TouchAction::None,
+        TouchAction::Manipulation,
+        TouchAction::PanX,
+        TouchAction::PanY,
+        TouchAction::PinchZoom,
+    };
+
+    for (auto action : touchActionList) {
+        auto* actionRegion = graphicsLayer->eventRegion().regionForTouchAction(action);
+        if (!actionRegion)
+            continue;
+
+        auto fillPattern = patternForTouchAction(action, contentOffsetInCompositingLayer(), context);
+        if (!fillPattern)
+            continue;
+
+        context.setFillPattern(fillPattern.releaseNonNull());
+        for (auto rect : actionRegion->rects())
+            context.fillRect(rect);
+    }
+    }
+#endif
+
+#if ENABLE(WHEEL_EVENT_REGIONS)
+    if (visibleDebugOverlayRegions & WheelEventHandlerRegion) {
+        for (auto type : { EventListenerRegionType::Wheel, EventListenerRegionType::NonPassiveWheel }) {
+            auto fillPattern = patternForEventListenerRegionType(type, contentOffsetInCompositingLayer(), context);
+            context.setFillPattern(fillPattern.releaseNonNull());
+
+            auto& region = graphicsLayer->eventRegion().eventListenerRegionForType(type);
+            for (auto rect : region.rects())
+                context.fillRect(rect);
+        }
+    }
+#endif
+
+#if ENABLE(EDITABLE_REGION)
+    // Paint rects for editable elements.
+    if (visibleDebugOverlayRegions & EditableElementRegion) {
+        context.setFillColor(SRGBA<uint8_t> { 128, 0, 128, 50 });
+        for (auto rect : eventRegion.rectsForEditableElements())
+            context.fillRect(rect);
+    }
+#endif
 }
 
 // Up-call from compositing layer drawing callback.
-void RenderLayerBacking::paintContents(const GraphicsLayer* graphicsLayer, GraphicsContext& context, GraphicsLayerPaintingPhase paintingPhase, const FloatRect& clip, GraphicsLayerPaintBehavior layerPaintBehavior)
+void RenderLayerBacking::paintContents(const GraphicsLayer* graphicsLayer, GraphicsContext& context, const FloatRect& clip, GraphicsLayerPaintBehavior layerPaintBehavior)
 {
 #ifndef NDEBUG
     renderer().page().setIsPainting(true);
 #endif
 
 #if PLATFORM(MAC)
-    LocalDefaultSystemAppearance localAppearance(renderer().page().useSystemAppearance(), renderer().page().useDarkAppearance());
+    LocalDefaultSystemAppearance localAppearance(renderer().useDarkAppearance());
 #endif
 
     // The dirtyRect is in the coords of the painting root.
@@ -2600,36 +3304,36 @@ void RenderLayerBacking::paintContents(const GraphicsLayer* graphicsLayer, Graph
         || graphicsLayer == m_backgroundLayer.get()
         || graphicsLayer == m_maskLayer.get()
         || graphicsLayer == m_childClippingMaskLayer.get()
-        || graphicsLayer == m_scrollingContentsLayer.get()) {
-        InspectorInstrumentation::willPaint(renderer());
+        || graphicsLayer == m_scrolledContentsLayer.get()) {
 
-        if (!(paintingPhase & GraphicsLayerPaintOverflowContents))
+        if (!graphicsLayer->paintingPhase().contains(GraphicsLayerPaintingPhase::OverflowContents))
             dirtyRect.intersect(enclosingIntRect(compositedBoundsIncludingMargin()));
 
         // We have to use the same root as for hit testing, because both methods can compute and cache clipRects.
         OptionSet<PaintBehavior> behavior = PaintBehavior::Normal;
         if (layerPaintBehavior == GraphicsLayerPaintSnapshotting)
-            behavior |= PaintBehavior::Snapshotting;
+            behavior.add(PaintBehavior::Snapshotting);
 
         if (layerPaintBehavior == GraphicsLayerPaintFirstTilePaint)
-            behavior |= PaintBehavior::TileFirstPaint;
+            behavior.add(PaintBehavior::TileFirstPaint);
 
-        paintIntoLayer(graphicsLayer, context, dirtyRect, behavior, paintingPhase);
+        paintIntoLayer(graphicsLayer, context, dirtyRect, behavior);
 
-        InspectorInstrumentation::didPaint(renderer(), dirtyRect);
+        if (renderer().settings().visibleDebugOverlayRegions() & (TouchActionRegion | EditableElementRegion | WheelEventHandlerRegion))
+            paintDebugOverlays(graphicsLayer, context);
+
     } else if (graphicsLayer == layerForHorizontalScrollbar()) {
         paintScrollbar(m_owningLayer.horizontalScrollbar(), context, dirtyRect);
     } else if (graphicsLayer == layerForVerticalScrollbar()) {
         paintScrollbar(m_owningLayer.verticalScrollbar(), context, dirtyRect);
     } else if (graphicsLayer == layerForScrollCorner()) {
-        const LayoutRect& scrollCornerAndResizer = m_owningLayer.scrollCornerAndResizerRect();
-        context.save();
-        context.translate(-scrollCornerAndResizer.location());
+        auto cornerRect = m_owningLayer.overflowControlsRects().scrollCornerOrResizerRect();
+        GraphicsContextStateSaver stateSaver(context);
+        context.translate(-cornerRect.location());
         LayoutRect transformedClip = LayoutRect(clip);
-        transformedClip.moveBy(scrollCornerAndResizer.location());
+        transformedClip.moveBy(cornerRect.location());
         m_owningLayer.paintScrollCorner(context, IntPoint(), snappedIntRect(transformedClip));
         m_owningLayer.paintResizer(context, IntPoint(), transformedClip);
-        context.restore();
     }
 #ifndef NDEBUG
     renderer().page().setIsPainting(false);
@@ -2661,9 +3365,9 @@ bool RenderLayerBacking::paintsOpaquelyAtNonIntegralScales(const GraphicsLayer*)
     return m_isMainFrameRenderViewLayer;
 }
 
-void RenderLayerBacking::didCommitChangesForLayer(const GraphicsLayer* layer) const
+void RenderLayerBacking::didChangePlatformLayerForLayer(const GraphicsLayer* layer)
 {
-    compositor().didFlushChangesForLayer(m_owningLayer, layer);
+    compositor().didChangePlatformLayerForLayer(m_owningLayer, layer);
 }
 
 bool RenderLayerBacking::getCurrentTransform(const GraphicsLayer* graphicsLayer, TransformationMatrix& transform) const
@@ -2693,16 +3397,16 @@ bool RenderLayerBacking::shouldSkipLayerInDump(const GraphicsLayer* layer, Layer
     return m_isMainFrameRenderViewLayer && layer && layer == m_childContainmentLayer.get();
 }
 
-bool RenderLayerBacking::shouldDumpPropertyForLayer(const GraphicsLayer* layer, const char* propertyName) const
+bool RenderLayerBacking::shouldDumpPropertyForLayer(const GraphicsLayer* layer, const char* propertyName, LayerTreeAsTextBehavior flags) const
 {
     // For backwards compatibility with WebKit1 and other platforms,
     // skip some properties on the root tile cache.
-    if (m_isMainFrameRenderViewLayer && layer == m_graphicsLayer.get()) {
+    if (m_isMainFrameRenderViewLayer && layer == m_graphicsLayer.get() && !(flags & LayerTreeAsTextIncludeRootLayerProperties)) {
         if (!strcmp(propertyName, "drawsContent"))
             return false;
 
         // Background color could be of interest to tests or other dumpers if it's non-white.
-        if (!strcmp(propertyName, "backgroundColor") && layer->backgroundColor() == Color::white)
+        if (!strcmp(propertyName, "backgroundColor") && Color::isWhiteColor(layer->backgroundColor()))
             return false;
 
         // The root tile cache's repaints will show up at the top with FrameView's,
@@ -2747,7 +3451,7 @@ void RenderLayerBacking::verifyNotPainting()
 }
 #endif
 
-bool RenderLayerBacking::startAnimation(double timeOffset, const Animation* anim, const KeyframeList& keyframes)
+bool RenderLayerBacking::startAnimation(double timeOffset, const Animation& animation, const KeyframeList& keyframes)
 {
     bool hasOpacity = keyframes.containsProperty(CSSPropertyOpacity);
     bool hasTransform = renderer().isBox() && keyframes.containsProperty(CSSPropertyTransform);
@@ -2781,17 +3485,17 @@ bool RenderLayerBacking::startAnimation(double timeOffset, const Animation* anim
 
         bool isFirstOrLastKeyframe = key == 0 || key == 1;
         if ((hasTransform && isFirstOrLastKeyframe) || currentKeyframe.containsProperty(CSSPropertyTransform))
-            transformVector.insert(std::make_unique<TransformAnimationValue>(key, keyframeStyle->transform(), tf));
+            transformVector.insert(makeUnique<TransformAnimationValue>(key, keyframeStyle->transform(), tf));
 
         if ((hasOpacity && isFirstOrLastKeyframe) || currentKeyframe.containsProperty(CSSPropertyOpacity))
-            opacityVector.insert(std::make_unique<FloatAnimationValue>(key, keyframeStyle->opacity(), tf));
+            opacityVector.insert(makeUnique<FloatAnimationValue>(key, keyframeStyle->opacity(), tf));
 
         if ((hasFilter && isFirstOrLastKeyframe) || currentKeyframe.containsProperty(CSSPropertyFilter))
-            filterVector.insert(std::make_unique<FilterAnimationValue>(key, keyframeStyle->filter(), tf));
+            filterVector.insert(makeUnique<FilterAnimationValue>(key, keyframeStyle->filter(), tf));
 
 #if ENABLE(FILTERS_LEVEL_2)
         if ((hasBackdropFilter && isFirstOrLastKeyframe) || currentKeyframe.containsProperty(CSSPropertyWebkitBackdropFilter))
-            backdropFilterVector.insert(std::make_unique<FilterAnimationValue>(key, keyframeStyle->backdropFilter(), tf));
+            backdropFilterVector.insert(makeUnique<FilterAnimationValue>(key, keyframeStyle->backdropFilter(), tf));
 #endif
     }
 
@@ -2800,19 +3504,24 @@ bool RenderLayerBacking::startAnimation(double timeOffset, const Animation* anim
 
     bool didAnimate = false;
 
-    if (hasTransform && m_graphicsLayer->addAnimation(transformVector, snappedIntRect(renderBox()->borderBoxRect()).size(), anim, keyframes.animationName(), timeOffset))
+    if (hasTransform && m_graphicsLayer->addAnimation(transformVector, snappedIntRect(renderBox()->borderBoxRect()).size(), &animation, keyframes.animationName(), timeOffset))
         didAnimate = true;
 
-    if (hasOpacity && m_graphicsLayer->addAnimation(opacityVector, IntSize(), anim, keyframes.animationName(), timeOffset))
+    if (hasOpacity && m_graphicsLayer->addAnimation(opacityVector, IntSize { }, &animation, keyframes.animationName(), timeOffset))
         didAnimate = true;
 
-    if (hasFilter && m_graphicsLayer->addAnimation(filterVector, IntSize(), anim, keyframes.animationName(), timeOffset))
+    if (hasFilter && m_graphicsLayer->addAnimation(filterVector, IntSize { }, &animation, keyframes.animationName(), timeOffset))
         didAnimate = true;
 
 #if ENABLE(FILTERS_LEVEL_2)
-    if (hasBackdropFilter && m_graphicsLayer->addAnimation(backdropFilterVector, IntSize(), anim, keyframes.animationName(), timeOffset))
+    if (hasBackdropFilter && m_graphicsLayer->addAnimation(backdropFilterVector, IntSize { }, &animation, keyframes.animationName(), timeOffset))
         didAnimate = true;
 #endif
+
+    if (didAnimate) {
+        m_owningLayer.setNeedsPostLayoutCompositingUpdate();
+        m_owningLayer.setNeedsCompositingGeometryUpdate();
+    }
 
     return didAnimate;
 }
@@ -2822,14 +3531,11 @@ void RenderLayerBacking::animationPaused(double timeOffset, const String& animat
     m_graphicsLayer->pauseAnimation(animationName, timeOffset);
 }
 
-void RenderLayerBacking::animationSeeked(double timeOffset, const String& animationName)
-{
-    m_graphicsLayer->seekAnimation(animationName, timeOffset);
-}
-
 void RenderLayerBacking::animationFinished(const String& animationName)
 {
     m_graphicsLayer->removeAnimation(animationName);
+    m_owningLayer.setNeedsPostLayoutCompositingUpdate();
+    m_owningLayer.setNeedsCompositingGeometryUpdate();
 }
 
 bool RenderLayerBacking::startTransition(double timeOffset, CSSPropertyID property, const RenderStyle* fromStyle, const RenderStyle* toStyle)
@@ -2842,8 +3548,8 @@ bool RenderLayerBacking::startTransition(double timeOffset, CSSPropertyID proper
         const Animation* opacityAnim = toStyle->transitionForProperty(CSSPropertyOpacity);
         if (opacityAnim && !opacityAnim->isEmptyOrZeroDuration()) {
             KeyframeValueList opacityVector(AnimatedPropertyOpacity);
-            opacityVector.insert(std::make_unique<FloatAnimationValue>(0, compositingOpacity(fromStyle->opacity())));
-            opacityVector.insert(std::make_unique<FloatAnimationValue>(1, compositingOpacity(toStyle->opacity())));
+            opacityVector.insert(makeUnique<FloatAnimationValue>(0, compositingOpacity(fromStyle->opacity())));
+            opacityVector.insert(makeUnique<FloatAnimationValue>(1, compositingOpacity(toStyle->opacity())));
             // The boxSize param is only used for transform animations (which can only run on RenderBoxes), so we pass an empty size here.
             if (m_graphicsLayer->addAnimation(opacityVector, FloatSize(), opacityAnim, GraphicsLayer::animationNameForTransition(AnimatedPropertyOpacity), timeOffset)) {
                 // To ensure that the correct opacity is visible when the animation ends, also set the final opacity.
@@ -2857,8 +3563,8 @@ bool RenderLayerBacking::startTransition(double timeOffset, CSSPropertyID proper
         const Animation* transformAnim = toStyle->transitionForProperty(CSSPropertyTransform);
         if (transformAnim && !transformAnim->isEmptyOrZeroDuration()) {
             KeyframeValueList transformVector(AnimatedPropertyTransform);
-            transformVector.insert(std::make_unique<TransformAnimationValue>(0, fromStyle->transform()));
-            transformVector.insert(std::make_unique<TransformAnimationValue>(1, toStyle->transform()));
+            transformVector.insert(makeUnique<TransformAnimationValue>(0, fromStyle->transform()));
+            transformVector.insert(makeUnique<TransformAnimationValue>(1, toStyle->transform()));
             if (m_graphicsLayer->addAnimation(transformVector, snappedIntRect(renderBox()->borderBoxRect()).size(), transformAnim, GraphicsLayer::animationNameForTransition(AnimatedPropertyTransform), timeOffset)) {
                 // To ensure that the correct transform is visible when the animation ends, also set the final transform.
                 updateTransform(*toStyle);
@@ -2871,8 +3577,8 @@ bool RenderLayerBacking::startTransition(double timeOffset, CSSPropertyID proper
         const Animation* filterAnim = toStyle->transitionForProperty(CSSPropertyFilter);
         if (filterAnim && !filterAnim->isEmptyOrZeroDuration()) {
             KeyframeValueList filterVector(AnimatedPropertyFilter);
-            filterVector.insert(std::make_unique<FilterAnimationValue>(0, fromStyle->filter()));
-            filterVector.insert(std::make_unique<FilterAnimationValue>(1, toStyle->filter()));
+            filterVector.insert(makeUnique<FilterAnimationValue>(0, fromStyle->filter()));
+            filterVector.insert(makeUnique<FilterAnimationValue>(1, toStyle->filter()));
             if (m_graphicsLayer->addAnimation(filterVector, FloatSize(), filterAnim, GraphicsLayer::animationNameForTransition(AnimatedPropertyFilter), timeOffset)) {
                 // To ensure that the correct filter is visible when the animation ends, also set the final filter.
                 updateFilters(*toStyle);
@@ -2886,8 +3592,8 @@ bool RenderLayerBacking::startTransition(double timeOffset, CSSPropertyID proper
         const Animation* backdropFilterAnim = toStyle->transitionForProperty(CSSPropertyWebkitBackdropFilter);
         if (backdropFilterAnim && !backdropFilterAnim->isEmptyOrZeroDuration()) {
             KeyframeValueList backdropFilterVector(AnimatedPropertyWebkitBackdropFilter);
-            backdropFilterVector.insert(std::make_unique<FilterAnimationValue>(0, fromStyle->backdropFilter()));
-            backdropFilterVector.insert(std::make_unique<FilterAnimationValue>(1, toStyle->backdropFilter()));
+            backdropFilterVector.insert(makeUnique<FilterAnimationValue>(0, fromStyle->backdropFilter()));
+            backdropFilterVector.insert(makeUnique<FilterAnimationValue>(1, toStyle->backdropFilter()));
             if (m_graphicsLayer->addAnimation(backdropFilterVector, FloatSize(), backdropFilterAnim, GraphicsLayer::animationNameForTransition(AnimatedPropertyWebkitBackdropFilter), timeOffset)) {
                 // To ensure that the correct backdrop filter is visible when the animation ends, also set the final backdrop filter.
                 updateBackdropFilters(*toStyle);
@@ -2896,6 +3602,9 @@ bool RenderLayerBacking::startTransition(double timeOffset, CSSPropertyID proper
         }
     }
 #endif
+
+    if (didAnimate)
+        m_owningLayer.setNeedsPostLayoutCompositingUpdate();
 
     return didAnimate;
 }
@@ -2910,20 +3619,23 @@ void RenderLayerBacking::transitionPaused(double timeOffset, CSSPropertyID prope
 void RenderLayerBacking::transitionFinished(CSSPropertyID property)
 {
     AnimatedPropertyID animatedProperty = cssToGraphicsLayerProperty(property);
-    if (animatedProperty != AnimatedPropertyInvalid)
+    if (animatedProperty != AnimatedPropertyInvalid) {
         m_graphicsLayer->removeAnimation(GraphicsLayer::animationNameForTransition(animatedProperty));
+        m_owningLayer.setNeedsPostLayoutCompositingUpdate();
+    }
 }
 
 void RenderLayerBacking::notifyAnimationStarted(const GraphicsLayer*, const String&, MonotonicTime time)
 {
-    renderer().animation().notifyAnimationStarted(renderer(), time);
+    if (!RuntimeEnabledFeatures::sharedFeatures().webAnimationsCSSIntegrationEnabled())
+        renderer().legacyAnimation().notifyAnimationStarted(renderer(), time);
 }
 
-void RenderLayerBacking::notifyFlushRequired(const GraphicsLayer* layer)
+void RenderLayerBacking::notifyFlushRequired(const GraphicsLayer*)
 {
     if (renderer().renderTreeBeingDestroyed())
         return;
-    compositor().scheduleLayerFlush(layer->canThrottleLayerFlush());
+    compositor().scheduleRenderingUpdate();
 }
 
 void RenderLayerBacking::notifyFlushBeforeDisplayRefresh(const GraphicsLayer* layer)
@@ -2947,9 +3659,13 @@ LayoutRect RenderLayerBacking::compositedBounds() const
     return m_compositedBounds;
 }
 
-void RenderLayerBacking::setCompositedBounds(const LayoutRect& bounds)
+bool RenderLayerBacking::setCompositedBounds(const LayoutRect& bounds)
 {
+    if (bounds == m_compositedBounds)
+        return false;
+
     m_compositedBounds = bounds;
+    return true;
 }
 
 LayoutRect RenderLayerBacking::compositedBoundsIncludingMargin() const
@@ -3032,7 +3748,7 @@ double RenderLayerBacking::backingStoreMemoryEstimate() const
 {
     double backingMemory;
 
-    // m_ancestorClippingLayer, m_contentsContainmentLayer and m_childContainmentLayer are just used for masking or containment, so have no backing.
+    // Layers in m_ancestorClippingStack, m_contentsContainmentLayer and m_childContainmentLayer are just used for masking or containment, so have no backing.
     backingMemory = m_graphicsLayer->backingStoreMemoryEstimate();
     if (m_foregroundLayer)
         backingMemory += m_foregroundLayer->backingStoreMemoryEstimate();
@@ -3043,8 +3759,8 @@ double RenderLayerBacking::backingStoreMemoryEstimate() const
     if (m_childClippingMaskLayer)
         backingMemory += m_childClippingMaskLayer->backingStoreMemoryEstimate();
 
-    if (m_scrollingContentsLayer)
-        backingMemory += m_scrollingContentsLayer->backingStoreMemoryEstimate();
+    if (m_scrolledContentsLayer)
+        backingMemory += m_scrolledContentsLayer->backingStoreMemoryEstimate();
 
     if (m_layerForHorizontalScrollbar)
         backingMemory += m_layerForHorizontalScrollbar->backingStoreMemoryEstimate();
@@ -3070,10 +3786,18 @@ TextStream& operator<<(TextStream& ts, const RenderLayerBacking& backing)
         ts << " paintsIntoCompositedAncestor";
 
     ts << " primary layer ID " << backing.graphicsLayer()->primaryLayerID();
-    if (auto nodeID = backing.scrollingNodeIDForRole(ViewportConstrained))
+    if (auto nodeID = backing.scrollingNodeIDForRole(ScrollCoordinationRole::ViewportConstrained))
         ts << " viewport constrained scrolling node " << nodeID;
-    if (auto nodeID = backing.scrollingNodeIDForRole(Scrolling))
+    if (auto nodeID = backing.scrollingNodeIDForRole(ScrollCoordinationRole::Scrolling))
         ts << " scrolling node " << nodeID;
+
+    if (backing.ancestorClippingStack())
+        ts << " ancestor clip stack " << *backing.ancestorClippingStack();
+
+    if (auto nodeID = backing.scrollingNodeIDForRole(ScrollCoordinationRole::FrameHosting))
+        ts << " frame hosting node " << nodeID;
+    if (auto nodeID = backing.scrollingNodeIDForRole(ScrollCoordinationRole::Positioning))
+        ts << " positioning node " << nodeID;
     return ts;
 }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -92,6 +92,9 @@ public class CompositeGlyphMapper extends CharToGlyphMapper {
 
     private final int convertToGlyph(int unicode) {
         for (int slot = 0; slot < font.getNumSlots(); slot++) {
+            if (slot >= 255) { // not supposed to happen.
+                return missingGlyph;
+            }
             CharToGlyphMapper mapper = getSlotMapper(slot);
             int glyphCode = mapper.charToGlyph(unicode);
             if (glyphCode != mapper.getMissingGlyphCode()) {
@@ -100,7 +103,6 @@ public class CompositeGlyphMapper extends CharToGlyphMapper {
                 return glyphCode;
             }
         }
-        glyphMap.put(unicode, missingGlyph);
         return missingGlyph;
     }
 

@@ -33,22 +33,23 @@ namespace WebCore {
 typedef WindowProxy AbstractView;
 
 class UIEvent : public Event {
+    WTF_MAKE_ISO_ALLOCATED(UIEvent);
 public:
-    static Ref<UIEvent> create(const AtomicString& type, CanBubble canBubble, IsCancelable cancelable, RefPtr<WindowProxy>&& view, int detail)
+    static Ref<UIEvent> create(const AtomString& type, CanBubble canBubble, IsCancelable isCancelable, IsComposed isComposed, RefPtr<WindowProxy>&& view, int detail)
     {
-        return adoptRef(*new UIEvent(type, canBubble, cancelable, WTFMove(view), detail));
+        return adoptRef(*new UIEvent(type, canBubble, isCancelable, isComposed, WTFMove(view), detail));
     }
     static Ref<UIEvent> createForBindings()
     {
         return adoptRef(*new UIEvent);
     }
-    static Ref<UIEvent> create(const AtomicString& type, const UIEventInit& initializer, IsTrusted isTrusted = IsTrusted::No)
+    static Ref<UIEvent> create(const AtomString& type, const UIEventInit& initializer)
     {
-        return adoptRef(*new UIEvent(type, initializer, isTrusted));
+        return adoptRef(*new UIEvent(type, initializer));
     }
     virtual ~UIEvent();
 
-    WEBCORE_EXPORT void initUIEvent(const AtomicString& type, bool canBubble, bool cancelable, RefPtr<WindowProxy>&&, int detail);
+    WEBCORE_EXPORT void initUIEvent(const AtomString& type, bool canBubble, bool cancelable, RefPtr<WindowProxy>&&, int detail);
 
     WindowProxy* view() const { return m_view.get(); }
     int detail() const { return m_detail; }
@@ -65,9 +66,10 @@ public:
 
 protected:
     UIEvent();
-    UIEvent(const AtomicString& type, CanBubble, IsCancelable, RefPtr<WindowProxy>&&, int detail);
-    UIEvent(const AtomicString& type, CanBubble, IsCancelable, MonotonicTime timestamp, RefPtr<WindowProxy>&&, int detail);
-    UIEvent(const AtomicString&, const UIEventInit&, IsTrusted);
+
+    UIEvent(const AtomString& type, CanBubble, IsCancelable, IsComposed, RefPtr<WindowProxy>&&, int detail);
+    UIEvent(const AtomString& type, CanBubble, IsCancelable, IsComposed, MonotonicTime timestamp, RefPtr<WindowProxy>&&, int detail, IsTrusted = IsTrusted::Yes);
+    UIEvent(const AtomString&, const UIEventInit&);
 
 private:
     bool isUIEvent() const final;

@@ -47,10 +47,11 @@ class JS_EXPORT_PRIVATE InspectorHeapAgent : public InspectorAgentBase, public H
     WTF_MAKE_FAST_ALLOCATED;
 public:
     InspectorHeapAgent(AgentContext&);
-    virtual ~InspectorHeapAgent();
+    ~InspectorHeapAgent() override;
 
-    void didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*) override;
-    void willDestroyFrontendAndBackend(DisconnectReason) override;
+    // InspectorAgentBase
+    void didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*) final;
+    void willDestroyFrontendAndBackend(DisconnectReason) final;
 
     // HeapBackendDispatcherHandler
     void enable(ErrorString&) override;
@@ -59,12 +60,12 @@ public:
     void snapshot(ErrorString&, double* timestamp, String* snapshotData) final;
     void startTracking(ErrorString&) final;
     void stopTracking(ErrorString&) final;
-    void getPreview(ErrorString&, int heapObjectId, std::optional<String>& resultString, RefPtr<Protocol::Debugger::FunctionDetails>&, RefPtr<Protocol::Runtime::ObjectPreview>&) final;
+    void getPreview(ErrorString&, int heapObjectId, Optional<String>& resultString, RefPtr<Protocol::Debugger::FunctionDetails>&, RefPtr<Protocol::Runtime::ObjectPreview>&) final;
     void getRemoteObject(ErrorString&, int heapObjectId, const String* optionalObjectGroup, RefPtr<Protocol::Runtime::RemoteObject>& result) final;
 
-    // HeapObserver
-    void willGarbageCollect() override;
-    void didGarbageCollect(JSC::CollectionScope) override;
+    // JSC::HeapObserver
+    void willGarbageCollect() final;
+    void didGarbageCollect(JSC::CollectionScope) final;
 
 protected:
     void clearHeapSnapshots();
@@ -72,7 +73,7 @@ protected:
     virtual void dispatchGarbageCollectedEvent(Protocol::Heap::GarbageCollection::Type, Seconds startTime, Seconds endTime);
 
 private:
-    std::optional<JSC::HeapSnapshotNode> nodeForHeapObjectIdentifier(ErrorString&, unsigned heapObjectIdentifier);
+    Optional<JSC::HeapSnapshotNode> nodeForHeapObjectIdentifier(ErrorString&, unsigned heapObjectIdentifier);
 
     InjectedScriptManager& m_injectedScriptManager;
     std::unique_ptr<HeapFrontendDispatcher> m_frontendDispatcher;

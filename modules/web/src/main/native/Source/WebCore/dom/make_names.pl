@@ -112,10 +112,10 @@ if (length($fontNamesIn)) {
     printLicenseHeader($F);
     printHeaderHead($F, "CSS", $familyNamesFileBase, <<END, "");
 #include <wtf/NeverDestroyed.h>
-#include <wtf/text/AtomicString.h>
+#include <wtf/text/AtomString.h>
 END
 
-    printMacros($F, "extern LazyNeverDestroyed<const WTF::AtomicString>", "", \%parameters);
+    printMacros($F, "extern MainThreadLazyNeverDestroyed<const WTF::AtomString>", "", \%parameters);
     print F "#endif\n\n";
 
     printInit($F, 1);
@@ -129,7 +129,7 @@ END
 
     print F StaticString::GenerateStrings(\%parameters);
 
-    printMacros($F, "LazyNeverDestroyed<const WTF::AtomicString>", "", \%parameters);
+    printMacros($F, "MainThreadLazyNeverDestroyed<const WTF::AtomString>", "", \%parameters);
 
     printInit($F, 0);
 
@@ -504,9 +504,9 @@ sub printFunctionTable
         }
 
         if ($enabledTags{$tagName}{mapToTagName}) {
-            print F "        { ${tagName}Tag, $enabledTags{$tagName}{mapToTagName}To${tagName}Constructor },\n";
+            print F "        { $parameters{namespace}Names::${tagName}Tag, $enabledTags{$tagName}{mapToTagName}To${tagName}Constructor },\n";
         } else {
-            print F "        { ${tagName}Tag, $tagConstructorMap{$tagName}Constructor },\n";
+            print F "        { $parameters{namespace}Names::${tagName}Tag, $tagConstructorMap{$tagName}Constructor },\n";
         }
 
         if ($conditional) {
@@ -542,9 +542,7 @@ sub printHeaderHead
     my ($F, $prefix, $namespace, $includes, $definitions) = @_;
 
     print F<<END
-#ifndef ${prefix}_${namespace}Names_h
-
-#define ${prefix}_${namespace}Names_h
+#pragma once
 
 $includes
 
@@ -583,7 +581,6 @@ sub printInit
     if ($isDefinition) {
         print F "\nWEBCORE_EXPORT void init();\n\n";
         print F "} }\n\n";
-        print F "#endif\n\n";
         return;
     }
 
@@ -596,7 +593,7 @@ print F "\nvoid init()
 
     // Use placement new to initialize the globals.
 
-    AtomicString::init();
+    AtomString::init();
 ";
 }
 
@@ -695,13 +692,10 @@ sub printTypeHelpersHeaderFile
     open F, ">$headerPath";
     printLicenseHeader($F);
 
-    print F "#ifndef ".$parameters{namespace}."ElementTypeHelpers_h\n";
-    print F "#define ".$parameters{namespace}."ElementTypeHelpers_h\n\n";
+    print F "#pragma once\n\n";
     print F "#include \"".$parameters{namespace}."Names.h\"\n\n";
 
     printTypeHelpers($F, \%allTags);
-
-    print F "#endif\n";
 
     close F;
 }
@@ -715,14 +709,14 @@ sub printNamesHeaderFile
     printLicenseHeader($F);
     printHeaderHead($F, "DOM", $parameters{namespace}, <<END, "class $parameters{namespace}QualifiedName : public QualifiedName { };\n\n");
 #include <wtf/NeverDestroyed.h>
-#include <wtf/text/AtomicString.h>
+#include <wtf/text/AtomString.h>
 #include "QualifiedName.h"
 END
 
     my $lowercaseNamespacePrefix = lc($parameters{namespacePrefix});
 
     print F "// Namespace\n";
-    print F "WEBCORE_EXPORT extern LazyNeverDestroyed<const WTF::AtomicString> ${lowercaseNamespacePrefix}NamespaceURI;\n\n";
+    print F "WEBCORE_EXPORT extern MainThreadLazyNeverDestroyed<const WTF::AtomString> ${lowercaseNamespacePrefix}NamespaceURI;\n\n";
 
     if (keys %allTags) {
         print F "// Tags\n";
@@ -760,7 +754,7 @@ sub printNamesCppFile
     
     my $lowercaseNamespacePrefix = lc($parameters{namespacePrefix});
 
-    print F "LazyNeverDestroyed<const AtomicString> ${lowercaseNamespacePrefix}NamespaceURI;\n\n";
+    print F "MainThreadLazyNeverDestroyed<const AtomString> ${lowercaseNamespacePrefix}NamespaceURI;\n\n";
 
     print F StaticString::GenerateStrings(\%allStrings);
 
@@ -773,7 +767,7 @@ sub printNamesCppFile
         print F "\n\nconst WebCore::$parameters{namespace}QualifiedName* const* get$parameters{namespace}Tags()\n";
         print F "{\n    static const WebCore::$parameters{namespace}QualifiedName* const $parameters{namespace}Tags[] = {\n";
         for my $name (sort keys %allTags) {
-            print F "        reinterpret_cast<const WebCore::$parameters{namespace}QualifiedName*>(&${name}Tag),\n";
+            print F "        &${name}Tag.get(),\n";
         }
         print F "    };\n";
         print F "    return $parameters{namespace}Tags;\n";
@@ -788,7 +782,7 @@ sub printNamesCppFile
         print F "\n\nconst WebCore::QualifiedName* const* get$parameters{namespace}Attrs()\n";
         print F "{\n    static const WebCore::QualifiedName* const $parameters{namespace}Attrs[] = {\n";
         for my $name (sort keys %allAttrs) {
-            print F "        reinterpret_cast<const WebCore::QualifiedName*>(&${name}Attr),\n";
+            print F "        &${name}Attr.get(),\n";
         }
         print F "    };\n";
         print F "    return $parameters{namespace}Attrs;\n";
@@ -797,7 +791,7 @@ sub printNamesCppFile
 
     printInit($F, 0);
 
-    print(F "    AtomicString ${lowercaseNamespacePrefix}NS(\"$parameters{namespaceURI}\", AtomicString::ConstructFromLiteral);\n\n");
+    print(F "    AtomString ${lowercaseNamespacePrefix}NS(\"$parameters{namespaceURI}\", AtomString::ConstructFromLiteral);\n\n");
 
     print(F "    // Namespace\n");
     print(F "    ${lowercaseNamespacePrefix}NamespaceURI.construct(${lowercaseNamespacePrefix}NS);\n");
@@ -919,7 +913,7 @@ print F <<END;
     };
 
     for (auto& entry : ${type}Table)
-        entry.targetAddress->construct(nullAtom(), AtomicString(&entry.name), $namespaceURI);
+        entry.targetAddress->construct(nullAtom(), AtomString(&entry.name), $namespaceURI);
 END
 
 }
@@ -967,9 +961,7 @@ END
 
 namespace WebCore {
 
-using namespace $parameters{namespace}Names;
-
-typedef Ref<$parameters{namespace}Element> (*$parameters{namespace}ConstructorFunction)(const QualifiedName&, Document&$formElementArgumentForDeclaration, bool createdByParser);
+using $parameters{namespace}ConstructorFunction = Ref<$parameters{namespace}Element> (*)(const QualifiedName&, Document&$formElementArgumentForDeclaration, bool createdByParser);
 
 END
     ;
@@ -1004,7 +996,7 @@ struct $parameters{namespace}ConstructorFunctionMapEntry {
     const QualifiedName* qualifiedName; // Use pointer instead of reference so that emptyValue() in HashMap is cheap to create.
 };
 
-static NEVER_INLINE HashMap<AtomicStringImpl*, $parameters{namespace}ConstructorFunctionMapEntry> create$parameters{namespace}FactoryMap()
+static NEVER_INLINE HashMap<AtomStringImpl*, $parameters{namespace}ConstructorFunctionMapEntry> create$parameters{namespace}FactoryMap()
 {
     struct TableEntry {
         const QualifiedName& name;
@@ -1020,19 +1012,19 @@ END
     print F <<END
     };
 
-    HashMap<AtomicStringImpl*, $parameters{namespace}ConstructorFunctionMapEntry> map;
+    HashMap<AtomStringImpl*, $parameters{namespace}ConstructorFunctionMapEntry> map;
     for (auto& entry : table)
         map.add(entry.name.localName().impl(), $parameters{namespace}ConstructorFunctionMapEntry(entry.function, entry.name));
     return map;
 }
 
-static $parameters{namespace}ConstructorFunctionMapEntry find$parameters{namespace}ElementConstructorFunction(const AtomicString& localName)
+static $parameters{namespace}ConstructorFunctionMapEntry find$parameters{namespace}ElementConstructorFunction(const AtomString& localName)
 {
     static const auto map = makeNeverDestroyed(create$parameters{namespace}FactoryMap());
     return map.get().get(localName.impl());
 }
 
-RefPtr<$parameters{namespace}Element> $parameters{namespace}ElementFactory::createKnownElement(const AtomicString& localName, Document& document$formElementArgumentForDefinition, bool createdByParser)
+RefPtr<$parameters{namespace}Element> $parameters{namespace}ElementFactory::createKnownElement(const AtomString& localName, Document& document$formElementArgumentForDefinition, bool createdByParser)
 {
     const $parameters{namespace}ConstructorFunctionMapEntry& entry = find$parameters{namespace}ElementConstructorFunction(localName);
     if (LIKELY(entry.function)) {
@@ -1051,7 +1043,7 @@ RefPtr<$parameters{namespace}Element> $parameters{namespace}ElementFactory::crea
     return nullptr;
 }
 
-Ref<$parameters{namespace}Element> $parameters{namespace}ElementFactory::createElement(const AtomicString& localName, Document& document$formElementArgumentForDefinition, bool createdByParser)
+Ref<$parameters{namespace}Element> $parameters{namespace}ElementFactory::createElement(const AtomString& localName, Document& document$formElementArgumentForDefinition, bool createdByParser)
 {
     const $parameters{namespace}ConstructorFunctionMapEntry& entry = find$parameters{namespace}ElementConstructorFunction(localName);
     if (LIKELY(entry.function)) {
@@ -1059,7 +1051,7 @@ Ref<$parameters{namespace}Element> $parameters{namespace}ElementFactory::createE
         const auto& name = *entry.qualifiedName;
         return entry.function($argumentList);
     }
-    return $parameters{fallbackInterfaceName}::create(QualifiedName(nullAtom(), localName, ${lowercaseNamespacePrefix}NamespaceURI), document);
+    return $parameters{fallbackInterfaceName}::create(QualifiedName(nullAtom(), localName, $parameters{namespace}Names::${lowercaseNamespacePrefix}NamespaceURI), document);
 }
 
 Ref<$parameters{namespace}Element> $parameters{namespace}ElementFactory::createElement(const QualifiedName& name, Document& document$formElementArgumentForDefinition, bool createdByParser)
@@ -1089,8 +1081,7 @@ sub printFactoryHeaderFile
     printLicenseHeader($F);
 
     print F<<END
-#ifndef $parameters{namespace}ElementFactory_h
-#define $parameters{namespace}ElementFactory_h
+#pragma once
 
 #include <wtf/Forward.h>
 
@@ -1107,7 +1098,7 @@ public:
 END
 ;
 
-print F "static RefPtr<$parameters{namespace}Element> createKnownElement(const AtomicString&, Document&";
+print F "static RefPtr<$parameters{namespace}Element> createKnownElement(const AtomString&, Document&";
 print F ", HTMLFormElement* = nullptr" if $parameters{namespace} eq "HTML";
 print F ", bool createdByParser = false);\n";
 
@@ -1115,7 +1106,7 @@ print F "static RefPtr<$parameters{namespace}Element> createKnownElement(const Q
 print F ", HTMLFormElement* = nullptr" if $parameters{namespace} eq "HTML";
 print F ", bool createdByParser = false);\n";
 
-print F "static Ref<$parameters{namespace}Element> createElement(const AtomicString&, Document&";
+print F "static Ref<$parameters{namespace}Element> createElement(const AtomString&, Document&";
 print F ", HTMLFormElement* = nullptr" if $parameters{namespace} eq "HTML";
 print F ", bool createdByParser = false);\n";
 
@@ -1127,8 +1118,6 @@ printf F<<END
 };
 
 }
-
-#endif // $parameters{namespace}ElementFactory_h
 
 END
 ;
@@ -1249,9 +1238,7 @@ using namespace JSC;
 
 namespace WebCore {
 
-using namespace $parameters{namespace}Names;
-
-typedef JSDOMObject* (*Create$parameters{namespace}ElementWrapperFunction)(JSDOMGlobalObject*, Ref<$parameters{namespace}Element>&&);
+using Create$parameters{namespace}ElementWrapperFunction = JSDOMObject* (*)(JSDOMGlobalObject*, Ref<$parameters{namespace}Element>&&);
 
 END
 ;
@@ -1260,7 +1247,7 @@ END
 
 print F <<END
 
-static NEVER_INLINE HashMap<AtomicStringImpl*, Create$parameters{namespace}ElementWrapperFunction> create$parameters{namespace}WrapperMap()
+static NEVER_INLINE HashMap<AtomStringImpl*, Create$parameters{namespace}ElementWrapperFunction> create$parameters{namespace}WrapperMap()
 {
     struct TableEntry {
         const QualifiedName& name;
@@ -1288,7 +1275,7 @@ END
             $ucTag = $enabledTags{$tag}{JSInterfaceName};
         }
 
-        print F "        { ${tag}Tag, create${ucTag}Wrapper },\n";
+        print F "        { $parameters{namespace}Names::${tag}Tag, create${ucTag}Wrapper },\n";
 
         if ($conditional) {
             print F "#endif\n";
@@ -1298,7 +1285,7 @@ END
     print F <<END
     };
 
-    HashMap<AtomicStringImpl*, Create$parameters{namespace}ElementWrapperFunction> map;
+    HashMap<AtomStringImpl*, Create$parameters{namespace}ElementWrapperFunction> map;
     for (auto& entry : table)
         map.add(entry.name.localName().impl(), entry.function);
     return map;
@@ -1342,10 +1329,7 @@ sub printWrapperFactoryHeaderFile
 
     printLicenseHeader($F);
 
-    print F "#ifndef JS$parameters{namespace}ElementWrapperFactory_h\n";
-    print F "#define JS$parameters{namespace}ElementWrapperFactory_h\n\n";
-
-    print F "#if $parameters{guardFactoryWith}\n" if $parameters{guardFactoryWith};
+    print F "#pragma once\n\n";
 
     print F <<END
 #include <wtf/Forward.h>
@@ -1362,10 +1346,6 @@ namespace WebCore {
  
 END
     ;
-
-    print F "#endif // $parameters{guardFactoryWith}\n\n" if $parameters{guardFactoryWith};
-
-    print F "#endif // JS$parameters{namespace}ElementWrapperFactory_h\n";
 
     close F;
 }

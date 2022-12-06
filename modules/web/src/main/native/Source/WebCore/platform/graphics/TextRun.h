@@ -24,6 +24,7 @@
 #ifndef TextRun_h
 #define TextRun_h
 
+#include "TabSize.h"
 #include "TextFlags.h"
 #include "WritingMode.h"
 #include <wtf/text/StringView.h>
@@ -35,11 +36,9 @@ class FloatRect;
 class FontCascade;
 class GraphicsContext;
 class GlyphBuffer;
-class GlyphToPathTranslator;
 class Font;
 
 struct GlyphData;
-struct WidthIterator;
 
 class TextRun {
     WTF_MAKE_FAST_ALLOCATED;
@@ -96,8 +95,8 @@ public:
     void setHorizontalGlyphStretch(float scale) { m_horizontalGlyphStretch = scale; }
 
     bool allowTabs() const { return m_allowTabs; }
-    unsigned tabSize() const { return m_tabSize; }
-    void setTabSize(bool, unsigned);
+    const TabSize& tabSize() const { return m_tabSize; }
+    void setTabSize(bool, const TabSize&);
 
     float xPos() const { return m_xpos; }
     void setXPos(float xPos) { m_xpos = xPos; }
@@ -119,7 +118,7 @@ public:
 private:
     String m_text;
 
-    unsigned m_tabSize;
+    TabSize m_tabSize;
 
     // m_xpos is the x position relative to the left start of the text line, not relative to the left
     // start of the containing block. In the case of right alignment or center alignment, left start of
@@ -137,7 +136,7 @@ private:
     unsigned m_disableSpacing : 1;
 };
 
-inline void TextRun::setTabSize(bool allow, unsigned size)
+inline void TextRun::setTabSize(bool allow, const TabSize& size)
 {
     m_allowTabs = allow;
     m_tabSize = size;

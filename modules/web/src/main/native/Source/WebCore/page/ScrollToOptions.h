@@ -28,17 +28,24 @@
 
 #pragma once
 
+#include "ScrollOptions.h"
 #include <cmath>
 #include <wtf/Optional.h>
 
 namespace WebCore {
 
-struct ScrollToOptions {
-    std::optional<double> left;
-    std::optional<double> top;
+struct ScrollToOptions : ScrollOptions {
+    Optional<double> left;
+    Optional<double> top;
+
+    ScrollToOptions() = default;
+    ScrollToOptions(double x, double y)
+        : left(x)
+        , top(y)
+    { }
 };
 
-inline double normalizeNonFiniteValueOrFallBackTo(std::optional<double> value, double fallbackValue)
+inline double normalizeNonFiniteValueOrFallBackTo(Optional<double> value, double fallbackValue)
 {
     // Normalize non-finite values (https://drafts.csswg.org/cssom-view/#normalize-non-finite-values).
     return value ? (std::isfinite(*value) ? *value : 0) : fallbackValue;
@@ -47,7 +54,7 @@ inline double normalizeNonFiniteValueOrFallBackTo(std::optional<double> value, d
 // FIXME(https://webkit.org/b/88339): Consider using FloatPoint or DoublePoint for fallback and return values.
 inline ScrollToOptions normalizeNonFiniteCoordinatesOrFallBackTo(const ScrollToOptions& value, double x, double y)
 {
-    ScrollToOptions options;
+    ScrollToOptions options = value;
     options.left = normalizeNonFiniteValueOrFallBackTo(value.left, x);
     options.top = normalizeNonFiniteValueOrFallBackTo(value.top, y);
     return options;

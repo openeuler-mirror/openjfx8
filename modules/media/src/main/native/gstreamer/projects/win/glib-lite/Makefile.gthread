@@ -20,7 +20,7 @@ COMPILER_FLAGS = -nologo -W3 -WX- -EHsc -GS -fp:precise -Gm- \
 INCLUDES = -I$(SRCBASE_DIR) \
            -I$(SRCBASE_DIR)/glib \
            -I$(SRCBASE_DIR)/gthread \
-           -I$(SRCBASE_DIR)/build/win32/vs100 \
+           -I$(SRCBASE_DIR)/build/win32/vs100
            -I$(INCLUDE1) \
            -I$(INCLUDE2) \
            -I$(INCLUDE3) \

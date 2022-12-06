@@ -26,15 +26,15 @@
  */
 
 #include "config.h"
+#include <wtf/ParallelJobsGeneric.h>
 
 #if ENABLE(THREADING_GENERIC)
 
-#include "ParallelJobs.h"
 #include <wtf/NumberOfCores.h>
 
 namespace WTF {
 
-Vector< RefPtr<ParallelEnvironment::ThreadPrivate> >* ParallelEnvironment::s_threadPool = 0;
+Vector< RefPtr<ParallelEnvironment::ThreadPrivate> >* ParallelEnvironment::s_threadPool = nullptr;
 
 ParallelEnvironment::ParallelEnvironment(ThreadFunction threadFunction, size_t sizeOfParameter, int requestedJobNumber) :
     m_threadFunction(threadFunction),

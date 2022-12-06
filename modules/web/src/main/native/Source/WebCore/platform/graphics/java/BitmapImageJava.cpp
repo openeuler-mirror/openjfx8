@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -29,7 +29,7 @@
 #include "NotImplemented.h"
 #include "GraphicsContext.h"
 #include "ImageObserver.h"
-#include <wtf/java/JavaEnv.h>
+#include "PlatformJavaClasses.h"
 #include "GraphicsContextJava.h"
 #include "PlatformContextJava.h"
 #include "ImageDecoderJava.h"
@@ -61,7 +61,7 @@ Ref<Image> BitmapImage::createFromName(const char* name)
         static_cast<ImageDecoderJava*>(img->m_source->m_decoder.get())->nativeDecoder(),
         midLoadFromResource,
         (jstring)String(name).toJavaString(env));
-    CheckAndClearException(env);
+    WTF::CheckAndClearException(env);
 
     // we have to make this call in order to initialize
     // internal flags that indicates the image readiness
@@ -88,7 +88,7 @@ Ref<Image> BitmapImage::createFromName(const char* name)
         midLoadFromResource,
         (jstring)resourceName,
         ptr_to_jlong(dataBuffer.get()));
-    CheckAndClearException(env);
+    WTF::CheckAndClearException(env);
     //From the upper call we got a callback [Java_com_sun_webkit_graphics_WCGraphicsManager_append]
     //that fills the buffer.
     img->setData(WTFMove(dataBuffer), true);

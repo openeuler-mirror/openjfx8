@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -53,7 +53,9 @@ import javafx.concurrent.Worker;
 import javafx.event.EventHandler;
 import javafx.event.EventType;
 import javafx.geometry.Rectangle2D;
+import javafx.print.JobSettings;
 import javafx.print.PageLayout;
+import javafx.print.PageRange;
 import javafx.print.PrinterJob;
 import javafx.scene.Node;
 import javafx.util.Callback;
@@ -418,7 +420,13 @@ final public class WebEngine {
 
     /**
      * Title of the current Web page. If the current page has no title,
-     * the value is {@code null}.
+     * the value is {@code null}. This property will be updated
+     * asynchronously some time after the page is loaded. Applications
+     * should not rely on any particular timing, but should listen for
+     * changes to this property, or bind to it, to know when it has
+     * been updated.
+     *
+     * @return the title property
      */
     public final ReadOnlyStringProperty titleProperty() { return title.getReadOnlyProperty(); }
 
@@ -1644,10 +1652,23 @@ final public class WebEngine {
         float height = (float) pl.getPrintableHeight();
         int pageCount = page.beginPrinting(width, height);
 
-        for (int i = 0; i < pageCount; i++) {
-            if (printStatusOK(job)) {
-                Node printable = new Printable(i, width);
-                job.printPage(printable);
+        JobSettings jobSettings = job.getJobSettings();
+        if (jobSettings.getPageRanges() != null) {
+            PageRange[] pageRanges = jobSettings.getPageRanges();
+            for (PageRange p : pageRanges) {
+                for (int i = p.getStartPage(); i <= p.getEndPage() && i <= pageCount; ++i) {
+                    if (printStatusOK(job)) {
+                        Node printable = new Printable(i - 1, width);
+                        job.printPage(printable);
+                    }
+                }
+            }
+        } else {
+            for (int i = 0; i < pageCount; i++) {
+                if (printStatusOK(job)) {
+                    Node printable = new Printable(i, width);
+                    job.printPage(printable);
+                }
             }
         }
         page.endPrinting();

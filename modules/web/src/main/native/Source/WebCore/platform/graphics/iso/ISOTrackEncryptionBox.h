@@ -29,22 +29,22 @@
 
 namespace WebCore {
 
-class ISOTrackEncryptionBox : public ISOFullBox {
+class WEBCORE_EXPORT ISOTrackEncryptionBox final : public ISOFullBox {
 public:
     static FourCC boxTypeName() { return "tenc"; }
 
-    std::optional<int8_t> defaultCryptByteBlock() const { return m_defaultCryptByteBlock; }
-    std::optional<int8_t> defaultSkipByteBlock() const { return m_defaultSkipByteBlock; }
+    Optional<int8_t> defaultCryptByteBlock() const { return m_defaultCryptByteBlock; }
+    Optional<int8_t> defaultSkipByteBlock() const { return m_defaultSkipByteBlock; }
     int8_t defaultIsProtected() const { return m_defaultIsProtected; }
     int8_t defaultPerSampleIVSize() const { return m_defaultPerSampleIVSize; }
     Vector<uint8_t> defaultKID() const { return m_defaultKID; }
     Vector<uint8_t> defaultConstantIV() const { return m_defaultConstantIV; }
 
-protected:
+private:
     bool parse(JSC::DataView&, unsigned& offset) override;
 
-    std::optional<int8_t> m_defaultCryptByteBlock;
-    std::optional<int8_t> m_defaultSkipByteBlock;
+    Optional<int8_t> m_defaultCryptByteBlock;
+    Optional<int8_t> m_defaultSkipByteBlock;
     int8_t m_defaultIsProtected { 0 };
     int8_t m_defaultPerSampleIVSize { 0 };
     Vector<uint8_t> m_defaultKID;

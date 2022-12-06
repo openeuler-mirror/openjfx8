@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -28,7 +28,7 @@
 #include "FocusController.h"
 #include "FrameView.h"
 #include "Image.h"
-#include <wtf/java/JavaEnv.h>
+#include "PlatformJavaClasses.h"
 #include "MouseEvent.h"
 #include "NotImplemented.h"
 #include "PluginWidgetJava.h"
@@ -160,7 +160,7 @@ PluginWidgetJava::PluginWidgetJava(
         m_paramValues(paramValues)
 {
     //TODO: have to be moved into setParent(non-null)
-    JNIEnv* env = WebCore_GetJavaEnv();
+    JNIEnv* env = WTF::GetJavaEnv();
     JLString urlJavaString(url.toJavaString(env));
     JLString mimeTypeJavaString(mimeType.toJavaString(env));
 
@@ -180,7 +180,7 @@ PluginWidgetJava::PluginWidgetJava(
                                                        (jstring)urlJavaString,
                                                        (jstring)mimeTypeJavaString,
                                                        pNames, pValues));
-    CheckAndClearException(env);
+    WTF::CheckAndClearException(env);
 
     ASSERT(obj);
     if (obj) {
@@ -202,7 +202,8 @@ PluginWidgetJava::~PluginWidgetJava() {
 void PluginWidgetJava::paint(
     GraphicsContext& context,
     const IntRect& rc /*page coordinates*/,
-    SecurityOriginPaintPolicy) {
+    SecurityOriginPaintPolicy,
+    EventRegionContext*) {
     //Widget::paint(context, rc);
     /*
     if (!m_isStarted) {
@@ -216,7 +217,7 @@ void PluginWidgetJava::paint(
 
     JLObject obj = platformWidget();
     if (obj){
-        JNIEnv *env = WebCore_GetJavaEnv();
+        JNIEnv *env = WTF::GetJavaEnv();
         context.save();
         env->CallVoidMethod(
             jobject(obj),
@@ -270,7 +271,7 @@ void PluginWidgetJava::updatePluginWidget()
     IntRect windowRect(frameView->contentsToWindow(frameRect().location()), frameRect().size());
     JLObject obj = platformWidget();
     if(obj){
-        JNIEnv *env = WebCore_GetJavaEnv();
+        JNIEnv *env = WTF::GetJavaEnv();
         env->CallVoidMethod(
             jobject(obj),
             pluginWidgetFWKSetNativeContainerBoundsMID,
@@ -314,7 +315,7 @@ void PluginWidgetJava::focusPluginElement(bool)
 
 void PluginWidgetJava::handleEvent(Event& event)
 {
-    JNIEnv* env = WebCore_GetJavaEnv();
+    JNIEnv* env = WTF::GetJavaEnv();
     JLObject obj = platformWidget();
     jboolean cancelBubble = false;
     if (obj && event.isMouseEvent()) {

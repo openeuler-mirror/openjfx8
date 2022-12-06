@@ -39,7 +39,7 @@ auto ContentLayerTextureMapperImpl::createFactory(Client& client) -> Factory
 {
     return Factory(
         [&client](ContentLayer&) {
-            return std::make_unique<ContentLayerTextureMapperImpl>(client);
+            return makeUnique<ContentLayerTextureMapperImpl>(client);
         });
 }
 
@@ -51,7 +51,7 @@ ContentLayerTextureMapperImpl::ContentLayerTextureMapperImpl(Client& client)
 
 ContentLayerTextureMapperImpl::~ContentLayerTextureMapperImpl()
 {
-#if !ASSERT_DISABLED
+#if ASSERT_ENABLED
     LockHolder locker(m_client.lock);
     ASSERT(!m_client.client);
 #endif
@@ -61,6 +61,12 @@ void ContentLayerTextureMapperImpl::invalidateClient()
 {
     LockHolder locker(m_client.lock);
     m_client.client = nullptr;
+}
+
+bool ContentLayerTextureMapperImpl::flushUpdate()
+{
+    LockHolder locker(m_client.lock);
+    return std::exchange(m_client.pendingUpdate, false);
 }
 
 void ContentLayerTextureMapperImpl::swapBuffersIfNeeded()

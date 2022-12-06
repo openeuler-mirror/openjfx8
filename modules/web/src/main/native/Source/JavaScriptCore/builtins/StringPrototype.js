@@ -29,18 +29,39 @@ function match(regexp)
 {
     "use strict";
 
-    if (this == null)
+    if (@isUndefinedOrNull(this))
         @throwTypeError("String.prototype.match requires that |this| not be null or undefined");
 
-    if (regexp != null) {
-        var matcher = regexp.@matchSymbol;
-        if (matcher != @undefined)
+    if (!@isUndefinedOrNull(regexp)) {
+        var matcher = regexp.@@match;
+        if (!@isUndefinedOrNull(matcher))
             return matcher.@call(regexp, this);
     }
 
-    let thisString = @toString(this);
-    let createdRegExp = @regExpCreate(regexp, @undefined);
-    return createdRegExp.@matchSymbol(thisString);
+    var thisString = @toString(this);
+    var createdRegExp = @regExpCreate(regexp, @undefined);
+    return createdRegExp.@@match(thisString);
+}
+
+function matchAll(arg)
+{
+    "use strict";
+
+    if (@isUndefinedOrNull(this))
+        @throwTypeError("String.prototype.matchAll requires |this| not to be null nor undefined");
+
+    if (!@isUndefinedOrNull(arg)) {
+        if (@isRegExp(arg) && !@stringIncludesInternal.@call(@toString(arg.flags), "g"))
+            @throwTypeError("String.prototype.matchAll argument must not be a non-global regular expression");
+
+        var matcher = arg.@@matchAll;
+        if (!@isUndefinedOrNull(matcher))
+            return matcher.@call(arg, this);
+    }
+
+    var string = @toString(this);
+    var regExp = @regExpCreate(arg, "g");
+    return regExp.@@matchAll(string);
 }
 
 @globalPrivate
@@ -92,7 +113,7 @@ function repeatCharactersSlowPath(string, count)
         operand += operand;
     }
     if (remainingCharacters)
-        result += @stringSubstrInternal.@call(string, 0, remainingCharacters);
+        result += @stringSubstringInternal.@call(string, 0, remainingCharacters);
     return result;
 }
 
@@ -101,7 +122,7 @@ function repeat(count)
 {
     "use strict";
 
-    if (this == null)
+    if (@isUndefinedOrNull(this))
         @throwTypeError("String.prototype.repeat requires that |this| not be null or undefined");
 
     var string = @toString(this);
@@ -120,7 +141,7 @@ function padStart(maxLength/*, fillString*/)
 {
     "use strict";
 
-    if (this == null)
+    if (@isUndefinedOrNull(this))
         @throwTypeError("String.prototype.padStart requires that |this| not be null or undefined");
 
     var string = @toString(this);
@@ -157,7 +178,7 @@ function padEnd(maxLength/*, fillString*/)
 {
     "use strict";
 
-    if (this == null)
+    if (@isUndefinedOrNull(this))
         @throwTypeError("String.prototype.padEnd requires that |this| not be null or undefined");
 
     var string = @toString(this);
@@ -201,15 +222,15 @@ function hasObservableSideEffectsForStringReplace(regexp, replacer)
     if (replacer !== @regExpPrototypeSymbolReplace)
         return true;
     
-    let regexpExec = @tryGetById(regexp, "exec");
+    var regexpExec = @tryGetById(regexp, "exec");
     if (regexpExec !== @regExpBuiltinExec)
         return true;
 
-    let regexpGlobal = @tryGetById(regexp, "global");
+    var regexpGlobal = @tryGetById(regexp, "global");
     if (regexpGlobal !== @regExpProtoGlobalGetter)
         return true;
 
-    let regexpUnicode = @tryGetById(regexp, "unicode");
+    var regexpUnicode = @tryGetById(regexp, "unicode");
     if (regexpUnicode !== @regExpProtoUnicodeGetter)
         return true;
 
@@ -221,92 +242,75 @@ function replace(search, replace)
 {
     "use strict";
 
-    if (this == null)
+    if (@isUndefinedOrNull(this))
         @throwTypeError("String.prototype.replace requires that |this| not be null or undefined");
 
-    if (search != null) {
-        let replacer = search.@replaceSymbol;
-        if (replacer !== @undefined) {
+    if (!@isUndefinedOrNull(search)) {
+        var replacer = search.@@replace;
+        if (!@isUndefinedOrNull(replacer)) {
             if (!@hasObservableSideEffectsForStringReplace(search, replacer))
                 return @toString(this).@replaceUsingRegExp(search, replace);
             return replacer.@call(search, this, replace);
         }
     }
 
-    let thisString = @toString(this);
-    let searchString = @toString(search);
+    var thisString = @toString(this);
+    var searchString = @toString(search);
     return thisString.@replaceUsingStringSearch(searchString, replace);
 }
-    
-@globalPrivate
-function getDefaultCollator()
+
+function replaceAll(search, replace)
 {
     "use strict";
 
-    return @getDefaultCollator.collator || (@getDefaultCollator.collator = new @Collator());
-}
-    
-function localeCompare(that/*, locales, options */)
-{
-    "use strict";
+    if (@isUndefinedOrNull(this))
+        @throwTypeError("String.prototype.replaceAll requires |this| not to be null nor undefined");
 
-    // 13.1.1 String.prototype.localeCompare (that [, locales [, options ]]) (ECMA-402 2.0)
-    // http://ecma-international.org/publications/standards/Ecma-402.htm
+    if (!@isUndefinedOrNull(search)) {
+        if (@isRegExp(search) && !@stringIncludesInternal.@call(@toString(search.flags), "g"))
+            @throwTypeError("String.prototype.replaceAll argument must not be a non-global regular expression");
 
-    // 1. Let O be RequireObjectCoercible(this value).
-    if (this == null)
-        @throwTypeError("String.prototype.localeCompare requires that |this| not be null or undefined");
+        var replacer = search.@@replace;
+        if (!@isUndefinedOrNull(replacer)) {
+            if (!@hasObservableSideEffectsForStringReplace(search, replacer))
+                return @toString(this).@replaceUsingRegExp(search, replace);
+            return replacer.@call(search, this, replace);
+        }
+    }
 
-    // 2. Let S be ToString(O).
-    // 3. ReturnIfAbrupt(S).
     var thisString = @toString(this);
-
-    // 4. Let That be ToString(that).
-    // 5. ReturnIfAbrupt(That).
-    var thatString = @toString(that);
-
-    // Avoid creating a new collator every time for defaults.
-    var locales = @argument(1);
-    var options = @argument(2);
-    if (locales === @undefined && options === @undefined)
-        return @getDefaultCollator().compare(thisString, thatString);
-
-    // 6. Let collator be Construct(%Collator%, «locales, options»).
-    // 7. ReturnIfAbrupt(collator).
-    var collator = new @Collator(locales, options);
-
-    // 8. Return CompareStrings(collator, S, That).
-    return collator.compare(thisString, thatString);
+    var searchString = @toString(search);
+    return thisString.@replaceAllUsingStringSearch(searchString, replace);
 }
 
 function search(regexp)
 {
     "use strict";
 
-    if (this == null)
+    if (@isUndefinedOrNull(this))
         @throwTypeError("String.prototype.search requires that |this| not be null or undefined");
 
-    if (regexp != null) {
-        var searcher = regexp.@searchSymbol;
-        if (searcher != @undefined)
+    if (!@isUndefinedOrNull(regexp)) {
+        var searcher = regexp.@@search;
+        if (!@isUndefinedOrNull(searcher))
             return searcher.@call(regexp, this);
     }
 
     var thisString = @toString(this);
     var createdRegExp = @regExpCreate(regexp, @undefined);
-    return createdRegExp.@searchSymbol(thisString);
+    return createdRegExp.@@search(thisString);
 }
 
 function split(separator, limit)
 {
     "use strict";
     
-    if (this == null)
+    if (@isUndefinedOrNull(this))
         @throwTypeError("String.prototype.split requires that |this| not be null or undefined");
     
-    if (separator != null) {
-        var splitter = separator.@splitSymbol;
-        if (splitter != @undefined)
+    if (!@isUndefinedOrNull(separator)) {
+        var splitter = separator.@@split;
+        if (!@isUndefinedOrNull(splitter))
             return splitter.@call(separator, this, limit);
     }
     
@@ -328,7 +332,7 @@ function concat(arg /* ... */)
 {
     "use strict";
 
-    if (this == null)
+    if (@isUndefinedOrNull(this))
         @throwTypeError("String.prototype.concat requires that |this| not be null or undefined");
 
     if (@argumentCount() === 1)
@@ -340,18 +344,18 @@ function concat(arg /* ... */)
 function createHTML(func, string, tag, attribute, value)
 {
     "use strict";
-    if (string == null)
+    if (@isUndefinedOrNull(string))
         @throwTypeError(`${func} requires that |this| not be null or undefined`);
-    let S = @toString(string);
-    let p1 = "<" + tag;
+    var S = @toString(string);
+    var p1 = "<" + tag;
     if (attribute) {
-        let V = @toString(value);
-        let escapedV = V.@replaceUsingRegExp(/"/g, '&quot;');
+        var V = @toString(value);
+        var escapedV = V.@replaceUsingRegExp(/"/g, '&quot;');
         p1 = p1 + " " + @toString(attribute) + '="' + escapedV + '"'
     }
-    let p2 = p1 + ">"
-    let p3 = p2 + S;
-    let p4 = p3 + "</" + tag + ">";
+    var p2 = p1 + ">"
+    var p3 = p2 + S;
+    var p4 = p3 + "</" + tag + ">";
     return p4;
 }
 

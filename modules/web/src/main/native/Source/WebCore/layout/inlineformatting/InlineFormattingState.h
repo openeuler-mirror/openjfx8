@@ -27,28 +27,54 @@
 
 #if ENABLE(LAYOUT_FORMATTING_CONTEXT)
 
+#include "DisplayInlineContent.h"
 #include "FormattingState.h"
-#include "Runs.h"
+#include "InlineItem.h"
 #include <wtf/IsoMalloc.h>
 
 namespace WebCore {
-
 namespace Layout {
+
+using InlineItems = Vector<InlineItem>;
 
 // InlineFormattingState holds the state for a particular inline formatting context tree.
 class InlineFormattingState : public FormattingState {
     WTF_MAKE_ISO_ALLOCATED(InlineFormattingState);
 public:
-    InlineFormattingState(Ref<FloatingState>&&, const LayoutContext&);
-    virtual ~InlineFormattingState();
+    InlineFormattingState(Ref<FloatingState>&&, LayoutState&);
+    ~InlineFormattingState();
 
-    // This is temporary. We need to construct a display tree context for inlines.
-    void addLayoutRuns(Vector<LayoutRun>&& layoutRuns) { m_layoutRuns = WTFMove(layoutRuns); }
-    const Vector<LayoutRun>& layoutRuns() const { return m_layoutRuns; }
+    InlineItems& inlineItems() { return m_inlineItems; }
+    const InlineItems& inlineItems() const { return m_inlineItems; }
+    void addInlineItem(InlineItem&& inlineItem) { m_inlineItems.append(WTFMove(inlineItem)); }
+
+    const Display::InlineContent* displayInlineContent() const { return m_displayInlineContent.get(); }
+    Display::InlineContent& ensureDisplayInlineContent();
+
+    void clearDisplayInlineContent() { m_displayInlineContent = nullptr; }
+    void shrinkDisplayInlineContent();
 
 private:
-    Vector<LayoutRun> m_layoutRuns;
+    // Cacheable input to line layout.
+    InlineItems m_inlineItems;
+
+    RefPtr<Display::InlineContent> m_displayInlineContent;
 };
+
+inline Display::InlineContent& InlineFormattingState::ensureDisplayInlineContent()
+{
+    if (!m_displayInlineContent)
+        m_displayInlineContent = adoptRef(*new Display::InlineContent);
+    return *m_displayInlineContent;
+}
+
+inline void InlineFormattingState::shrinkDisplayInlineContent()
+{
+    if (!m_displayInlineContent)
+        return;
+    m_displayInlineContent->runs.shrinkToFit();
+    m_displayInlineContent->lineBoxes.shrinkToFit();
+}
 
 }
 }

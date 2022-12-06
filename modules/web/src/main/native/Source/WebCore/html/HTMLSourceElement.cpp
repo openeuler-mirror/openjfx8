@@ -28,7 +28,7 @@
 
 #include "Event.h"
 #include "EventNames.h"
-#include "HTMLDocument.h"
+#include "HTMLImageElement.h"
 #include "HTMLNames.h"
 #include "HTMLPictureElement.h"
 #include "Logging.h"
@@ -48,7 +48,7 @@ using namespace HTMLNames;
 
 inline HTMLSourceElement::HTMLSourceElement(const QualifiedName& tagName, Document& document)
     : HTMLElement(tagName, document)
-    , ActiveDOMObject(&document)
+    , ActiveDOMObject(document)
     , m_errorEventTimer(*this, &HTMLSourceElement::errorEventTimerFired)
 {
     LOG(Media, "HTMLSourceElement::HTMLSourceElement - %p", this);
@@ -77,8 +77,16 @@ Node::InsertedIntoAncestorResult HTMLSourceElement::insertedIntoAncestor(Inserti
             downcast<HTMLMediaElement>(*parent).sourceWasAdded(*this);
         else
 #endif
-        if (is<HTMLPictureElement>(*parent))
-            downcast<HTMLPictureElement>(*parent).sourcesChanged();
+        if (is<HTMLPictureElement>(*parent)) {
+            // The new source element only is a relevant mutation if it precedes any img element.
+            m_shouldCallSourcesChanged = true;
+            for (const Node* node = previousSibling(); node; node = node->previousSibling()) {
+                if (is<HTMLImageElement>(*node))
+                    m_shouldCallSourcesChanged = false;
+            }
+            if (m_shouldCallSourcesChanged)
+                downcast<HTMLPictureElement>(*parent).sourcesChanged();
+        }
     }
     return InsertedIntoAncestorResult::Done;
 }
@@ -92,8 +100,10 @@ void HTMLSourceElement::removedFromAncestor(RemovalType removalType, ContainerNo
             downcast<HTMLMediaElement>(oldParentOfRemovedTree).sourceWasRemoved(*this);
         else
 #endif
-        if (is<HTMLPictureElement>(oldParentOfRemovedTree))
+        if (m_shouldCallSourcesChanged) {
             downcast<HTMLPictureElement>(oldParentOfRemovedTree).sourcesChanged();
+            m_shouldCallSourcesChanged = false;
+        }
     }
 }
 
@@ -128,15 +138,10 @@ const char* HTMLSourceElement::activeDOMObjectName() const
     return "HTMLSourceElement";
 }
 
-bool HTMLSourceElement::canSuspendForDocumentSuspension() const
-{
-    return true;
-}
-
 void HTMLSourceElement::suspend(ReasonForSuspension reason)
 {
     // FIXME: Shouldn't this also stop the timer for PageWillBeSuspended?
-    if (reason == ReasonForSuspension::PageCache) {
+    if (reason == ReasonForSuspension::BackForwardCache) {
         m_shouldRescheduleErrorEventOnResume = m_errorEventTimer.isActive();
         m_errorEventTimer.stop();
     }
@@ -155,14 +160,14 @@ void HTMLSourceElement::stop()
     cancelPendingErrorEvent();
 }
 
-void HTMLSourceElement::parseAttribute(const QualifiedName& name, const AtomicString& value)
+void HTMLSourceElement::parseAttribute(const QualifiedName& name, const AtomString& value)
 {
     HTMLElement::parseAttribute(name, value);
     if (name == srcsetAttr || name == sizesAttr || name == mediaAttr || name == typeAttr) {
         if (name == mediaAttr)
-            m_cachedParsedMediaAttribute = std::nullopt;
+            m_cachedParsedMediaAttribute = WTF::nullopt;
         auto parent = makeRefPtr(parentNode());
-        if (is<HTMLPictureElement>(parent))
+        if (m_shouldCallSourcesChanged)
             downcast<HTMLPictureElement>(*parent).sourcesChanged();
     }
 }

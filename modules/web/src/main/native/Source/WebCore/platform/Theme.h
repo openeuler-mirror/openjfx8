@@ -27,7 +27,6 @@
 
 #include "ThemeTypes.h"
 #include <wtf/Forward.h>
-#include <wtf/Optional.h>
 
 namespace WebCore {
 
@@ -52,13 +51,13 @@ public:
     virtual int baselinePositionAdjustment(ControlPart) const;
 
     // The font description result should have a zoomed font size.
-    virtual std::optional<FontCascadeDescription> controlFont(ControlPart, const FontCascade&, float zoomFactor) const;
+    virtual Optional<FontCascadeDescription> controlFont(ControlPart, const FontCascade&, float zoomFactor) const;
 
     // The size here is in zoomed coordinates already. If a new size is returned, it also needs to be in zoomed coordinates.
     virtual LengthSize controlSize(ControlPart, const FontCascade&, const LengthSize& zoomedSize, float zoomFactor) const;
 
     // Returns the minimum size for a control in zoomed coordinates.
-    virtual LengthSize minimumControlSize(ControlPart, const FontCascade&, float zoomFactor) const;
+    virtual LengthSize minimumControlSize(ControlPart, const FontCascade&, const LengthSize& zoomedSize, float zoomFactor) const;
 
     // Allows the theme to modify the existing padding/border.
     virtual LengthBox controlPadding(ControlPart, const FontCascade&, const LengthBox& zoomedBox, float zoomFactor) const;

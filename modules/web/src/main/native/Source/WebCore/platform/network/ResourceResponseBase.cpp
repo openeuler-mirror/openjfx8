@@ -41,13 +41,28 @@ namespace WebCore {
 
 bool isScriptAllowedByNosniff(const ResourceResponse& response)
 {
-    if (parseContentTypeOptionsHeader(response.httpHeaderField(HTTPHeaderName::XContentTypeOptions)) != ContentTypeOptionsNosniff)
+    if (parseContentTypeOptionsHeader(response.httpHeaderField(HTTPHeaderName::XContentTypeOptions)) != ContentTypeOptionsDisposition::Nosniff)
         return true;
     String mimeType = extractMIMETypeFromMediaType(response.httpHeaderField(HTTPHeaderName::ContentType));
     return MIMETypeRegistry::isSupportedJavaScriptMIMEType(mimeType);
 }
 
-ResourceResponseBase::ResourceResponseBase() = default;
+ResourceResponseBase::ResourceResponseBase()
+    : m_haveParsedCacheControlHeader(false)
+    , m_haveParsedAgeHeader(false)
+    , m_haveParsedDateHeader(false)
+    , m_haveParsedExpiresHeader(false)
+    , m_haveParsedLastModifiedHeader(false)
+    , m_haveParsedContentRangeHeader(false)
+    , m_isRedirected(false)
+    , m_isRangeRequested(false)
+    , m_isNull(true)
+    , m_usedLegacyTLS(UsedLegacyTLS::No)
+    , m_tainting(Tainting::Basic)
+    , m_source(Source::Unknown)
+    , m_type(Type::Default)
+{
+}
 
 ResourceResponseBase::ResourceResponseBase(const URL& url, const String& mimeType, long long expectedLength, const String& textEncodingName)
     : m_url(url)
@@ -55,7 +70,19 @@ ResourceResponseBase::ResourceResponseBase(const URL& url, const String& mimeTyp
     , m_expectedContentLength(expectedLength)
     , m_textEncodingName(textEncodingName)
     , m_certificateInfo(CertificateInfo()) // Empty but valid for synthetic responses.
+    , m_haveParsedCacheControlHeader(false)
+    , m_haveParsedAgeHeader(false)
+    , m_haveParsedDateHeader(false)
+    , m_haveParsedExpiresHeader(false)
+    , m_haveParsedLastModifiedHeader(false)
+    , m_haveParsedContentRangeHeader(false)
+    , m_isRedirected(false)
+    , m_isRangeRequested(false)
     , m_isNull(false)
+    , m_usedLegacyTLS(UsedLegacyTLS::No)
+    , m_tainting(Tainting::Basic)
+    , m_source(Source::Unknown)
+    , m_type(Type::Default)
 {
 }
 
@@ -73,10 +100,12 @@ ResourceResponseBase::CrossThreadData ResourceResponseBase::crossThreadData() co
     data.httpVersion = httpVersion().isolatedCopy();
 
     data.httpHeaderFields = httpHeaderFields().isolatedCopy();
-    data.networkLoadMetrics = m_networkLoadMetrics.isolatedCopy();
+    if (m_networkLoadMetrics)
+        data.networkLoadMetrics = m_networkLoadMetrics->isolatedCopy();
     data.type = m_type;
     data.tainting = m_tainting;
     data.isRedirected = m_isRedirected;
+    data.isRangeRequested = m_isRangeRequested;
 
     return data;
 }
@@ -95,15 +124,31 @@ ResourceResponse ResourceResponseBase::fromCrossThreadData(CrossThreadData&& dat
     response.setHTTPVersion(data.httpVersion);
 
     response.m_httpHeaderFields = WTFMove(data.httpHeaderFields);
-    response.m_networkLoadMetrics = data.networkLoadMetrics;
+    if (data.networkLoadMetrics)
+        response.m_networkLoadMetrics = Box<NetworkLoadMetrics>::create(WTFMove(data.networkLoadMetrics.value()));
+    else
+        response.m_networkLoadMetrics = nullptr;
     response.m_type = data.type;
     response.m_tainting = data.tainting;
     response.m_isRedirected = data.isRedirected;
+    response.m_isRangeRequested = data.isRangeRequested;
 
     return response;
 }
 
-ResourceResponse ResourceResponseBase::filter(const ResourceResponse& response)
+ResourceResponse ResourceResponseBase::syntheticRedirectResponse(const URL& fromURL, const URL& toURL)
+{
+    ResourceResponse redirectResponse;
+    redirectResponse.setURL(fromURL);
+    redirectResponse.setHTTPStatusCode(302);
+    redirectResponse.setHTTPVersion("HTTP/1.1"_s);
+    redirectResponse.setHTTPHeaderField(HTTPHeaderName::Location, toURL.string());
+    redirectResponse.setHTTPHeaderField(HTTPHeaderName::CacheControl, "no-store"_s);
+
+    return redirectResponse;
+}
+
+ResourceResponse ResourceResponseBase::filter(const ResourceResponse& response, PerformExposeAllHeadersCheck performCheck)
 {
     if (response.tainting() == Tainting::Opaque) {
         ResourceResponse opaqueResponse;
@@ -124,18 +169,21 @@ ResourceResponse ResourceResponseBase::filter(const ResourceResponse& response)
     // Let's initialize filteredResponse to remove some header fields.
     filteredResponse.lazyInit(AllFields);
 
+    filteredResponse.m_httpHeaderFields.remove(HTTPHeaderName::SetCookie);
+    filteredResponse.m_httpHeaderFields.remove(HTTPHeaderName::SetCookie2);
+
     if (response.tainting() == Tainting::Basic) {
         filteredResponse.setType(Type::Basic);
-        filteredResponse.m_httpHeaderFields.remove(HTTPHeaderName::SetCookie);
-        filteredResponse.m_httpHeaderFields.remove(HTTPHeaderName::SetCookie2);
         return filteredResponse;
     }
 
     ASSERT(response.tainting() == Tainting::Cors);
     filteredResponse.setType(Type::Cors);
 
-    HTTPHeaderSet accessControlExposeHeaderSet;
-    parseAccessControlExposeHeadersAllowList(response.httpHeaderField(HTTPHeaderName::AccessControlExposeHeaders), accessControlExposeHeaderSet);
+    auto accessControlExposeHeaderSet = parseAccessControlAllowList<ASCIICaseInsensitiveHash>(response.httpHeaderField(HTTPHeaderName::AccessControlExposeHeaders)).valueOr(HashSet<String, ASCIICaseInsensitiveHash> { });
+    if (performCheck == PerformExposeAllHeadersCheck::Yes && accessControlExposeHeaderSet.contains("*"))
+        return filteredResponse;
+
     filteredResponse.m_httpHeaderFields.uncommonHeaders().removeAllMatching([&](auto& entry) {
         return !isCrossOriginSafeHeader(entry.key, accessControlExposeHeaderSet);
     });
@@ -146,8 +194,7 @@ ResourceResponse ResourceResponseBase::filter(const ResourceResponse& response)
     return filteredResponse;
 }
 
-// FIXME: Name does not make it clear this is true for HTTPS!
-bool ResourceResponseBase::isHTTP() const
+bool ResourceResponseBase::isInHTTPFamily() const
 {
     lazyInit(CommonFieldsOnly);
 
@@ -248,7 +295,7 @@ String ResourceResponseBase::sanitizeSuggestedFilename(const String& suggestedFi
     if (suggestedFilename.isEmpty())
         return suggestedFilename;
 
-    ResourceResponse response(URL(ParsedURLString, "http://example.com/"), String(), -1, String());
+    ResourceResponse response(URL({ }, "http://example.com/"), String(), -1, String());
     response.setHTTPStatusCode(200);
     String escapedSuggestedFilename = String(suggestedFilename).replace('\\', "\\\\").replace('"', "\\\"");
     String value = makeString("attachment; filename=\"", escapedSuggestedFilename, '"');
@@ -277,6 +324,11 @@ void ResourceResponseBase::setHTTPStatusCode(int statusCode)
     m_isNull = false;
 
     // FIXME: Should invalidate or update platform response if present.
+}
+
+bool ResourceResponseBase::isRedirection() const
+{
+    return isRedirectionStatusCode(m_httpStatusCode);
 }
 
 const String& ResourceResponseBase::httpStatusText() const
@@ -368,6 +420,7 @@ static bool isSafeCrossOriginResponseHeader(HTTPHeaderName name)
         || name == HTTPHeaderName::LastEventID
         || name == HTTPHeaderName::LastModified
         || name == HTTPHeaderName::Link
+        || name == HTTPHeaderName::Location
         || name == HTTPHeaderName::Pragma
         || name == HTTPHeaderName::Range
         || name == HTTPHeaderName::ReferrerPolicy
@@ -381,35 +434,39 @@ static bool isSafeCrossOriginResponseHeader(HTTPHeaderName name)
         || name == HTTPHeaderName::XContentTypeOptions
         || name == HTTPHeaderName::XDNSPrefetchControl
         || name == HTTPHeaderName::XFrameOptions
-        || name == HTTPHeaderName::XWebKitCSP
-        || name == HTTPHeaderName::XWebKitCSPReportOnly
         || name == HTTPHeaderName::XXSSProtection;
 }
 
 void ResourceResponseBase::sanitizeHTTPHeaderFieldsAccordingToTainting()
 {
-    switch (m_tainting) {
+    // FIXME: we don't really need to construct a Tainting here, this is just a workaround
+    // for a GCC 10 bug (see https://gcc.gnu.org/bugzilla/show_bug.cgi?id=97634), that will
+    // be removed once the bug is fixed.
+    switch (Tainting(m_tainting)) {
     case ResourceResponse::Tainting::Basic:
         return;
     case ResourceResponse::Tainting::Cors: {
+        auto corsSafeHeaderSet = parseAccessControlAllowList<ASCIICaseInsensitiveHash>(httpHeaderField(HTTPHeaderName::AccessControlExposeHeaders)).valueOr(HashSet<String, ASCIICaseInsensitiveHash> { });
+        if (corsSafeHeaderSet.contains("*"))
+            return;
+
         HTTPHeaderMap filteredHeaders;
         for (auto& header : m_httpHeaderFields.commonHeaders()) {
             if (isSafeCrossOriginResponseHeader(header.key))
                 filteredHeaders.add(header.key, WTFMove(header.value));
         }
-        if (auto corsSafeHeaderSet = parseAccessControlAllowList(httpHeaderField(HTTPHeaderName::AccessControlExposeHeaders))) {
-            for (auto& headerName : *corsSafeHeaderSet) {
-                if (!filteredHeaders.contains(headerName)) {
-                    auto value = m_httpHeaderFields.get(headerName);
-                    if (!value.isNull())
-                        filteredHeaders.add(headerName, value);
-                }
+        for (auto& headerName : corsSafeHeaderSet) {
+            if (!filteredHeaders.contains(headerName)) {
+                auto value = m_httpHeaderFields.get(headerName);
+                if (!value.isNull())
+                    filteredHeaders.add(headerName, value);
             }
         }
         m_httpHeaderFields = WTFMove(filteredHeaders);
         return;
     }
-    case ResourceResponse::Tainting::Opaque: {
+    case ResourceResponse::Tainting::Opaque:
+    case ResourceResponse::Tainting::Opaqueredirect: {
         HTTPHeaderMap filteredHeaders;
         for (auto& header : m_httpHeaderFields.commonHeaders()) {
             if (isSafeCrossOriginResponseHeader(header.key))
@@ -417,11 +474,6 @@ void ResourceResponseBase::sanitizeHTTPHeaderFieldsAccordingToTainting()
         }
         m_httpHeaderFields = WTFMove(filteredHeaders);
         return;
-    }
-    case ResourceResponse::Tainting::Opaqueredirect: {
-        auto location = httpHeaderField(HTTPHeaderName::Location);
-        m_httpHeaderFields.clear();
-        m_httpHeaderFields.add(HTTPHeaderName::Location, WTFMove(location));
     }
     }
 }
@@ -619,18 +671,25 @@ bool ResourceResponseBase::hasCacheValidatorFields() const
     return !m_httpHeaderFields.get(HTTPHeaderName::LastModified).isEmpty() || !m_httpHeaderFields.get(HTTPHeaderName::ETag).isEmpty();
 }
 
-std::optional<Seconds> ResourceResponseBase::cacheControlMaxAge() const
+Optional<Seconds> ResourceResponseBase::cacheControlMaxAge() const
 {
     if (!m_haveParsedCacheControlHeader)
         parseCacheControlDirectives();
     return m_cacheControlDirectives.maxAge;
 }
 
-static std::optional<WallTime> parseDateValueInHeader(const HTTPHeaderMap& headers, HTTPHeaderName headerName)
+Optional<Seconds> ResourceResponseBase::cacheControlStaleWhileRevalidate() const
+{
+    if (!m_haveParsedCacheControlHeader)
+        parseCacheControlDirectives();
+    return m_cacheControlDirectives.staleWhileRevalidate;
+}
+
+static Optional<WallTime> parseDateValueInHeader(const HTTPHeaderMap& headers, HTTPHeaderName headerName)
 {
     String headerValue = headers.get(headerName);
     if (headerValue.isEmpty())
-        return std::nullopt;
+        return WTF::nullopt;
     // This handles all date formats required by RFC2616:
     // Sun, 06 Nov 1994 08:49:37 GMT  ; RFC 822, updated by RFC 1123
     // Sunday, 06-Nov-94 08:49:37 GMT ; RFC 850, obsoleted by RFC 1036
@@ -638,7 +697,7 @@ static std::optional<WallTime> parseDateValueInHeader(const HTTPHeaderMap& heade
     return parseHTTPDate(headerValue);
 }
 
-std::optional<WallTime> ResourceResponseBase::date() const
+Optional<WallTime> ResourceResponseBase::date() const
 {
     lazyInit(CommonFieldsOnly);
 
@@ -649,7 +708,7 @@ std::optional<WallTime> ResourceResponseBase::date() const
     return m_date;
 }
 
-std::optional<Seconds> ResourceResponseBase::age() const
+Optional<Seconds> ResourceResponseBase::age() const
 {
     lazyInit(CommonFieldsOnly);
 
@@ -664,7 +723,7 @@ std::optional<Seconds> ResourceResponseBase::age() const
     return m_age;
 }
 
-std::optional<WallTime> ResourceResponseBase::expires() const
+Optional<WallTime> ResourceResponseBase::expires() const
 {
     lazyInit(CommonFieldsOnly);
 
@@ -675,7 +734,7 @@ std::optional<WallTime> ResourceResponseBase::expires() const
     return m_expires;
 }
 
-std::optional<WallTime> ResourceResponseBase::lastModified() const
+Optional<WallTime> ResourceResponseBase::lastModified() const
 {
     lazyInit(CommonFieldsOnly);
 
@@ -686,7 +745,7 @@ std::optional<WallTime> ResourceResponseBase::lastModified() const
         // an invalid value (rdar://problem/22352838).
         const WallTime epoch = WallTime::fromRawSeconds(0);
         if (m_lastModified && m_lastModified.value() == epoch)
-            m_lastModified = std::nullopt;
+            m_lastModified = WTF::nullopt;
 #endif
         m_haveParsedLastModifiedHeader = true;
     }
@@ -702,7 +761,7 @@ static ParsedContentRange parseContentRangeInHeader(const HTTPHeaderMap& headers
     return ParsedContentRange(contentRangeValue);
 }
 
-ParsedContentRange& ResourceResponseBase::contentRange() const
+const ParsedContentRange& ResourceResponseBase::contentRange() const
 {
     lazyInit(CommonFieldsOnly);
 
@@ -769,9 +828,26 @@ bool ResourceResponseBase::compare(const ResourceResponse& a, const ResourceResp
         return false;
     if (a.httpHeaderFields() != b.httpHeaderFields())
         return false;
-    if (a.deprecatedNetworkLoadMetrics() != b.deprecatedNetworkLoadMetrics())
-        return false;
+    if (a.m_networkLoadMetrics.get() != b.m_networkLoadMetrics.get()) {
+        if (!a.m_networkLoadMetrics) {
+            if (NetworkLoadMetrics() != *b.m_networkLoadMetrics.get())
+                return false;
+        } else if (!b.m_networkLoadMetrics) {
+            if (NetworkLoadMetrics() != *a.m_networkLoadMetrics.get())
+                return false;
+        } else if (*a.m_networkLoadMetrics.get() != *b.m_networkLoadMetrics.get())
+            return false;
+    }
     return ResourceResponse::platformCompare(a, b);
+}
+
+bool ResourceResponseBase::containsInvalidHTTPHeaders() const
+{
+    for (auto& header : httpHeaderFields()) {
+        if (!isValidHTTPHeaderValue(stripLeadingAndTrailingHTTPSpaces(header.value)))
+            return true;
+    }
+    return false;
 }
 
 }

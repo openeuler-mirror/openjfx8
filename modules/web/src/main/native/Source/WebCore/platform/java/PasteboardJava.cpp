@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -39,7 +39,7 @@
 #include "NotImplemented.h"
 #include "DataObjectJava.h"
 #include "DragData.h"
-#include <wtf/java/JavaEnv.h>
+#include "PlatformJavaClasses.h"
 #include <wtf/java/JavaRef.h>
 #include <wtf/text/WTFString.h>
 #include <wtf/text/StringBuilder.h>
@@ -61,22 +61,22 @@ namespace {
 #define PB_CLASS jPBClass()
 
 #define DEFINE_PB_CLASS(_name) \
-    JNIEnv* env = WebCore_GetJavaEnv(); \
+    JNIEnv* env = WTF::GetJavaEnv(); \
     static JGClass cls(env->FindClass(_name)); \
     ASSERT(cls);
 
 #define DEFINE_PB_STATIC_METHOD(_name, _params) \
-    JNIEnv* env = WebCore_GetJavaEnv(); \
+    JNIEnv* env = WTF::GetJavaEnv(); \
     static jmethodID mid = env->GetStaticMethodID(PB_CLASS, _name, _params); \
     ASSERT(mid);
 
 #define CALL_PB_STATIC_VOID_METHOD(...) \
     env->CallStaticVoidMethod(PB_CLASS, mid, __VA_ARGS__); \
-    CheckAndClearException(env);
+    WTF::CheckAndClearException(env);
 
 #define CALL_PB_STATIC_JSTROBJ_METHOD(_jstrobj) \
     JLString _jstrobj(static_cast<jstring>(env->CallStaticObjectMethod(PB_CLASS, mid))); \
-    CheckAndClearException(env);
+    WTF::CheckAndClearException(env);
 
 jclass jPBClass()
 {
@@ -257,12 +257,12 @@ void Pasteboard::setDragImage(DragImage, const IntPoint&)
 #endif
 
 void Pasteboard::writeSelection(
-    Range& selectedRange,
+    const SimpleRange& selectedRange,
     bool canSmartCopyOrDelete,
     Frame& frame,
     ShouldSerializeSelectedTextForDataTransfer shouldSerializeSelectedTextForDataTransfer)
 {
-    String markup = createMarkup(selectedRange, 0, AnnotateForInterchange, false, ResolveNonLocalURLs);
+    String markup = serializePreservingVisualAppearance(selectedRange, nullptr, AnnotateForInterchange::Yes, ConvertBlocksToInlines::No, ResolveURLs::YesExcludingLocalFileURLsForPrivacy);
     String plainText = shouldSerializeSelectedTextForDataTransfer == IncludeImageAltTextForDataTransfer
         ? frame.editor().selectedTextForDataTransfer()
         : frame.editor().selectedText();
@@ -303,7 +303,7 @@ void Pasteboard::write(const PasteboardURL& pasteboardURL)
 
     String title(pasteboardURL.title);
     if (title.isEmpty()) {
-        title = pasteboardURL.url.lastPathComponent();
+        title = pasteboardURL.url.lastPathComponent().toString();
         if (title.isEmpty()) {
             title = pasteboardURL.url.host().toString();
         }
@@ -320,24 +320,24 @@ void Pasteboard::write(const PasteboardURL& pasteboardURL)
     }
 }
 
-void Pasteboard::writeImage(Element& node, const URL& url, const String& title)
+void Pasteboard::writeImage(Element& element, const URL& url, const String& title)
 {
     m_dataObject->setURL(url, title);
 
     // Write the bytes of the image to the file format
-    writeImageToDataObject(m_dataObject,    node, url);
+    writeImageToDataObject(m_dataObject, element, url);
 
-    AtomicString imageURL = node.getAttribute(HTMLNames::srcAttr);
+    AtomString imageURL = element.getAttribute(HTMLNames::srcAttr);
     if (!imageURL.isEmpty()) {
-        String fullURL = node.document().completeURL(stripLeadingAndTrailingHTMLSpaces(imageURL));
+        String fullURL = element.document().completeURL(stripLeadingAndTrailingHTMLSpaces(imageURL)).string();
         if (!fullURL.isEmpty()) {
             m_dataObject->setHTML(
-                imageToMarkup(fullURL, node),
-                node.document().url());
+                imageToMarkup(fullURL, element),
+                element.document().url());
         }
     }
     if (m_copyPasteMode) {
-        CachedImage* cachedImage = getCachedImage(node);
+        CachedImage* cachedImage = getCachedImage(element);
         // CachedImage not exist
         if (!cachedImage) {
             return;
@@ -352,7 +352,7 @@ void Pasteboard::writeImage(Element& node, const URL& url, const String& title)
         // SVGImage are not Bitmap backed, Let the receiving end decode the svg image
         // based on url and its markup
         if (image->isSVGImage()) {
-            jWriteURL(url.string(), createMarkup(node));
+            jWriteURL(url.string(), serializeFragment(element, SerializedNodes::SubtreeIncludingNode));
         }
         else {
             jWriteImage(*image);
@@ -430,7 +430,7 @@ bool Pasteboard::hasData()
     return m_dataObject && m_dataObject->hasData();
 }
 
-void Pasteboard::read(PasteboardFileReader& reader)
+void Pasteboard::read(PasteboardFileReader& reader, Optional<size_t>)
 {
     if (m_dataObject) {
         for (const auto& filename : m_dataObject->asFilenames())
@@ -452,7 +452,7 @@ Pasteboard::FileContentState Pasteboard::fileContentState()
     return reader.count ? FileContentState::MayContainFilePaths : FileContentState::NoFileOrImageData;
 }
 
-void Pasteboard::read(PasteboardPlainText& text)
+void Pasteboard::read(PasteboardPlainText& text, PlainTextURLReadingPolicy, Optional<size_t>)
 {
     if (m_copyPasteMode) {
         text.text = jGetPlainText();
@@ -473,10 +473,7 @@ bool Pasteboard::canSmartReplace()
 }
 
 RefPtr<DocumentFragment> Pasteboard::documentFragment(
-    Frame& frame,
-    Range& range,
-    bool allowPlainText,
-    bool &chosePlainText)
+    Frame& frame, const SimpleRange& range, bool allowPlainText, bool &chosePlainText)
 {
     chosePlainText = false;
 
@@ -486,10 +483,7 @@ RefPtr<DocumentFragment> Pasteboard::documentFragment(
 
     if (!htmlString.isNull()) {
         if (RefPtr<DocumentFragment> fragment = createFragmentFromMarkup(
-                *frame.document(),
-                htmlString,
-                String(),
-                DisallowScriptingContent))
+                *frame.document(), htmlString, String(), DisallowScriptingContent))
         {
             return fragment;
         }
@@ -505,9 +499,8 @@ RefPtr<DocumentFragment> Pasteboard::documentFragment(
 
     if (!plainTextString.isNull()) {
         chosePlainText = true;
-        if (RefPtr<DocumentFragment> fragment = createFragmentFromText(
-                range,
-                plainTextString))
+        if (RefPtr<DocumentFragment> fragment =
+            createFragmentFromText(range, plainTextString))
         {
             return fragment;
         }
@@ -515,7 +508,7 @@ RefPtr<DocumentFragment> Pasteboard::documentFragment(
     return nullptr;
 }
 
-void Pasteboard::read(PasteboardWebContentReader&, WebContentReadingPolicy)
+void Pasteboard::read(PasteboardWebContentReader&, WebContentReadingPolicy, Optional<size_t>)
 {
 }
 
@@ -531,7 +524,11 @@ void Pasteboard::writeMarkup(const String&)
 {
 }
 
-void Pasteboard::writeCustomData(const PasteboardCustomData&)
+void Pasteboard::writeCustomData(const Vector<PasteboardCustomData>&)
+{
+}
+
+void Pasteboard::write(const WebCore::Color&)
 {
 }
 

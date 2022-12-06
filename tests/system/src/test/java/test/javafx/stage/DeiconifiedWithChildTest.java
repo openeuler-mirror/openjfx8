@@ -86,7 +86,7 @@ public class DeiconifiedWithChildTest {
 
     @Test
     public void testDeiconifiedPosition() throws Exception {
-        Thread.sleep(200);
+        Thread.sleep(500);
         Assert.assertTrue(stage.isShowing());
         Assert.assertTrue(childStage.isShowing());
         Assert.assertFalse(stage.isIconified());
@@ -95,9 +95,9 @@ public class DeiconifiedWithChildTest {
         double y = childStage.getY();
 
         Platform.runLater(() -> stage.setIconified(true));
-        Thread.sleep(200);
+        Thread.sleep(500);
         Platform.runLater(() -> stage.setIconified(false));
-        Thread.sleep(200);
+        Thread.sleep(500);
         Assert.assertEquals("Child window was moved", x, childStage.getX(), 0.1);
         Assert.assertEquals("Child window was moved", y, childStage.getY(), 0.1);
     }

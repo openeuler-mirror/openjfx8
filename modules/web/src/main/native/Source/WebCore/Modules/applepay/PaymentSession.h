@@ -37,19 +37,21 @@ class Document;
 class Payment;
 class PaymentContact;
 class PaymentMethod;
-class URL;
+class PaymentSessionError;
+class ScriptExecutionContext;
 
 class PaymentSession : public virtual PaymentSessionBase {
 public:
     static ExceptionOr<void> canCreateSession(Document&);
+    static bool enabledForContext(ScriptExecutionContext&);
 
     virtual unsigned version() const = 0;
-    virtual void validateMerchant(const URL&) = 0;
+    virtual void validateMerchant(URL&&) = 0;
     virtual void didAuthorizePayment(const Payment&) = 0;
     virtual void didSelectShippingMethod(const ApplePaySessionPaymentRequest::ShippingMethod&) = 0;
     virtual void didSelectShippingContact(const PaymentContact&) = 0;
     virtual void didSelectPaymentMethod(const PaymentMethod&) = 0;
-    virtual void didCancelPaymentSession() = 0;
+    virtual void didCancelPaymentSession(PaymentSessionError&&) = 0;
 };
 
 } // namespace WebCore

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2014, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2012, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -189,6 +189,7 @@ final class SWPaint {
                             tex.getContentWidth(), tex.getContentHeight(), tex.getPhysicalWidth(),
                             piscesTx,
                             tex.getWrapMode() == Texture.WrapMode.REPEAT,
+                            tex.getLinearFiltering(),
                             tex.hasAlpha());
                 }
                 break;
@@ -285,6 +286,7 @@ final class SWPaint {
         }
 
         paintTx.setTransform(tx);
+        paintTx.deriveWithConcatenation(ip.getPatternTransformNoClone());
         if (ip.isProportional()) {
             paintTx.deriveWithConcatenation(width / image.getWidth() * ip.getWidth(), 0,
                     0, height / image.getHeight() * ip.getHeight(),

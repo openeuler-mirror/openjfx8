@@ -22,7 +22,7 @@
 */
 
 #include "config.h"
-#include "Base64.h"
+#include <wtf/text/Base64.h>
 
 #include <limits.h>
 #include <wtf/text/WTFString.h>
@@ -209,7 +209,8 @@ static inline bool base64DecodeInternal(const T* data, unsigned length, SignedOr
                     break;
                 }
                 out[outLength++] = decodedCharacter;
-            } else if (!(options & Base64IgnoreSpacesAndNewLines) || !isSpaceOrNewline(ch)) {
+            } else if (!(options & Base64IgnoreSpacesAndNewLines)
+                || (!isLatin1(ch) || !isASCIISpace(ch) || ((options & Base64DiscardVerticalTab) && ch == '\v'))) {
                 hadError = true;
                 break;
             }

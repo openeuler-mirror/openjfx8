@@ -23,14 +23,14 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef CommaPrinter_h
-#define CommaPrinter_h
+#pragma once
 
-#include "PrintStream.h"
+#include <wtf/PrintStream.h>
 
 namespace WTF {
 
-class CommaPrinter {
+class CommaPrinter final {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     CommaPrinter(const char* comma = ", ", const char* start = "")
         : m_comma(comma)
@@ -61,6 +61,3 @@ private:
 } // namespace WTF
 
 using WTF::CommaPrinter;
-
-#endif // CommaPrinter_h
-

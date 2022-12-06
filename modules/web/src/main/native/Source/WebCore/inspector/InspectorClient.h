@@ -27,6 +27,7 @@
 #pragma once
 
 #include <wtf/Forward.h>
+#include <wtf/Optional.h>
 
 namespace Inspector {
 class FrontendChannel;
@@ -61,8 +62,31 @@ public:
     virtual void showPaintRect(const FloatRect&) { }
     virtual void didSetSearchingForNode(bool) { }
     virtual void elementSelectionChanged(bool) { }
+    virtual void timelineRecordingChanged(bool) { }
 
-    WEBCORE_EXPORT static void doDispatchMessageOnFrontendPage(Page* frontendPage, const String& message);
+    enum class DeveloperPreference {
+        AdClickAttributionDebugModeEnabled,
+        ITPDebugModeEnabled,
+        MockCaptureDevicesEnabled,
+    };
+    virtual void setDeveloperPreferenceOverride(DeveloperPreference, Optional<bool>) { }
+
+#if ENABLE(REMOTE_INSPECTOR)
+    virtual bool allowRemoteInspectionToPageDirectly() const { return false; }
+#endif
 };
 
 } // namespace WebCore
+
+namespace WTF {
+
+template<> struct EnumTraits<WebCore::InspectorClient::DeveloperPreference> {
+    using values = EnumValues<
+        WebCore::InspectorClient::DeveloperPreference,
+        WebCore::InspectorClient::DeveloperPreference::AdClickAttributionDebugModeEnabled,
+        WebCore::InspectorClient::DeveloperPreference::ITPDebugModeEnabled,
+        WebCore::InspectorClient::DeveloperPreference::MockCaptureDevicesEnabled
+    >;
+};
+
+} // namespace WTF

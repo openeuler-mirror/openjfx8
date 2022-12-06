@@ -26,7 +26,7 @@
 #include "config.h"
 #include "ScrollingStateScrollingNode.h"
 
-#if ENABLE(ASYNC_SCROLLING) || USE(COORDINATED_GRAPHICS)
+#if ENABLE(ASYNC_SCROLLING)
 
 #include "ScrollingStateTree.h"
 #include <wtf/text/TextStream.h>
@@ -44,20 +44,64 @@ ScrollingStateScrollingNode::ScrollingStateScrollingNode(const ScrollingStateScr
     , m_totalContentsSize(stateNode.totalContentsSize())
     , m_reachableContentsSize(stateNode.reachableContentsSize())
     , m_scrollPosition(stateNode.scrollPosition())
-    , m_requestedScrollPosition(stateNode.requestedScrollPosition())
     , m_scrollOrigin(stateNode.scrollOrigin())
 #if ENABLE(CSS_SCROLL_SNAP)
     , m_snapOffsetsInfo(stateNode.m_snapOffsetsInfo)
 #endif
+#if PLATFORM(MAC)
+    , m_verticalScrollerImp(stateNode.verticalScrollerImp())
+    , m_horizontalScrollerImp(stateNode.horizontalScrollerImp())
+#endif
     , m_scrollableAreaParameters(stateNode.scrollableAreaParameters())
-    , m_requestedScrollPositionRepresentsProgrammaticScroll(stateNode.requestedScrollPositionRepresentsProgrammaticScroll())
-    , m_expectsWheelEventTestTrigger(stateNode.expectsWheelEventTestTrigger())
+    , m_requestedScrollData(stateNode.requestedScrollData())
+#if ENABLE(SCROLLING_THREAD)
+    , m_synchronousScrollingReasons(stateNode.synchronousScrollingReasons())
+#endif
+    , m_isMonitoringWheelEvents(stateNode.isMonitoringWheelEvents())
 {
+    if (hasChangedProperty(ScrollContainerLayer))
+        setScrollContainerLayer(stateNode.scrollContainerLayer().toRepresentation(adoptiveTree.preferredLayerRepresentation()));
+
     if (hasChangedProperty(ScrolledContentsLayer))
         setScrolledContentsLayer(stateNode.scrolledContentsLayer().toRepresentation(adoptiveTree.preferredLayerRepresentation()));
+
+    if (hasChangedProperty(VerticalScrollbarLayer))
+        setVerticalScrollbarLayer(stateNode.verticalScrollbarLayer().toRepresentation(adoptiveTree.preferredLayerRepresentation()));
+
+    if (hasChangedProperty(HorizontalScrollbarLayer))
+        setHorizontalScrollbarLayer(stateNode.horizontalScrollbarLayer().toRepresentation(adoptiveTree.preferredLayerRepresentation()));
 }
 
 ScrollingStateScrollingNode::~ScrollingStateScrollingNode() = default;
+
+void ScrollingStateScrollingNode::setPropertyChangedBitsAfterReattach()
+{
+    setPropertyChangedBit(ScrollableAreaSize);
+    setPropertyChangedBit(TotalContentsSize);
+    setPropertyChangedBit(ReachableContentsSize);
+    setPropertyChangedBit(ScrollPosition);
+    setPropertyChangedBit(ScrollOrigin);
+    setPropertyChangedBit(ScrollableAreaParams);
+#if ENABLE(SCROLLING_THREAD)
+    setPropertyChangedBit(ReasonsForSynchronousScrolling);
+#endif
+#if ENABLE(CSS_SCROLL_SNAP)
+    setPropertyChangedBit(HorizontalSnapOffsets);
+    setPropertyChangedBit(VerticalSnapOffsets);
+    setPropertyChangedBit(HorizontalSnapOffsetRanges);
+    setPropertyChangedBit(VerticalSnapOffsetRanges);
+    setPropertyChangedBit(CurrentHorizontalSnapOffsetIndex);
+    setPropertyChangedBit(CurrentVerticalSnapOffsetIndex);
+#endif
+    setPropertyChangedBit(IsMonitoringWheelEvents);
+    setPropertyChangedBit(ScrollContainerLayer);
+    setPropertyChangedBit(ScrolledContentsLayer);
+    setPropertyChangedBit(HorizontalScrollbarLayer);
+    setPropertyChangedBit(VerticalScrollbarLayer);
+    setPropertyChangedBit(PainterForScrollbar);
+
+    ScrollingStateNode::setPropertyChangedBitsAfterReattach();
+}
 
 void ScrollingStateScrollingNode::setScrollableAreaSize(const FloatSize& size)
 {
@@ -169,20 +213,40 @@ void ScrollingStateScrollingNode::setScrollableAreaParameters(const ScrollableAr
     setPropertyChanged(ScrollableAreaParams);
 }
 
-void ScrollingStateScrollingNode::setRequestedScrollPosition(const FloatPoint& requestedScrollPosition, bool representsProgrammaticScroll)
+#if ENABLE(SCROLLING_THREAD)
+void ScrollingStateScrollingNode::setSynchronousScrollingReasons(OptionSet<SynchronousScrollingReason> reasons)
 {
-    m_requestedScrollPosition = requestedScrollPosition;
-    m_requestedScrollPositionRepresentsProgrammaticScroll = representsProgrammaticScroll;
+    if (m_synchronousScrollingReasons == reasons)
+        return;
+
+    m_synchronousScrollingReasons = reasons;
+    setPropertyChanged(ReasonsForSynchronousScrolling);
+}
+#endif
+
+void ScrollingStateScrollingNode::setRequestedScrollData(const RequestedScrollData& scrollData)
+{
+    // Scroll position requests are imperative, not stateful, so we can't early return here.
+    m_requestedScrollData = scrollData;
     setPropertyChanged(RequestedScrollPosition);
 }
 
-void ScrollingStateScrollingNode::setExpectsWheelEventTestTrigger(bool expectsTestTrigger)
+void ScrollingStateScrollingNode::setIsMonitoringWheelEvents(bool isMonitoringWheelEvents)
 {
-    if (expectsTestTrigger == m_expectsWheelEventTestTrigger)
+    if (isMonitoringWheelEvents == m_isMonitoringWheelEvents)
         return;
 
-    m_expectsWheelEventTestTrigger = expectsTestTrigger;
-    setPropertyChanged(ExpectsWheelEventTestTrigger);
+    m_isMonitoringWheelEvents = isMonitoringWheelEvents;
+    setPropertyChanged(IsMonitoringWheelEvents);
+}
+
+void ScrollingStateScrollingNode::setScrollContainerLayer(const LayerRepresentation& layerRepresentation)
+{
+    if (layerRepresentation == m_scrollContainerLayer)
+        return;
+
+    m_scrollContainerLayer = layerRepresentation;
+    setPropertyChanged(ScrollContainerLayer);
 }
 
 void ScrollingStateScrollingNode::setScrolledContentsLayer(const LayerRepresentation& layerRepresentation)
@@ -193,6 +257,30 @@ void ScrollingStateScrollingNode::setScrolledContentsLayer(const LayerRepresenta
     m_scrolledContentsLayer = layerRepresentation;
     setPropertyChanged(ScrolledContentsLayer);
 }
+
+void ScrollingStateScrollingNode::setHorizontalScrollbarLayer(const LayerRepresentation& layer)
+{
+    if (layer == m_horizontalScrollbarLayer)
+        return;
+
+    m_horizontalScrollbarLayer = layer;
+    setPropertyChanged(HorizontalScrollbarLayer);
+}
+
+void ScrollingStateScrollingNode::setVerticalScrollbarLayer(const LayerRepresentation& layer)
+{
+    if (layer == m_verticalScrollbarLayer)
+        return;
+
+    m_verticalScrollbarLayer = layer;
+    setPropertyChanged(VerticalScrollbarLayer);
+}
+
+#if !PLATFORM(MAC)
+void ScrollingStateScrollingNode::setScrollerImpsFromScrollbars(Scrollbar*, Scrollbar*)
+{
+}
+#endif
 
 void ScrollingStateScrollingNode::dumpProperties(TextStream& ts, ScrollingStateTreeAsTextBehavior behavior) const
 {
@@ -222,14 +310,17 @@ void ScrollingStateScrollingNode::dumpProperties(TextStream& ts, ScrollingStateT
     if (m_reachableContentsSize != m_totalContentsSize)
         ts.dumpProperty("reachable contents size", m_reachableContentsSize);
 
-    if (m_requestedScrollPosition != IntPoint()) {
+    if (!m_requestedScrollData.scrollPosition.isZero()) {
         TextStream::GroupScope scope(ts);
         ts << "requested scroll position "
-            << TextStream::FormatNumberRespectingIntegers(m_requestedScrollPosition.x()) << " "
-            << TextStream::FormatNumberRespectingIntegers(m_requestedScrollPosition.y());
+            << TextStream::FormatNumberRespectingIntegers(m_requestedScrollData.scrollPosition.x()) << " "
+            << TextStream::FormatNumberRespectingIntegers(m_requestedScrollData.scrollPosition.y());
     }
-    if (m_requestedScrollPositionRepresentsProgrammaticScroll)
-        ts.dumpProperty("requested scroll position represents programmatic scroll", m_requestedScrollPositionRepresentsProgrammaticScroll);
+    if (m_requestedScrollData.scrollType == ScrollType::Programmatic)
+        ts.dumpProperty("requested scroll position represents programmatic scroll", true);
+
+    if (m_requestedScrollData.clamping == ScrollClamping::Unclamped)
+        ts.dumpProperty("requested scroll position clamping", m_requestedScrollData.clamping);
 
     if (m_scrollOrigin != IntPoint())
         ts.dumpProperty("scroll origin", m_scrollOrigin);
@@ -250,13 +341,22 @@ void ScrollingStateScrollingNode::dumpProperties(TextStream& ts, ScrollingStateT
 
     ts.dumpProperty("scrollable area parameters", m_scrollableAreaParameters);
 
-    if (m_expectsWheelEventTestTrigger)
-        ts.dumpProperty("expects wheel event test trigger", m_expectsWheelEventTestTrigger);
+#if ENABLE(SCROLLING_THREAD)
+    if (!m_synchronousScrollingReasons.isEmpty())
+        ts.dumpProperty("Scrolling on main thread because:", ScrollingCoordinator::synchronousScrollingReasonsAsText(m_synchronousScrollingReasons));
+#endif
 
-    if ((behavior & ScrollingStateTreeAsTextBehaviorIncludeLayerIDs) && m_scrolledContentsLayer.layerID())
-        ts.dumpProperty("scrolled contents layer", m_scrolledContentsLayer.layerID());
+    if (m_isMonitoringWheelEvents)
+        ts.dumpProperty("expects wheel event test trigger", m_isMonitoringWheelEvents);
+
+    if (behavior & ScrollingStateTreeAsTextBehaviorIncludeLayerIDs) {
+        if (m_scrollContainerLayer.layerID())
+            ts.dumpProperty("scroll container layer", m_scrollContainerLayer.layerID());
+        if (m_scrolledContentsLayer.layerID())
+            ts.dumpProperty("scrolled contents layer", m_scrolledContentsLayer.layerID());
+    }
 }
 
 } // namespace WebCore
 
-#endif // ENABLE(ASYNC_SCROLLING) || USE(COORDINATED_GRAPHICS)
+#endif // ENABLE(ASYNC_SCROLLING)

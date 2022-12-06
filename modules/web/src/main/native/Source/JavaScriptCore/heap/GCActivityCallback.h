@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010, 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,8 +43,8 @@ class Heap;
 class JS_EXPORT_PRIVATE GCActivityCallback : public JSRunLoopTimer {
 public:
     using Base = JSRunLoopTimer;
-    static RefPtr<FullGCActivityCallback> createFullTimer(Heap*);
-    static RefPtr<GCActivityCallback> createEdenTimer(Heap*);
+    static RefPtr<FullGCActivityCallback> tryCreateFullTimer(Heap*);
+    static RefPtr<GCActivityCallback> tryCreateEdenTimer(Heap*);
 
     GCActivityCallback(Heap*);
 
@@ -65,7 +65,7 @@ protected:
     virtual double gcTimeSlice(size_t bytes) = 0;
     virtual double deathRate(Heap&) = 0;
 
-    GCActivityCallback(VM* vm)
+    GCActivityCallback(VM& vm)
         : Base(vm)
         , m_enabled(true)
         , m_delay(s_decade)

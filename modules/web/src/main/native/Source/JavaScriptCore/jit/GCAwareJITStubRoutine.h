@@ -33,7 +33,11 @@
 #include <wtf/Vector.h>
 
 namespace JSC {
+namespace DFG {
+class CodeOriginPool;
+}
 
+class CallLinkInfo;
 class JITStubRoutineSet;
 
 // Use this stub routine if you know that your code might be on stack when
@@ -50,7 +54,12 @@ class JITStubRoutineSet;
 class GCAwareJITStubRoutine : public JITStubRoutine {
 public:
     GCAwareJITStubRoutine(const MacroAssemblerCodeRef<JITStubRoutinePtrTag>&, VM&);
-    virtual ~GCAwareJITStubRoutine();
+    ~GCAwareJITStubRoutine() override;
+
+    static Ref<JITStubRoutine> create(const MacroAssemblerCodeRef<JITStubRoutinePtrTag>& code, VM& vm)
+    {
+        return adoptRef(*new GCAwareJITStubRoutine(code, vm));
+    }
 
     void markRequiredObjects(SlotVisitor& visitor)
     {
@@ -67,8 +76,8 @@ protected:
 private:
     friend class JITStubRoutineSet;
 
-    bool m_mayBeExecuting;
-    bool m_isJettisoned;
+    bool m_mayBeExecuting { false };
+    bool m_isJettisoned { false };
 };
 
 // Use this if you want to mark one additional object during GC if your stub
@@ -76,32 +85,37 @@ private:
 class MarkingGCAwareJITStubRoutine : public GCAwareJITStubRoutine {
 public:
     MarkingGCAwareJITStubRoutine(
-        const MacroAssemblerCodeRef<JITStubRoutinePtrTag>&, VM&, const JSCell* owner, const Vector<JSCell*>&);
-    virtual ~MarkingGCAwareJITStubRoutine();
+        const MacroAssemblerCodeRef<JITStubRoutinePtrTag>&, VM&, const JSCell* owner, const Vector<JSCell*>&, Bag<CallLinkInfo>&&);
+    ~MarkingGCAwareJITStubRoutine() override;
 
 protected:
     void markRequiredObjectsInternal(SlotVisitor&) override;
 
 private:
     Vector<WriteBarrier<JSCell>> m_cells;
+    Bag<CallLinkInfo> m_callLinkInfos;
 };
 
 
 // The stub has exception handlers in it. So it clears itself from exception
 // handling table when it dies. It also frees space in CodeOrigin table
-// for new exception handlers to use the same CallSiteIndex.
-class GCAwareJITStubRoutineWithExceptionHandler : public MarkingGCAwareJITStubRoutine {
+// for new exception handlers to use the same DisposableCallSiteIndex.
+class GCAwareJITStubRoutineWithExceptionHandler final : public MarkingGCAwareJITStubRoutine {
 public:
     typedef GCAwareJITStubRoutine Base;
 
-    GCAwareJITStubRoutineWithExceptionHandler(const MacroAssemblerCodeRef<JITStubRoutinePtrTag>&, VM&, const JSCell* owner, const Vector<JSCell*>&, CodeBlock*, CallSiteIndex);
+    GCAwareJITStubRoutineWithExceptionHandler(const MacroAssemblerCodeRef<JITStubRoutinePtrTag>&, VM&, const JSCell* owner, const Vector<JSCell*>&, Bag<CallLinkInfo>&&, CodeBlock*, DisposableCallSiteIndex);
+    ~GCAwareJITStubRoutineWithExceptionHandler() final;
 
-    void aboutToDie() override;
-    void observeZeroRefCount() override;
+    void aboutToDie() final;
+    void observeZeroRefCount() final;
 
 private:
     CodeBlock* m_codeBlockWithExceptionHandler;
-    CallSiteIndex m_exceptionHandlerCallSiteIndex;
+#if ENABLE(DFG_JIT)
+    RefPtr<DFG::CodeOriginPool> m_codeOriginPool;
+#endif
+    DisposableCallSiteIndex m_exceptionHandlerCallSiteIndex;
 };
 
 // Helper for easily creating a GC-aware JIT stub routine. For the varargs,
@@ -125,8 +139,8 @@ private:
 
 Ref<JITStubRoutine> createJITStubRoutine(
     const MacroAssemblerCodeRef<JITStubRoutinePtrTag>&, VM&, const JSCell* owner, bool makesCalls,
-    const Vector<JSCell*>& = { },
-    CodeBlock* codeBlockForExceptionHandlers = nullptr, CallSiteIndex exceptionHandlingCallSiteIndex = CallSiteIndex(std::numeric_limits<unsigned>::max()));
+    const Vector<JSCell*>&, Bag<CallLinkInfo>&& callLinkInfos,
+    CodeBlock* codeBlockForExceptionHandlers, DisposableCallSiteIndex exceptionHandlingCallSiteIndex);
 
 } // namespace JSC
 

@@ -26,6 +26,7 @@
 #pragma once
 
 #include "CSSValue.h"
+#include "TimingFunction.h"
 
 namespace WebCore {
 
@@ -63,51 +64,28 @@ private:
 
 class CSSStepsTimingFunctionValue final : public CSSValue {
 public:
-    static Ref<CSSStepsTimingFunctionValue> create(int steps, bool stepAtStart)
+    static Ref<CSSStepsTimingFunctionValue> create(int steps, Optional<StepsTimingFunction::StepPosition> stepPosition)
     {
-        return adoptRef(*new CSSStepsTimingFunctionValue(steps, stepAtStart));
+        return adoptRef(*new CSSStepsTimingFunctionValue(steps, stepPosition));
     }
 
     int numberOfSteps() const { return m_steps; }
-    bool stepAtStart() const { return m_stepAtStart; }
+    Optional<StepsTimingFunction::StepPosition> stepPosition() const { return m_stepPosition; }
 
     String customCSSText() const;
 
     bool equals(const CSSStepsTimingFunctionValue&) const;
 
 private:
-    CSSStepsTimingFunctionValue(int steps, bool stepAtStart)
+    CSSStepsTimingFunctionValue(int steps, Optional<StepsTimingFunction::StepPosition> stepPosition)
         : CSSValue(StepsTimingFunctionClass)
         , m_steps(steps)
-        , m_stepAtStart(stepAtStart)
+        , m_stepPosition(stepPosition)
     {
     }
 
     int m_steps;
-    bool m_stepAtStart;
-};
-
-class CSSFramesTimingFunctionValue final : public CSSValue {
-public:
-    static Ref<CSSFramesTimingFunctionValue> create(unsigned frames)
-    {
-        return adoptRef(*new CSSFramesTimingFunctionValue(frames));
-    }
-
-    unsigned numberOfFrames() const { return m_frames; }
-
-    String customCSSText() const;
-
-    bool equals(const CSSFramesTimingFunctionValue&) const;
-
-private:
-    CSSFramesTimingFunctionValue(unsigned frames)
-        : CSSValue(FramesTimingFunctionClass)
-        , m_frames(frames)
-    {
-    }
-
-    unsigned m_frames;
+    Optional<StepsTimingFunction::StepPosition> m_stepPosition;
 };
 
 class CSSSpringTimingFunctionValue final : public CSSValue {
@@ -146,5 +124,4 @@ private:
 
 SPECIALIZE_TYPE_TRAITS_CSS_VALUE(CSSCubicBezierTimingFunctionValue, isCubicBezierTimingFunctionValue())
 SPECIALIZE_TYPE_TRAITS_CSS_VALUE(CSSStepsTimingFunctionValue, isStepsTimingFunctionValue())
-SPECIALIZE_TYPE_TRAITS_CSS_VALUE(CSSFramesTimingFunctionValue, isFramesTimingFunctionValue())
 SPECIALIZE_TYPE_TRAITS_CSS_VALUE(CSSSpringTimingFunctionValue, isSpringTimingFunctionValue())

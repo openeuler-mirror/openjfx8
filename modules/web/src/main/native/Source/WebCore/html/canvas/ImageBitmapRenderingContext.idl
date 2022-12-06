@@ -24,8 +24,9 @@
  */
 
 [
-    EnabledAtRuntime=ImageBitmapOffscreenCanvas,
-    Exposed=Window
+    EnabledAtRuntime=ImageBitmap,
+    Exposed=Window,
+    CallTracingCallback=recordCanvasAction,
 ] interface ImageBitmapRenderingContext {
     readonly attribute HTMLCanvasElement canvas;
 

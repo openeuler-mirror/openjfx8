@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2005-2018 Apple Inc. All rights reserved.
+ *  Copyright (C) 2005-2019 Apple Inc. All rights reserved.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Library General Public
@@ -20,8 +20,7 @@
 
 // RefPtr is documented at http://webkit.org/coding/RefPtr.html
 
-#ifndef WTF_RefPtr_h
-#define WTF_RefPtr_h
+#pragma once
 
 #include <algorithm>
 #include <utility>
@@ -45,10 +44,11 @@ template<typename T> ALWAYS_INLINE void derefIfNotNull(T* ptr)
         ptr->deref();
 }
 
-template<typename T, typename PtrTraits>
+template<typename T, typename Traits>
 class RefPtr {
     WTF_MAKE_FAST_ALLOCATED;
 public:
+    using PtrTraits = Traits;
     typedef T ValueType;
     typedef ValueType* PtrType;
 
@@ -64,8 +64,8 @@ public:
     template<typename X, typename Y> RefPtr(Ref<X, Y>&&);
 
     // Hash table deleted values, which are only constructed and never copied or destroyed.
-    RefPtr(HashTableDeletedValueType) : m_ptr(hashTableDeletedValue()) { }
-    bool isHashTableDeletedValue() const { return m_ptr == hashTableDeletedValue(); }
+    RefPtr(HashTableDeletedValueType) : m_ptr(PtrTraits::hashTableDeletedValue()) { }
+    bool isHashTableDeletedValue() const { return PtrTraits::isHashTableDeletedValue(m_ptr); }
 
     ALWAYS_INLINE ~RefPtr() { derefIfNotNull(PtrTraits::exchange(m_ptr, nullptr)); }
 
@@ -82,8 +82,8 @@ public:
     bool operator!() const { return !m_ptr; }
 
     // This conversion operator allows implicit conversion to bool but not to other integer types.
-    typedef T* (RefPtr::*UnspecifiedBoolType);
-    operator UnspecifiedBoolType() const { return m_ptr ? &RefPtr::m_ptr : nullptr; }
+    using UnspecifiedBoolType = void (RefPtr::*)() const;
+    operator UnspecifiedBoolType() const { return m_ptr ? &RefPtr::unspecifiedBoolTypeInstance : nullptr; }
 
     explicit operator bool() const { return !!m_ptr; }
 
@@ -97,12 +97,12 @@ public:
 
     template<typename X, typename Y> void swap(RefPtr<X, Y>&);
 
-    static T* hashTableDeletedValue() { return reinterpret_cast<T*>(-1); }
-
     RefPtr copyRef() && = delete;
     RefPtr copyRef() const & WARN_UNUSED_RETURN { return RefPtr(m_ptr); }
 
 private:
+    void unspecifiedBoolTypeInstance() const { }
+
     friend RefPtr adoptRef<T, PtrTraits>(T*);
     template<typename X, typename Y> friend class RefPtr;
 
@@ -240,7 +240,7 @@ inline RefPtr<T, U> static_pointer_cast(const RefPtr<X, Y>& p)
 
 template <typename T, typename U>
 struct IsSmartPtr<RefPtr<T, U>> {
-    static const bool value = true;
+    static constexpr bool value = true;
 };
 
 template<typename T, typename U>
@@ -272,17 +272,9 @@ inline bool is(const RefPtr<ArgType, PtrTraits>& source)
     return is<ExpectedType>(source.get());
 }
 
-template<typename Poison, typename T> struct PoisonedPtrTraits;
-
-template<typename Poison, typename T>
-using PoisonedRefPtr = RefPtr<T, PoisonedPtrTraits<Poison, T>>;
-
 } // namespace WTF
 
-using WTF::PoisonedRefPtr;
 using WTF::RefPtr;
 using WTF::adoptRef;
 using WTF::makeRefPtr;
 using WTF::static_pointer_cast;
-
-#endif // WTF_RefPtr_h

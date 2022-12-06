@@ -35,27 +35,24 @@
 #include <vector>
 #include <windows.h>
 
-#if defined _M_IX86
-#define PROCESSORARCHITECTURE "x86"
-#elif defined _M_IA64
-#define PROCESSORARCHITECTURE "ia64"
-#elif defined _M_X64
-#define PROCESSORARCHITECTURE "amd64"
-#else
-#define PROCESSORARCHITECTURE "*"
-#endif
-
-#pragma comment(linker, "/manifestdependency:\"type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='" PROCESSORARCHITECTURE "' publicKeyToken='6595b64144ccf1df' language='*'\"")
-#if defined(_MSC_VER) && (_MSC_VER >= 1600) && !defined(WIN_CAIRO)
-#pragma comment(linker, "/manifestdependency:\"type='win32' name='Microsoft.VC80.CRT' version='8.0.50727.6195' processorArchitecture='" PROCESSORARCHITECTURE "' publicKeyToken='1fc8b3b9a1e18e3b' language='*'\"")
-#endif
-
 static void enableTerminationOnHeapCorruption()
 {
     HEAP_INFORMATION_CLASS heapEnableTerminationOnCorruption = static_cast<HEAP_INFORMATION_CLASS>(1);
     HeapSetInformation(0, heapEnableTerminationOnCorruption, 0, 0);
 }
 
+static std::wstring copyEnvironmentVariable(const std::wstring& variable)
+{
+    DWORD length = ::GetEnvironmentVariableW(variable.c_str(), 0, 0);
+    if (!length)
+        return std::wstring();
+    std::vector<wchar_t> buffer(length);
+    if (!GetEnvironmentVariable(variable.c_str(), &buffer[0], buffer.size()) || !buffer[0])
+        return std::wstring();
+    return &buffer[0];
+}
+
+#if !defined(WIN_CAIRO)
 static std::wstring getStringValue(HKEY key, const std::wstring& valueName)
 {
     DWORD type = 0;
@@ -85,17 +82,6 @@ static std::wstring appleApplicationSupportDirectory()
     return applePathFromRegistry(L"SOFTWARE\\Apple Inc.\\Apple Application Support", L"InstallDir");
 }
 
-static std::wstring copyEnvironmentVariable(const std::wstring& variable)
-{
-    DWORD length = ::GetEnvironmentVariableW(variable.c_str(), 0, 0);
-    if (!length)
-        return std::wstring();
-    std::vector<wchar_t> buffer(length);
-    if (!GetEnvironmentVariable(variable.c_str(), &buffer[0], buffer.size()) || !buffer[0])
-        return std::wstring();
-    return &buffer[0];
-}
-
 static bool prependPath(const std::wstring& directoryToPrepend)
 {
     std::wstring pathVariable = L"PATH";
@@ -103,11 +89,16 @@ static bool prependPath(const std::wstring& directoryToPrepend)
     std::wstring newPath = directoryToPrepend + L';' + oldPath;
     return ::SetEnvironmentVariableW(pathVariable.c_str(), newPath.c_str());
 }
+#endif
 
 static int fatalError(const std::wstring& programName, const std::wstring& message)
 {
     std::wstring caption = programName + L" can't open.";
+#if USE_CONSOLE_ENTRY_POINT
+    fwprintf(stderr, L"%s\n%s\n", caption.c_str(), message.c_str());
+#else
     ::MessageBoxW(0, message.c_str(), caption.c_str(), MB_ICONERROR);
+#endif
     return 1;
 }
 

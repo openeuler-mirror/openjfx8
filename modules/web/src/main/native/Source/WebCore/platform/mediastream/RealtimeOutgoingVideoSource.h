@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc.
+ * Copyright (C) 2017-2019 Apple Inc.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted, provided that the following conditions
@@ -33,48 +33,65 @@
 #include "LibWebRTCMacros.h"
 #include "MediaStreamTrackPrivate.h"
 #include <Timer.h>
-#include <webrtc/api/mediastreaminterface.h>
-#include <webrtc/api/optional.h>
+
+ALLOW_UNUSED_PARAMETERS_BEGIN
+
+#include <webrtc/api/media_stream_interface.h>
 #include <webrtc/common_video/include/i420_buffer_pool.h>
-#include <webrtc/api/videosinkinterface.h>
+
+ALLOW_UNUSED_PARAMETERS_END
+
+#include <wtf/LoggerHelper.h>
 #include <wtf/Optional.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
 namespace WebCore {
 
-class RealtimeOutgoingVideoSource : public ThreadSafeRefCounted<RealtimeOutgoingVideoSource, WTF::DestructionThread::Main>, public webrtc::VideoTrackSourceInterface, private MediaStreamTrackPrivate::Observer {
+class RealtimeOutgoingVideoSource
+    : public ThreadSafeRefCounted<RealtimeOutgoingVideoSource, WTF::DestructionThread::Main>
+    , public webrtc::VideoTrackSourceInterface
+    , private MediaStreamTrackPrivate::Observer
+    , private RealtimeMediaSource::VideoSampleObserver
+#if !RELEASE_LOG_DISABLED
+    , private LoggerHelper
+#endif
+{
 public:
     static Ref<RealtimeOutgoingVideoSource> create(Ref<MediaStreamTrackPrivate>&& videoSource);
-    ~RealtimeOutgoingVideoSource() { stop(); }
+    ~RealtimeOutgoingVideoSource();
 
+    void start() { observeSource(); }
     void stop();
-    bool setSource(Ref<MediaStreamTrackPrivate>&&);
+    void setSource(Ref<MediaStreamTrackPrivate>&&);
     MediaStreamTrackPrivate& source() const { return m_videoSource.get(); }
 
     void AddRef() const final { ref(); }
     rtc::RefCountReleaseStatus Release() const final
     {
-        auto result = hasOneRef() ? rtc::RefCountReleaseStatus::kDroppedLastRef : rtc::RefCountReleaseStatus::kOtherRefsRemained;
         deref();
-        return result;
+        return rtc::RefCountReleaseStatus::kOtherRefsRemained;
     }
 
-    void setApplyRotation(bool shouldApplyRotation) { m_shouldApplyRotation = shouldApplyRotation; }
+    void applyRotation();
 
 protected:
     explicit RealtimeOutgoingVideoSource(Ref<MediaStreamTrackPrivate>&&);
 
     void sendFrame(rtc::scoped_refptr<webrtc::VideoFrameBuffer>&&);
+    bool isSilenced() const { return m_muted || !m_enabled; }
 
-    Vector<rtc::VideoSinkInterface<webrtc::VideoFrame>*> m_sinks;
-    webrtc::I420BufferPool m_bufferPool;
+    virtual rtc::scoped_refptr<webrtc::VideoFrameBuffer> createBlackFrame(size_t width, size_t height) = 0;
 
-    bool m_enabled { true };
-    bool m_muted { false };
-    uint32_t m_width { 0 };
-    uint32_t m_height { 0 };
     bool m_shouldApplyRotation { false };
     webrtc::VideoRotation m_currentRotation { webrtc::kVideoRotation_0 };
+
+#if !RELEASE_LOG_DISABLED
+    // LoggerHelper API
+    const Logger& logger() const final { return m_logger.get(); }
+    const void* logIdentifier() const final { return m_logIdentifier; }
+    const char* logClassName() const final { return "RealtimeOutgoingVideoSource"; }
+    WTFLogChannel& logChannel() const final;
+#endif
 
 private:
     void sendBlackFramesIfNeeded();
@@ -82,13 +99,19 @@ private:
     void initializeFromSource();
     void updateBlackFramesSending();
 
+    void observeSource();
+    void unobserveSource();
+
+    using MediaStreamTrackPrivate::Observer::weakPtrFactory;
+    using WeakValueType = MediaStreamTrackPrivate::Observer::WeakValueType;
+
     // Notifier API
     void RegisterObserver(webrtc::ObserverInterface*) final { }
     void UnregisterObserver(webrtc::ObserverInterface*) final { }
 
     // VideoTrackSourceInterface API
     bool is_screencast() const final { return false; }
-    rtc::Optional<bool> needs_denoising() const final { return rtc::Optional<bool>(); }
+    absl::optional<bool> needs_denoising() const final { return absl::optional<bool>(); }
     bool GetStats(Stats*) final { return false; };
 
     // MediaSourceInterface API
@@ -106,14 +129,30 @@ private:
     void trackMutedChanged(MediaStreamTrackPrivate&) final { sourceMutedChanged(); }
     void trackEnabledChanged(MediaStreamTrackPrivate&) final { sourceEnabledChanged(); }
     void trackSettingsChanged(MediaStreamTrackPrivate&) final { initializeFromSource(); }
-    void sampleBufferUpdated(MediaStreamTrackPrivate&, MediaSample&) override { }
     void trackEnded(MediaStreamTrackPrivate&) final { }
 
+    // RealtimeMediaSource::VideoSampleObserver API
+    void videoSampleAvailable(MediaSample&) override { }
+
     Ref<MediaStreamTrackPrivate> m_videoSource;
-    std::optional<RealtimeMediaSourceSettings> m_initialSettings;
-    bool m_isStopped { false };
     Timer m_blackFrameTimer;
     rtc::scoped_refptr<webrtc::VideoFrameBuffer> m_blackFrame;
+
+    mutable RecursiveLock m_sinksLock;
+    HashSet<rtc::VideoSinkInterface<webrtc::VideoFrame>*> m_sinks;
+    bool m_areSinksAskingToApplyRotation { false };
+
+    bool m_enabled { true };
+    bool m_muted { false };
+    uint32_t m_width { 0 };
+    uint32_t m_height { 0 };
+
+#if !RELEASE_LOG_DISABLED
+    Ref<const Logger> m_logger;
+    const void* m_logIdentifier;
+    MonotonicTime m_lastFrameLogTime;
+    unsigned m_frameCount { 0 };
+#endif
 };
 
 } // namespace WebCore

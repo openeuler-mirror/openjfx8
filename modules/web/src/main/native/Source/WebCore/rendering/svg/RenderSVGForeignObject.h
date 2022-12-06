@@ -40,8 +40,8 @@ public:
     void paint(PaintInfo&, const LayoutPoint&) override;
 
     LayoutRect clippedOverflowRectForRepaint(const RenderLayerModelObject* repaintContainer) const override;
-    FloatRect computeFloatRectForRepaint(const FloatRect&, const RenderLayerModelObject* repaintContainer, bool fixed = false) const override;
-    LayoutRect computeRectForRepaint(const LayoutRect&, const RenderLayerModelObject* repaintContainer, RepaintContext = { }) const override;
+    Optional<FloatRect> computeFloatVisibleRectInContainer(const FloatRect&, const RenderLayerModelObject* container, VisibleRectContext) const override;
+    Optional<LayoutRect> computeVisibleRectInContainer(const LayoutRect&, const RenderLayerModelObject* container, VisibleRectContext) const override;
 
     bool requiresLayer() const override { return false; }
     void layout() override;
@@ -53,7 +53,7 @@ public:
     bool nodeAtFloatPoint(const HitTestRequest&, HitTestResult&, const FloatPoint& pointInParent, HitTestAction) override;
     bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;
 
-    void mapLocalToContainer(const RenderLayerModelObject* repaintContainer, TransformState&, MapCoordinatesFlags, bool* wasFixed) const override;
+    void mapLocalToContainer(const RenderLayerModelObject* ancestorContainer, TransformState&, MapCoordinatesFlags, bool* wasFixed) const override;
     const RenderObject* pushMappingToContainer(const RenderLayerModelObject* ancestorToStopAt, RenderGeometryMap&) const override;
     void setNeedsTransformUpdate() override { m_needsTransformUpdate = true; }
 
@@ -75,3 +75,5 @@ private:
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_RENDER_OBJECT(RenderSVGForeignObject, isSVGForeignObject())

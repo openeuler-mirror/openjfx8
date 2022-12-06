@@ -53,7 +53,7 @@ WTF_MAKE_ISO_ALLOCATED_IMPL(RenderSnapshottedPlugIn);
 
 RenderSnapshottedPlugIn::RenderSnapshottedPlugIn(HTMLPlugInImageElement& element, RenderStyle&& style)
     : RenderEmbeddedObject(element, WTFMove(style))
-    , m_snapshotResource(std::make_unique<RenderImageResource>())
+    , m_snapshotResource(makeUnique<RenderImageResource>())
 {
     m_snapshotResource->initialize(*this);
 }
@@ -96,7 +96,7 @@ void RenderSnapshottedPlugIn::updateSnapshot(Image* image)
     if (!image)
         return;
 
-    m_snapshotResource->setCachedImage(new CachedImage(image, page().sessionID()));
+    m_snapshotResource->setCachedImage(new CachedImage(image, page().sessionID(), &page().cookieJar()));
     repaint();
 }
 
@@ -145,8 +145,7 @@ void RenderSnapshottedPlugIn::paintSnapshot(PaintInfo& paintInfo, const LayoutPo
         return;
 
     InterpolationQuality interpolation = chooseInterpolationQuality(context, *image, image, alignedRect.size());
-    ImageOrientationDescription orientationDescription(shouldRespectImageOrientation(), style().imageOrientation());
-    context.drawImage(*image, alignedRect, ImagePaintingOptions(orientationDescription, interpolation));
+    context.drawImage(*image, alignedRect, { imageOrientation(), interpolation });
 }
 
 CursorDirective RenderSnapshottedPlugIn::getCursor(const LayoutPoint& point, Cursor& overrideCursor) const

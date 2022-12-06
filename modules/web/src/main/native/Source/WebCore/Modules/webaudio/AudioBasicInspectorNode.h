@@ -32,8 +32,9 @@ namespace WebCore {
 // If the output is not connected to any other node, then the AudioBasicInspectorNode's processIfNecessary() function will be called automatically by
 // AudioContext before the end of each render quantum so that it can inspect the audio stream.
 class AudioBasicInspectorNode : public AudioNode {
+    WTF_MAKE_ISO_ALLOCATED(AudioBasicInspectorNode);
 public:
-    AudioBasicInspectorNode(AudioContext&, float sampleRate, unsigned outputChannelCount);
+    explicit AudioBasicInspectorNode(BaseAudioContext&);
 
 private:
     void pullInputs(size_t framesToProcess) override;

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,7 +35,7 @@ template<typename T>
 class GenericOffset {
     WTF_MAKE_FAST_ALLOCATED;
 public:
-    static const unsigned invalidOffset = UINT_MAX;
+    static constexpr unsigned invalidOffset = UINT_MAX;
 
     GenericOffset()
         : m_offset(invalidOffset)
@@ -95,11 +95,11 @@ public:
     }
     T& operator+=(int value)
     {
-        return *this = *this + value;
+        return *static_cast<T*>(this) = *this + value;
     }
     T& operator-=(int value)
     {
-        return *this = *this - value;
+        return *static_cast<T*>(this) = *this - value;
     }
 
 private:

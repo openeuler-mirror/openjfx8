@@ -28,8 +28,9 @@
 #include "config.h"
 #include "FELighting.h"
 
-#include "ColorUtilities.h"
+#include "ColorConversion.h"
 #include "FELightingNEON.h"
+#include "ImageData.h"
 #include <wtf/ParallelJobs.h>
 
 #if defined SYSTEM_PROCESSOR_AARCH64
@@ -40,8 +41,8 @@
 
 namespace WebCore {
 
-FELighting::FELighting(Filter& filter, LightingType lightingType, const Color& lightingColor, float surfaceScale, float diffuseConstant, float specularConstant, float specularExponent, float kernelUnitLengthX, float kernelUnitLengthY, Ref<LightSource>&& lightSource)
-    : FilterEffect(filter)
+FELighting::FELighting(Filter& filter, LightingType lightingType, const Color& lightingColor, float surfaceScale, float diffuseConstant, float specularConstant, float specularExponent, float kernelUnitLengthX, float kernelUnitLengthY, Ref<LightSource>&& lightSource, Type type)
+    : FilterEffect(filter, type)
     , m_lightingType(lightingType)
     , m_lightSource(WTFMove(lightSource))
     , m_lightingColor(lightingColor)
@@ -90,15 +91,15 @@ bool FELighting::setKernelUnitLengthY(float kernelUnitLengthY)
     return true;
 }
 
-const static int cPixelSize = 4;
-const static int cAlphaChannelOffset = 3;
-const static uint8_t cOpaqueAlpha = static_cast<uint8_t>(0xFF);
+static constexpr int cPixelSize = 4;
+static constexpr int cAlphaChannelOffset = 3;
+static constexpr uint8_t cOpaqueAlpha = static_cast<uint8_t>(0xFF);
 
 // These factors and the normal coefficients come from the table under https://www.w3.org/TR/SVG/filters.html#feDiffuseLightingElement.
-const static float cFactor1div2 = -1 / 2.f;
-const static float cFactor1div3 = -1 / 3.f;
-const static float cFactor1div4 = -1 / 4.f;
-const static float cFactor2div3 = -2 / 3.f;
+static constexpr float cFactor1div2 = -1 / 2.f;
+static constexpr float cFactor1div3 = -1 / 3.f;
+static constexpr float cFactor1div4 = -1 / 4.f;
+static constexpr float cFactor2div3 = -2 / 3.f;
 
 inline IntSize FELighting::LightingData::topLeftNormal(int offset) const
 {
@@ -386,7 +387,7 @@ void FELighting::platformApplyGeneric(const LightingData& data, const LightSourc
 inline void FELighting::platformApply(const LightingData& data, const LightSource::PaintingData& paintingData)
 {
     // The selection here eventually should happen dynamically on some platforms.
-#if CPU(ARM_NEON) && CPU(ARM_TRADITIONAL) && COMPILER(GCC_OR_CLANG)
+#if CPU(ARM_NEON) && CPU(ARM_TRADITIONAL) && COMPILER(GCC_COMPATIBLE)
     platformApplyNeon(data, paintingData);
 #else
     platformApplyGeneric(data, paintingData);
@@ -409,8 +410,17 @@ bool FELighting::drawLighting(Uint8ClampedArray& pixels, int width, int height)
     data.widthDecreasedByOne = width - 1;
     data.heightDecreasedByOne = height - 1;
 
-    FloatComponents lightColor = (operatingColorSpace() == ColorSpaceLinearRGB) ? sRGBColorToLinearComponents(m_lightingColor) : FloatComponents(m_lightingColor);
-    paintingData.initialLightingData.colorVector = FloatPoint3D(lightColor.components[0], lightColor.components[1], lightColor.components[2]);
+    if (operatingColorSpace() == ColorSpace::LinearRGB) {
+        //auto [r, g, b, a] = toLinearSRGBA(m_lightingColor.toSRGBALossy<float>());
+        auto col = std::make_tuple(toLinearSRGBA(m_lightingColor.toSRGBALossy<float>()).red, toLinearSRGBA(m_lightingColor.toSRGBALossy<float>()).green, toLinearSRGBA(m_lightingColor.toSRGBALossy<float>()).blue, toLinearSRGBA(m_lightingColor.toSRGBALossy<float>()).alpha);
+        auto [r, g, b, a] = col;
+        paintingData.initialLightingData.colorVector = FloatPoint3D(r, g, b);
+    } else {
+        //auto [r, g, b, a] = m_lightingColor.toSRGBALossy<float>();
+        auto col = std::make_tuple(m_lightingColor.toSRGBALossy<float>().red, m_lightingColor.toSRGBALossy<float>().green, m_lightingColor.toSRGBALossy<float>().blue, m_lightingColor.toSRGBALossy<float>().alpha);
+        auto [r, g, b, a] = col;
+        paintingData.initialLightingData.colorVector = FloatPoint3D(r, g, b);
+    }
     m_lightSource->initPaintingData(*this, paintingData);
 
     // Top left.
@@ -479,15 +489,15 @@ void FELighting::platformApplySoftware()
 {
     FilterEffect* in = inputEffect(0);
 
-    Uint8ClampedArray* resutPixelArray = createPremultipliedImageResult();
+    auto* resultImage = createPremultipliedImageResult();
+    auto* resutPixelArray = resultImage ? resultImage->data() : nullptr;
     if (!resutPixelArray)
         return;
 
     setIsAlphaImage(false);
 
     IntRect effectDrawingRect = requestedRegionOfInputImageData(in->absolutePaintRect());
-    in->copyPremultipliedResult(*resutPixelArray, effectDrawingRect);
-
+    in->copyPremultipliedResult(*resutPixelArray, effectDrawingRect, operatingColorSpace());
     // FIXME: support kernelUnitLengths other than (1,1). The issue here is that the W3
     // standard has no test case for them, and other browsers (like Firefox) has strange
     // output for various kernelUnitLengths, and I am not sure they are reliable.

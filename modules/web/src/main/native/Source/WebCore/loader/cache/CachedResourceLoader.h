@@ -56,11 +56,14 @@ class Document;
 class DocumentLoader;
 class Frame;
 class ImageLoader;
+class Page;
+class SVGImage;
 class Settings;
-class URL;
 
 template <typename T>
 using ResourceErrorOr = Expected<T, ResourceError>;
+
+enum class ImageLoading : uint8_t { Immediate, DeferredUntilVisible };
 
 // The CachedResourceLoader provides a per-context interface to the MemoryCache
 // and enforces a bunch of security checks and rules for resource revalidation.
@@ -79,21 +82,22 @@ public:
     static Ref<CachedResourceLoader> create(DocumentLoader* documentLoader) { return adoptRef(*new CachedResourceLoader(documentLoader)); }
     ~CachedResourceLoader();
 
-    ResourceErrorOr<CachedResourceHandle<CachedImage>> requestImage(CachedResourceRequest&&);
+    ResourceErrorOr<CachedResourceHandle<CachedImage>> requestImage(CachedResourceRequest&&, ImageLoading = ImageLoading::Immediate);
     ResourceErrorOr<CachedResourceHandle<CachedCSSStyleSheet>> requestCSSStyleSheet(CachedResourceRequest&&);
-    CachedResourceHandle<CachedCSSStyleSheet> requestUserCSSStyleSheet(CachedResourceRequest&&);
+    CachedResourceHandle<CachedCSSStyleSheet> requestUserCSSStyleSheet(Page&, CachedResourceRequest&&);
     ResourceErrorOr<CachedResourceHandle<CachedScript>> requestScript(CachedResourceRequest&&);
     ResourceErrorOr<CachedResourceHandle<CachedFont>> requestFont(CachedResourceRequest&&, bool isSVG);
     ResourceErrorOr<CachedResourceHandle<CachedRawResource>> requestMedia(CachedResourceRequest&&);
     ResourceErrorOr<CachedResourceHandle<CachedRawResource>> requestIcon(CachedResourceRequest&&);
     ResourceErrorOr<CachedResourceHandle<CachedRawResource>> requestBeaconResource(CachedResourceRequest&&);
+    ResourceErrorOr<CachedResourceHandle<CachedRawResource>> requestPingResource(CachedResourceRequest&&);
     ResourceErrorOr<CachedResourceHandle<CachedRawResource>> requestMainResource(CachedResourceRequest&&);
     ResourceErrorOr<CachedResourceHandle<CachedSVGDocument>> requestSVGDocument(CachedResourceRequest&&);
 #if ENABLE(XSLT)
     ResourceErrorOr<CachedResourceHandle<CachedXSLStyleSheet>> requestXSLStyleSheet(CachedResourceRequest&&);
 #endif
     ResourceErrorOr<CachedResourceHandle<CachedResource>> requestLinkResource(CachedResource::Type, CachedResourceRequest&&);
-#if ENABLE(VIDEO_TRACK)
+#if ENABLE(VIDEO)
     ResourceErrorOr<CachedResourceHandle<CachedTextTrack>> requestTextTrack(CachedResourceRequest&&);
 #endif
 #if ENABLE(APPLICATION_MANIFEST)
@@ -113,6 +117,9 @@ public:
     typedef HashMap<String, CachedResourceHandle<CachedResource>> DocumentResourceMap;
     const DocumentResourceMap& allCachedResources() const { return m_documentResources; }
 
+    void notifyFinished(const CachedResource&);
+    Vector<Ref<SVGImage>> allCachedSVGImages() const;
+
     bool autoLoadImages() const { return m_autoLoadImages; }
     void setAutoLoadImages(bool);
 
@@ -125,14 +132,10 @@ public:
     CachePolicy cachePolicy(CachedResource::Type, const URL&) const;
 
     Frame* frame() const; // Can be null
-    Document* document() const { return m_document; } // Can be null
-    void setDocument(Document* document) { m_document = document; }
-
+    Document* document() const { return m_document.get(); } // Can be null
+    void setDocument(Document* document) { m_document = makeWeakPtr(document); }
     DocumentLoader* documentLoader() const { return m_documentLoader; }
     void clearDocumentLoader() { m_documentLoader = nullptr; }
-    PAL::SessionID sessionID() const;
-
-    void removeCachedResource(CachedResource&);
 
     void loadDone(LoadCompletionType, bool shouldPerformPostLoadActions = true);
 
@@ -167,37 +170,37 @@ private:
     explicit CachedResourceLoader(DocumentLoader*);
 
     enum class ForPreload { Yes, No };
-    enum class DeferOption { NoDefer, DeferredByClient };
 
-    ResourceErrorOr<CachedResourceHandle<CachedResource>> requestResource(CachedResource::Type, CachedResourceRequest&&, ForPreload = ForPreload::No, DeferOption = DeferOption::NoDefer);
+    ResourceErrorOr<CachedResourceHandle<CachedResource>> requestResource(CachedResource::Type, CachedResourceRequest&&, ForPreload = ForPreload::No, ImageLoading = ImageLoading::Immediate);
     CachedResourceHandle<CachedResource> revalidateResource(CachedResourceRequest&&, CachedResource&);
-    CachedResourceHandle<CachedResource> loadResource(CachedResource::Type, CachedResourceRequest&&);
+    CachedResourceHandle<CachedResource> loadResource(CachedResource::Type, PAL::SessionID, CachedResourceRequest&&, const CookieJar&);
 
     void prepareFetch(CachedResource::Type, CachedResourceRequest&);
-    void updateHTTPRequestHeaders(CachedResource::Type, CachedResourceRequest&);
+    void updateHTTPRequestHeaders(FrameLoader&, CachedResource::Type, CachedResourceRequest&);
 
-    bool canRequest(CachedResource::Type, const URL&, const CachedResourceRequest&, ForPreload);
+    bool canRequest(CachedResource::Type, const URL&, const ResourceLoaderOptions&, ForPreload);
 
     enum RevalidationPolicy { Use, Revalidate, Reload, Load };
-    RevalidationPolicy determineRevalidationPolicy(CachedResource::Type, CachedResourceRequest&, CachedResource* existingResource, ForPreload, DeferOption) const;
+    RevalidationPolicy determineRevalidationPolicy(CachedResource::Type, CachedResourceRequest&, CachedResource* existingResource, ForPreload, ImageLoading) const;
 
     bool shouldUpdateCachedResourceWithCurrentRequest(const CachedResource&, const CachedResourceRequest&);
-    CachedResourceHandle<CachedResource> updateCachedResourceWithCurrentRequest(const CachedResource&, CachedResourceRequest&&);
+    CachedResourceHandle<CachedResource> updateCachedResourceWithCurrentRequest(const CachedResource&, CachedResourceRequest&&, const PAL::SessionID&, const CookieJar&);
 
     bool shouldContinueAfterNotifyingLoadedFromMemoryCache(const CachedResourceRequest&, CachedResource&, ResourceError&);
     bool checkInsecureContent(CachedResource::Type, const URL&) const;
 
     void performPostLoadActions();
 
-    bool clientDefersImage(const URL&) const;
+    ImageLoading clientDefersImage(const URL&) const;
     void reloadImagesIfNotDeferred();
 
     bool canRequestAfterRedirection(CachedResource::Type, const URL&, const ResourceLoaderOptions&) const;
     bool canRequestInContentDispositionAttachmentSandbox(CachedResource::Type, const URL&) const;
 
     HashSet<String> m_validatedURLs;
+    HashSet<String> m_cachedSVGImagesURLs;
     mutable DocumentResourceMap m_documentResources;
-    Document* m_document;
+    WeakPtr<Document> m_document;
     DocumentLoader* m_documentLoader;
 
     int m_requestCount;

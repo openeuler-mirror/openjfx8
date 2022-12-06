@@ -33,6 +33,7 @@
 
 #include "InjectedScriptBase.h"
 #include <wtf/Forward.h>
+#include <wtf/Function.h>
 #include <wtf/RefPtr.h>
 
 namespace Deprecated {
@@ -44,29 +45,43 @@ namespace Inspector {
 class InjectedScriptModule;
 class InspectorEnvironment;
 
-class JS_EXPORT_PRIVATE InjectedScript : public InjectedScriptBase {
+class JS_EXPORT_PRIVATE InjectedScript final : public InjectedScriptBase {
 public:
     InjectedScript();
     InjectedScript(Deprecated::ScriptObject, InspectorEnvironment*);
-    virtual ~InjectedScript();
+    ~InjectedScript() final;
 
-    void evaluate(ErrorString&, const String& expression, const String& objectGroup, bool includeCommandLineAPI, bool returnByValue, bool generatePreview, bool saveResult, RefPtr<Protocol::Runtime::RemoteObject>& result, bool& wasThrown, std::optional<int>& savedResultIndex);
-    void evaluateOnCallFrame(ErrorString&, JSC::JSValue callFrames, const String& callFrameId, const String& expression, const String& objectGroup, bool includeCommandLineAPI, bool returnByValue, bool generatePreview, bool saveResult, RefPtr<Protocol::Runtime::RemoteObject>& result, bool& wasThrown, std::optional<int>& savedResultIndex);
-    void callFunctionOn(ErrorString&, const String& objectId, const String& expression, const String& arguments, bool returnByValue, bool generatePreview, RefPtr<Protocol::Runtime::RemoteObject>& result, bool& wasThrown);
+    struct ExecuteOptions {
+        String objectGroup;
+        bool includeCommandLineAPI { false };
+        bool returnByValue { false };
+        bool generatePreview { false };
+        bool saveResult { false };
+        Vector<JSC::JSValue> args;
+    };
+    void execute(ErrorString&, const String& functionString, ExecuteOptions&&, RefPtr<Protocol::Runtime::RemoteObject>& result, Optional<bool>& wasThrown, Optional<int>& savedResultIndex);
+
+    void evaluate(ErrorString&, const String& expression, const String& objectGroup, bool includeCommandLineAPI, bool returnByValue, bool generatePreview, bool saveResult, RefPtr<Protocol::Runtime::RemoteObject>& result, Optional<bool>& wasThrown, Optional<int>& savedResultIndex);
+    void awaitPromise(const String& promiseObjectId, bool returnByValue, bool generatePreview, bool saveResult, AsyncCallCallback&&);
+    void evaluateOnCallFrame(ErrorString&, JSC::JSValue callFrames, const String& callFrameId, const String& expression, const String& objectGroup, bool includeCommandLineAPI, bool returnByValue, bool generatePreview, bool saveResult, RefPtr<Protocol::Runtime::RemoteObject>& result, Optional<bool>& wasThrown, Optional<int>& savedResultIndex);
+    void callFunctionOn(ErrorString&, const String& objectId, const String& expression, const String& arguments, bool returnByValue, bool generatePreview, RefPtr<Protocol::Runtime::RemoteObject>& result, Optional<bool>& wasThrown);
     void getFunctionDetails(ErrorString&, const String& functionId, RefPtr<Protocol::Debugger::FunctionDetails>& result);
     void functionDetails(ErrorString&, JSC::JSValue, RefPtr<Protocol::Debugger::FunctionDetails>& result);
     void getPreview(ErrorString&, const String& objectId, RefPtr<Protocol::Runtime::ObjectPreview>& result);
-    void getProperties(ErrorString&, const String& objectId, bool ownProperties, bool generatePreview, RefPtr<JSON::ArrayOf<Protocol::Runtime::PropertyDescriptor>>& result);
-    void getDisplayableProperties(ErrorString&, const String& objectId, bool generatePreview, RefPtr<JSON::ArrayOf<Protocol::Runtime::PropertyDescriptor>>& result);
+    void getProperties(ErrorString&, const String& objectId, bool ownProperties, int fetchStart, int fetchCount, bool generatePreview, RefPtr<JSON::ArrayOf<Protocol::Runtime::PropertyDescriptor>>& result);
+    void getDisplayableProperties(ErrorString&, const String& objectId, int fetchStart, int fetchCount, bool generatePreview, RefPtr<JSON::ArrayOf<Protocol::Runtime::PropertyDescriptor>>& result);
     void getInternalProperties(ErrorString&, const String& objectId, bool generatePreview, RefPtr<JSON::ArrayOf<Protocol::Runtime::InternalPropertyDescriptor>>& result);
-    void getCollectionEntries(ErrorString&, const String& objectId, const String& objectGroup, int startIndex, int numberToFetch, RefPtr<JSON::ArrayOf<Protocol::Runtime::CollectionEntry>>& entries);
-    void saveResult(ErrorString&, const String& callArgumentJSON, std::optional<int>& savedResultIndex);
+    void getCollectionEntries(ErrorString&, const String& objectId, const String& objectGroup, int fetchStart, int fetchCount, RefPtr<JSON::ArrayOf<Protocol::Runtime::CollectionEntry>>& entries);
+    void saveResult(ErrorString&, const String& callArgumentJSON, Optional<int>& savedResultIndex);
 
     Ref<JSON::ArrayOf<Protocol::Debugger::CallFrame>> wrapCallFrames(JSC::JSValue) const;
     RefPtr<Protocol::Runtime::RemoteObject> wrapObject(JSC::JSValue, const String& groupName, bool generatePreview = false) const;
     RefPtr<Protocol::Runtime::RemoteObject> wrapJSONString(const String& json, const String& groupName, bool generatePreview = false) const;
     RefPtr<Protocol::Runtime::RemoteObject> wrapTable(JSC::JSValue table, JSC::JSValue columns) const;
     RefPtr<Protocol::Runtime::ObjectPreview> previewValue(JSC::JSValue) const;
+
+    void setEventValue(JSC::JSValue);
+    void clearEventValue();
 
     void setExceptionValue(JSC::JSValue);
     void clearExceptionValue();
@@ -77,6 +92,8 @@ public:
     void releaseObjectGroup(const String& objectGroup);
 
 private:
+    JSC::JSValue arrayFromVector(Vector<JSC::JSValue>&&);
+
     friend class InjectedScriptModule;
 };
 

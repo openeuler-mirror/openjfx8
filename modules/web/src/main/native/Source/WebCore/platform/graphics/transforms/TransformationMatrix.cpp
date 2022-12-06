@@ -35,7 +35,12 @@
 #include <cmath>
 #include <wtf/Assertions.h>
 #include <wtf/MathExtras.h>
+#include <wtf/Optional.h>
 #include <wtf/text/TextStream.h>
+
+#if PLATFORM(JAVA)
+#include <wtf/java/JavaMath.h>
+#endif
 
 #if CPU(X86_64)
 #include <emmintrin.h>
@@ -253,7 +258,11 @@ static void v4MulPointByMatrix(const Vector4 p, const TransformationMatrix::Matr
 
 static double v3Length(Vector3 a)
 {
-    return sqrt((a[0] * a[0]) + (a[1] * a[1]) + (a[2] * a[2]));
+#if PLATFORM(JAVA)
+    return javamath::hypot(a[0], a[1], a[2]);
+#else
+    return std::hypot(a[0], a[1], a[2]);
+#endif
 }
 
 static void v3Scale(Vector3 v, double desiredLength)
@@ -299,8 +308,8 @@ static bool decompose2(const TransformationMatrix::Matrix4& matrix, Transformati
     result.translateY = matrix[3][1];
 
     // Compute scaling factors.
-    result.scaleX = sqrt(row0x * row0x + row0y * row0y);
-    result.scaleY = sqrt(row1x * row1x + row1y * row1y);
+    result.scaleX = std::hypot(row0x, row0y);
+    result.scaleY = std::hypot(row1x, row1y);
 
     // If determinant is negative, one axis was flipped.
     double determinant = row0x * row1y - row0y * row1x;
@@ -812,7 +821,11 @@ TransformationMatrix& TransformationMatrix::scale3d(double sx, double sy, double
 TransformationMatrix& TransformationMatrix::rotate3d(double x, double y, double z, double angle)
 {
     // Normalize the axis of rotation
-    double length = sqrt(x * x + y * y + z * z);
+#if PLATFORM(JAVA)
+    double length = javamath::hypot(x, y, z);
+#else
+    double length = std::hypot(x, y, z);
+#endif
     if (length == 0) {
         // A direction vector that cannot be normalized, such as [0, 0, 0], will cause the rotation to not be applied.
         return *this;
@@ -1216,7 +1229,7 @@ TransformationMatrix& TransformationMatrix::multiply(const TransformationMatrix&
         : [leftMatrix]"+r"(leftMatrix), [rightMatrix]"+r"(rightMatrix)
         :
         : "memory", "r3", "d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7", "d16", "d17", "d18", "d19", "d20", "d21", "d22", "d23", "d24", "d25", "d26", "d27", "d28", "d29", "d30", "d31");
-#elif CPU(ARM_VFP) && PLATFORM(IOS)
+#elif CPU(ARM_VFP) && PLATFORM(IOS_FAMILY)
 
 #define MATRIX_MULTIPLY_ONE_LINE \
     "vldmia.64  %[rightMatrix]!, { d0-d3}\n\t" \
@@ -1460,7 +1473,7 @@ bool TransformationMatrix::isInvertible() const
     return true;
 }
 
-std::optional<TransformationMatrix> TransformationMatrix::inverse() const
+Optional<TransformationMatrix> TransformationMatrix::inverse() const
 {
     if (isIdentityOrTranslation()) {
         // identity matrix
@@ -1478,7 +1491,7 @@ std::optional<TransformationMatrix> TransformationMatrix::inverse() const
     // FIXME: Use LU decomposition to apply the inverse instead of calculating the inverse explicitly.
     // Calculating the inverse of a 4x4 matrix using cofactors is numerically unstable and unnecessary to apply the inverse transformation to a point.
     if (!WebCore::inverse(m_matrix, invMat.m_matrix))
-        return std::nullopt;
+        return WTF::nullopt;
 
     return invMat;
 }
@@ -1724,24 +1737,13 @@ TransformationMatrix TransformationMatrix::to2dTransform() const
                                 m_matrix[3][0], m_matrix[3][1], 0, m_matrix[3][3]);
 }
 
-void TransformationMatrix::toColumnMajorFloatArray(FloatMatrix4& result) const
+auto TransformationMatrix::toColumnMajorFloatArray() const -> FloatMatrix4
 {
-    result[0] = m11();
-    result[1] = m12();
-    result[2] = m13();
-    result[3] = m14();
-    result[4] = m21();
-    result[5] = m22();
-    result[6] = m23();
-    result[7] = m24();
-    result[8] = m31();
-    result[9] = m32();
-    result[10] = m33();
-    result[11] = m34();
-    result[12] = m41();
-    result[13] = m42();
-    result[14] = m43();
-    result[15] = m44();
+    return { {
+        float(m11()), float(m12()), float(m13()), float(m14()),
+        float(m21()), float(m22()), float(m23()), float(m24()),
+        float(m31()), float(m32()), float(m33()), float(m34()),
+        float(m41()), float(m42()), float(m43()), float(m44()) } };
 }
 
 bool TransformationMatrix::isBackFaceVisible() const

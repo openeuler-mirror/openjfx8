@@ -48,18 +48,18 @@ class NamedLineCollection {
 public:
     NamedLineCollection(const RenderStyle&, const String& namedLine, GridTrackSizingDirection, unsigned lastLine, unsigned autoRepeatTracksCount);
 
-    static bool isValidNamedLineOrArea(const String& namedLine, const RenderStyle&, GridPositionSide);
-
     bool hasNamedLines() const;
     unsigned firstPosition() const;
 
     bool contains(unsigned line) const;
 
 private:
-    size_t find(unsigned line) const;
+    bool hasExplicitNamedLines() const;
+    unsigned firstExplicitPosition() const;
 
     const Vector<unsigned>* m_namedLinesIndexes { nullptr };
     const Vector<unsigned>* m_autoRepeatNamedLinesIndexes { nullptr };
+    const Vector<unsigned>* m_implicitNamedLinesIndexes { nullptr };
 
     unsigned m_insertionPoint;
     unsigned m_lastLine;
@@ -72,7 +72,7 @@ class GridPositionsResolver {
 public:
     static GridPositionSide initialPositionSide(GridTrackSizingDirection);
     static GridPositionSide finalPositionSide(GridTrackSizingDirection);
-    static unsigned spanSizeForAutoPlacedItem(const RenderStyle&, const RenderBox&, GridTrackSizingDirection);
+    static unsigned spanSizeForAutoPlacedItem(const RenderBox&, GridTrackSizingDirection);
     static GridSpan resolveGridPositionsFromStyle(const RenderStyle&, const RenderBox&, GridTrackSizingDirection, unsigned autoRepeatTracksCount);
     static unsigned explicitGridColumnCount(const RenderStyle&, unsigned autoRepeatColumnsCount);
     static unsigned explicitGridRowCount(const RenderStyle&, unsigned autoRepeatRowsCount);

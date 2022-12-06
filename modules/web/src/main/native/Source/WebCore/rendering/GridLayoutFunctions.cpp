@@ -27,6 +27,7 @@
 #include "GridLayoutFunctions.h"
 
 #include "LengthFunctions.h"
+#include "RenderGrid.h"
 
 namespace WebCore {
 
@@ -52,7 +53,8 @@ static bool childHasMargin(const RenderBox& child, GridTrackSizingDirection dire
 
 LayoutUnit computeMarginLogicalSizeForChild(const RenderGrid& grid, GridTrackSizingDirection direction, const RenderBox& child)
 {
-    if (!childHasMargin(child, flowAwareDirectionForChild(grid, child, direction)))
+    GridTrackSizingDirection flowAwareDirection = flowAwareDirectionForChild(grid, child, direction);
+    if (!childHasMargin(child, flowAwareDirection))
         return 0;
 
     LayoutUnit marginStart;
@@ -61,16 +63,17 @@ LayoutUnit computeMarginLogicalSizeForChild(const RenderGrid& grid, GridTrackSiz
         child.computeInlineDirectionMargins(grid, child.containingBlockLogicalWidthForContentInFragment(nullptr), child.logicalWidth(), marginStart, marginEnd);
     else
         child.computeBlockDirectionMargins(grid, marginStart, marginEnd);
-    return marginStartIsAuto(child, direction) ? marginEnd : marginEndIsAuto(child, direction) ? marginStart : marginStart + marginEnd;
+    return marginStartIsAuto(child, flowAwareDirection) ? marginEnd : marginEndIsAuto(child, flowAwareDirection) ? marginStart : marginStart + marginEnd;
 }
 
 LayoutUnit marginLogicalSizeForChild(const RenderGrid& grid, GridTrackSizingDirection direction, const RenderBox& child)
 {
     if (child.needsLayout())
         return computeMarginLogicalSizeForChild(grid, direction, child);
-    bool isRowAxis = flowAwareDirectionForChild(grid, child, direction) == ForColumns;
-    LayoutUnit marginStart = marginStartIsAuto(child, direction) ? LayoutUnit() : isRowAxis ? child.marginStart() : child.marginBefore();
-    LayoutUnit marginEnd = marginEndIsAuto(child, direction) ? LayoutUnit() : isRowAxis ? child.marginEnd() : child.marginAfter();
+    GridTrackSizingDirection flowAwareDirection = flowAwareDirectionForChild(grid, child, direction);
+    bool isRowAxis = flowAwareDirection == ForColumns;
+    LayoutUnit marginStart = marginStartIsAuto(child, flowAwareDirection) ? 0_lu : isRowAxis ? child.marginStart() : child.marginBefore();
+    LayoutUnit marginEnd = marginEndIsAuto(child, flowAwareDirection) ? 0_lu : isRowAxis ? child.marginEnd() : child.marginAfter();
     return marginStart + marginEnd;
 }
 
@@ -89,7 +92,7 @@ bool hasOverrideContainingBlockContentSizeForChild(const RenderBox& child, GridT
     return direction == ForColumns ? child.hasOverrideContainingBlockContentLogicalWidth() : child.hasOverrideContainingBlockContentLogicalHeight();
 }
 
-std::optional<LayoutUnit> overrideContainingBlockContentSizeForChild(const RenderBox& child, GridTrackSizingDirection direction)
+Optional<LayoutUnit> overrideContainingBlockContentSizeForChild(const RenderBox& child, GridTrackSizingDirection direction)
 {
     return direction == ForColumns ? child.overrideContainingBlockContentLogicalWidth() : child.overrideContainingBlockContentLogicalHeight();
 }

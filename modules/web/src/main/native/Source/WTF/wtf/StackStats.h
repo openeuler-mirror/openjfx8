@@ -23,11 +23,10 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef StackStats_h
-#define StackStats_h
+#pragma once
 
-#include "ExportMacros.h"
 #include <mutex>
+#include <wtf/ExportMacros.h>
 
 
 // Define this flag to enable Stack stats collection. This feature is useful
@@ -48,6 +47,7 @@ namespace WTF {
 #if !ENABLE(STACK_STATS)
 
 class StackStats {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     // The CheckPoint class is for marking check points corresponding
     // each location in code where a stack recursion check is being done.
@@ -73,6 +73,7 @@ public:
 #else // ENABLE(STACK_STATS)
 
 class StackStats {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     // The CheckPoint class is for marking check points corresponding
     // each location in code where a stack recursion check is being done.
@@ -143,5 +144,3 @@ private:
 } // namespace WTF
 
 using WTF::StackStats;
-
-#endif // StackStats_h

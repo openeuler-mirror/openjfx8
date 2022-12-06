@@ -38,18 +38,18 @@ namespace JSC { namespace FTL {
 
 using namespace DFG;
 
-RefPtr<PatchpointExceptionHandle> PatchpointExceptionHandle::create(
-    State& state, OSRExitDescriptor* descriptor, NodeOrigin origin, unsigned offset,
+Ref<PatchpointExceptionHandle> PatchpointExceptionHandle::create(
+    State& state, OSRExitDescriptor* descriptor, NodeOrigin origin, unsigned dfgNodeIndex, unsigned offset,
     const HandlerInfo& handler)
 {
-    return adoptRef(new PatchpointExceptionHandle(state, descriptor, origin, offset, handler));
+    return adoptRef(*new PatchpointExceptionHandle(state, descriptor, origin, dfgNodeIndex, offset, handler));
 }
 
-RefPtr<PatchpointExceptionHandle> PatchpointExceptionHandle::defaultHandle(State& state)
+RefPtr<PatchpointExceptionHandle> PatchpointExceptionHandle::defaultHandle(State& state, unsigned dfgNodeIndex)
 {
     if (!state.defaultExceptionHandle) {
         state.defaultExceptionHandle = adoptRef(
-            new PatchpointExceptionHandle(state, nullptr, NodeOrigin(), 0, HandlerInfo()));
+            new PatchpointExceptionHandle(state, nullptr, NodeOrigin(), dfgNodeIndex, 0, HandlerInfo()));
     }
     return state.defaultExceptionHandle;
 }
@@ -98,21 +98,22 @@ void PatchpointExceptionHandle::scheduleExitCreationForUnwind(
 }
 
 PatchpointExceptionHandle::PatchpointExceptionHandle(
-    State& state, OSRExitDescriptor* descriptor, NodeOrigin origin, unsigned offset,
+    State& state, OSRExitDescriptor* descriptor, NodeOrigin origin, unsigned dfgNodeIndex, unsigned offset,
     const HandlerInfo& handler)
     : m_state(state)
     , m_descriptor(descriptor)
     , m_origin(origin)
+    , m_dfgNodeIndex(dfgNodeIndex)
     , m_offset(offset)
     , m_handler(handler)
 {
 }
 
-RefPtr<OSRExitHandle> PatchpointExceptionHandle::createHandle(
+Ref<OSRExitHandle> PatchpointExceptionHandle::createHandle(
     ExitKind kind, const B3::StackmapGenerationParams& params)
 {
     return m_descriptor->emitOSRExitLater(
-        m_state, kind, m_origin, params, m_offset);
+        m_state, kind, m_origin, params, m_dfgNodeIndex, m_offset);
 }
 
 } } // namespace JSC::FTL

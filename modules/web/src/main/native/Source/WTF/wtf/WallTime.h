@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,8 +23,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef WTF_WallTime_h
-#define WTF_WallTime_h
+#pragma once
 
 #include <wtf/ClockType.h>
 #include <wtf/Seconds.h>
@@ -39,9 +38,10 @@ class PrintStream;
 // acceptable to use this to wrap NaN times, negative times, and infinite times, so long as they
 // are relative to the same clock. Use this only if wall clock time is needed. For elapsed time
 // measurement use MonotonicTime instead.
-class WallTime {
+class WallTime final {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
-    static const ClockType clockType = ClockType::Wall;
+    static constexpr ClockType clockType = ClockType::Wall;
 
     // This is the epoch. So, x.secondsSinceEpoch() should be the same as x - WallTime().
     constexpr WallTime() { }
@@ -56,6 +56,7 @@ public:
     WTF_EXPORT_PRIVATE static WallTime now();
 
     static constexpr WallTime infinity() { return fromRawSeconds(std::numeric_limits<double>::infinity()); }
+    static constexpr WallTime nan() { return fromRawSeconds(std::numeric_limits<double>::quiet_NaN()); }
 
     constexpr Seconds secondsSinceEpoch() const { return Seconds(m_value); }
 
@@ -132,6 +133,9 @@ public:
     {
         return *this;
     }
+
+    struct MarkableTraits;
+
 private:
     constexpr WallTime(double rawValue)
         : m_value(rawValue)
@@ -139,6 +143,18 @@ private:
     }
 
     double m_value { 0 };
+};
+
+struct WallTime::MarkableTraits {
+    static bool isEmptyValue(WallTime time)
+    {
+        return std::isnan(time.m_value);
+    }
+
+    static constexpr WallTime emptyValue()
+    {
+        return WallTime::nan();
+    }
 };
 
 WTF_EXPORT_PRIVATE void sleep(WallTime);
@@ -165,5 +181,3 @@ inline bool isfinite(WTF::WallTime time)
 } // namespace std
 
 using WTF::WallTime;
-
-#endif // WTF_WallTime_h

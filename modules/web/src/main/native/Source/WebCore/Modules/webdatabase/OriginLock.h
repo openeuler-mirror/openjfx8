@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "FileSystem.h"
+#include <wtf/FileSystem.h>
 #include <wtf/Lock.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/text/WTFString.h>
@@ -35,7 +35,7 @@ namespace WebCore {
 class OriginLock : public ThreadSafeRefCounted<OriginLock> {
     WTF_MAKE_NONCOPYABLE(OriginLock); WTF_MAKE_FAST_ALLOCATED;
 public:
-    OriginLock(String originPath);
+    explicit OriginLock(String originPath);
     WEBCORE_EXPORT ~OriginLock();
 
     void lock();

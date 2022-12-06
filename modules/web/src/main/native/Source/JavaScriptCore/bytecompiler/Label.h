@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,30 +28,134 @@
 
 #pragma once
 
-#include "Instruction.h"
 #include <wtf/Assertions.h>
 #include <wtf/Vector.h>
 #include <limits.h>
 
 namespace JSC {
+    template<typename Traits>
+    class BytecodeGeneratorBase;
+    struct JSGeneratorTraits;
 
-    class BytecodeGenerator;
+    template<typename Traits>
+    class GenericLabel;
 
-    class Label {
-    WTF_MAKE_NONCOPYABLE(Label);
+    template<typename Traits>
+    class GenericBoundLabel {
+        using BytecodeGenerator = BytecodeGeneratorBase<Traits>;
+        using Label = GenericLabel<Traits>;
+
     public:
-        Label() = default;
+        GenericBoundLabel()
+            : m_type(Offset)
+            , m_generator(nullptr)
+            , m_target(0)
+        { }
 
-        void setLocation(BytecodeGenerator&, unsigned);
+        explicit GenericBoundLabel(int offset)
+            : m_type(Offset)
+            , m_generator(nullptr)
+            , m_target(offset)
+        { }
 
-        int bind(int opcode, int offset) const
+        GenericBoundLabel(BytecodeGenerator* generator, Label* label)
+            : m_type(GeneratorForward)
+            , m_generator(generator)
+            , m_label(label)
+        { }
+
+        GenericBoundLabel(BytecodeGenerator* generator, int offset)
+            : m_type(GeneratorBackward)
+            , m_generator(generator)
+            , m_target(offset)
+        { }
+
+        int target()
         {
-            m_bound = true;
-            if (m_location == invalidLocation) {
-                m_unresolvedJumps.append(std::make_pair(opcode, offset));
+            switch (m_type) {
+            case Offset:
+                return m_target;
+            case GeneratorBackward:
+                return m_target - m_generator->m_writer.position();
+            case GeneratorForward:
+                return 0;
+            default:
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+        }
+
+        int saveTarget()
+        {
+            if (m_type == GeneratorForward) {
+                m_savedTarget = m_generator->m_writer.position();
                 return 0;
             }
-            return m_location - opcode;
+
+            m_savedTarget = target();
+            return m_savedTarget;
+        }
+
+        int commitTarget()
+        {
+            if (m_type == GeneratorForward) {
+                m_label->m_unresolvedJumps.append(m_savedTarget);
+                return 0;
+            }
+
+            return m_savedTarget;
+        }
+
+        operator int() { return target(); }
+
+    private:
+        enum Type : uint8_t {
+            Offset,
+            GeneratorForward,
+            GeneratorBackward,
+        };
+
+        Type m_type;
+        int m_savedTarget { 0 };
+        BytecodeGenerator* m_generator;
+        union {
+            Label* m_label;
+            int m_target;
+        };
+    };
+
+    template<typename Traits>
+    class GenericLabel {
+        WTF_MAKE_NONCOPYABLE(GenericLabel);
+        using BytecodeGenerator = BytecodeGeneratorBase<Traits>;
+        using BoundLabel = GenericBoundLabel<Traits>;
+        using JumpVector = Vector<int, 8>;
+
+    public:
+        GenericLabel() = default;
+
+        void setLocation(BytecodeGenerator&, unsigned location);
+
+        BoundLabel bind(BytecodeGenerator* generator)
+        {
+            m_bound = true;
+            if (!isForward())
+                return BoundLabel(generator, m_location);
+            return BoundLabel(generator, this);
+        }
+
+        BoundLabel bind(unsigned offset)
+        {
+            m_bound = true;
+            if (!isForward())
+                return BoundLabel(m_location - offset);
+            m_unresolvedJumps.append(offset);
+            return BoundLabel();
+        }
+
+        BoundLabel bind()
+        {
+            ASSERT(!isForward());
+            return bind(0u);
         }
 
         void ref() { ++m_refCount; }
@@ -65,23 +169,38 @@ namespace JSC {
 
         bool isForward() const { return m_location == invalidLocation; }
 
-        int bind()
-        {
-            ASSERT(!isForward());
-            return bind(0, 0);
-        }
-
         bool isBound() const { return m_bound; }
 
-    private:
-        typedef Vector<std::pair<int, int>, 8> JumpVector;
+        unsigned location() const
+        {
+            ASSERT(!isForward());
+            m_bound = true;
+            return m_location;
+        };
 
-        static const unsigned invalidLocation = UINT_MAX;
+        const JumpVector& unresolvedJumps() const { return  m_unresolvedJumps; }
+
+    private:
+        friend BoundLabel;
+
+        static constexpr unsigned invalidLocation = UINT_MAX;
 
         int m_refCount { 0 };
         unsigned m_location { invalidLocation };
         mutable bool m_bound { false };
         mutable JumpVector m_unresolvedJumps;
     };
+
+    using Label = GenericLabel<JSGeneratorTraits>;
+    using BoundLabel = GenericBoundLabel<JSGeneratorTraits>;
+
+    namespace Wasm {
+    struct GeneratorTraits;
+    using Label = GenericLabel<Wasm::GeneratorTraits>;
+    }
+
+    // This cannot be declared in the Wasm namespace as it conflicts with the
+    // ruby Wasm namespace when referencing it from BytecodeList.rb
+    using WasmBoundLabel = GenericBoundLabel<Wasm::GeneratorTraits>;
 
 } // namespace JSC

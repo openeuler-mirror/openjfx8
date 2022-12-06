@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013, 2014 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,15 +35,15 @@ namespace JSC {
 
 class JSPropertyNameEnumerator;
 class Structure;
-class ObjectToStringAdaptiveStructureWatchpoint;
 class ObjectToStringAdaptiveInferredPropertyValueWatchpoint;
+class ObjectToStringAdaptiveStructureWatchpoint;
 
 class StructureRareData final : public JSCell {
 public:
     typedef JSCell Base;
-    static const unsigned StructureFlags = Base::StructureFlags | StructureIsImmortal;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | StructureIsImmortal;
 
-    template<typename CellType>
+    template<typename CellType, SubspaceAccess>
     static IsoSubspace* subspaceFor(VM& vm)
     {
         return &vm.structureRareDataSpace;
@@ -51,29 +51,49 @@ public:
 
     static StructureRareData* create(VM&, Structure*);
 
-    static const bool needsDestruction = true;
+    static constexpr bool needsDestruction = true;
     static void destroy(JSCell*);
 
     static void visitChildren(JSCell*, SlotVisitor&);
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
 
-    Structure* previousID() const;
+    Structure* previousID() const
+    {
+        return m_previous.get();
+    }
     void setPreviousID(VM&, Structure*);
     void clearPreviousID();
 
     JSString* objectToStringValue() const;
-    void setObjectToStringValue(ExecState*, VM&, Structure* baseStructure, JSString* value, PropertySlot toStringTagSymbolSlot);
+    void setObjectToStringValue(JSGlobalObject*, VM&, Structure* baseStructure, JSString* value, const PropertySlot& toStringTagSymbolSlot);
+    void giveUpOnObjectToStringValueCache() { m_objectToStringValue.setWithoutWriteBarrier(objectToStringCacheGiveUpMarker()); }
+    bool canCacheObjectToStringValue() { return m_objectToStringValue.unvalidatedGet() == objectToStringCacheGiveUpMarker(); }
+    static JSString* objectToStringCacheGiveUpMarker() { return bitwise_cast<JSString*>(static_cast<uintptr_t>(1)); }
 
     JSPropertyNameEnumerator* cachedPropertyNameEnumerator() const;
     void setCachedPropertyNameEnumerator(VM&, JSPropertyNameEnumerator*);
+
+    JSImmutableButterfly* cachedOwnKeys() const;
+    JSImmutableButterfly* cachedOwnKeysIgnoringSentinel() const;
+    JSImmutableButterfly* cachedOwnKeysConcurrently() const;
+    void setCachedOwnKeys(VM&, JSImmutableButterfly*);
 
     Box<InlineWatchpointSet> copySharedPolyProtoWatchpoint() const { return m_polyProtoWatchpoint; }
     const Box<InlineWatchpointSet>& sharedPolyProtoWatchpoint() const { return m_polyProtoWatchpoint; }
     void setSharedPolyProtoWatchpoint(Box<InlineWatchpointSet>&& sharedPolyProtoWatchpoint) { m_polyProtoWatchpoint = WTFMove(sharedPolyProtoWatchpoint); }
     bool hasSharedPolyProtoWatchpoint() const { return static_cast<bool>(m_polyProtoWatchpoint); }
 
+    static JSImmutableButterfly* cachedOwnKeysSentinel() { return bitwise_cast<JSImmutableButterfly*>(static_cast<uintptr_t>(1)); }
+
+    static ptrdiff_t offsetOfCachedOwnKeys()
+    {
+        return OBJECT_OFFSETOF(StructureRareData, m_cachedOwnKeys);
+    }
+
     DECLARE_EXPORT_INFO;
+
+    void finalizeUnconditionally(VM&);
 
 private:
     friend class Structure;
@@ -86,14 +106,19 @@ private:
 
     WriteBarrier<Structure> m_previous;
     WriteBarrier<JSString> m_objectToStringValue;
+    // FIXME: We should have some story for clearing these property names caches in GC.
+    // https://bugs.webkit.org/show_bug.cgi?id=192659
     WriteBarrier<JSPropertyNameEnumerator> m_cachedPropertyNameEnumerator;
+    WriteBarrier<JSImmutableButterfly> m_cachedOwnKeys;
 
     typedef HashMap<PropertyOffset, RefPtr<WatchpointSet>, WTF::IntHash<PropertyOffset>, WTF::UnsignedWithZeroKeyHashTraits<PropertyOffset>> PropertyWatchpointMap;
     std::unique_ptr<PropertyWatchpointMap> m_replacementWatchpointSets;
     Bag<ObjectToStringAdaptiveStructureWatchpoint> m_objectToStringAdaptiveWatchpointSet;
     std::unique_ptr<ObjectToStringAdaptiveInferredPropertyValueWatchpoint> m_objectToStringAdaptiveInferredValueWatchpoint;
     Box<InlineWatchpointSet> m_polyProtoWatchpoint;
-    bool m_giveUpOnObjectToStringValueCache;
+
+    PropertyOffset m_maxOffset;
+    PropertyOffset m_transitionOffset;
 };
 
 } // namespace JSC

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,38 +29,34 @@
 #include "CallFrame.h"
 #include "CatchScope.h"
 #include "CodeBlock.h"
-#include "Disassembler.h"
-#include "EntryFrame.h"
 #include "Interpreter.h"
-#include "JSCInlines.h"
-#include "JSCJSValue.h"
+#include "JSCJSValueInlines.h"
 #include "LLIntData.h"
-#include "LLIntOpcode.h"
-#include "LLIntThunks.h"
 #include "Opcode.h"
 #include "ShadowChicken.h"
 #include "VMInlines.h"
 
 namespace JSC {
 
-void genericUnwind(VM* vm, ExecState* callFrame)
+void genericUnwind(VM& vm, CallFrame* callFrame)
 {
-    auto scope = DECLARE_CATCH_SCOPE(*vm);
-    CallFrame* topJSCallFrame = vm->topJSCallFrame();
-    if (Options::breakOnThrow()) {
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    CallFrame* topJSCallFrame = vm.topJSCallFrame();
+    if (UNLIKELY(Options::breakOnThrow())) {
         CodeBlock* codeBlock = topJSCallFrame->codeBlock();
         dataLog("In call frame ", RawPointer(topJSCallFrame), " for code block ", codeBlock, "\n");
-        CRASH();
+        WTFBreakpointTrap();
     }
 
-    vm->shadowChicken().log(*vm, topJSCallFrame, ShadowChicken::Packet::throwPacket());
+    if (auto* shadowChicken = vm.shadowChicken())
+        shadowChicken->log(vm, topJSCallFrame, ShadowChicken::Packet::throwPacket());
 
     Exception* exception = scope.exception();
     RELEASE_ASSERT(exception);
-    HandlerInfo* handler = vm->interpreter->unwind(*vm, callFrame, exception); // This may update callFrame.
+    HandlerInfo* handler = vm.interpreter->unwind(vm, callFrame, exception); // This may update callFrame.
 
     void* catchRoutine;
-    Instruction* catchPCForInterpreter = 0;
+    const Instruction* catchPCForInterpreter = nullptr;
     if (handler) {
         // handler->target is meaningless for getting a code offset when catching
         // the exception in a DFG/FTL frame. This bytecode target offset could be
@@ -69,21 +65,26 @@ void genericUnwind(VM* vm, ExecState* callFrame)
         // and can cause an overflow. OSR exit properly exits to handler->target
         // in the proper frame.
         if (!JITCode::isOptimizingJIT(callFrame->codeBlock()->jitType()))
-            catchPCForInterpreter = &callFrame->codeBlock()->instructions()[handler->target];
+            catchPCForInterpreter = callFrame->codeBlock()->instructions().at(handler->target).ptr();
 #if ENABLE(JIT)
         catchRoutine = handler->nativeCode.executableAddress();
 #else
-        catchRoutine = catchPCForInterpreter->u.pointer;
+        if (catchPCForInterpreter->isWide32())
+            catchRoutine = LLInt::getWide32CodePtr(catchPCForInterpreter->opcodeID());
+        else if (catchPCForInterpreter->isWide16())
+            catchRoutine = LLInt::getWide16CodePtr(catchPCForInterpreter->opcodeID());
+        else
+            catchRoutine = LLInt::getCodePtr(catchPCForInterpreter->opcodeID());
 #endif
     } else
         catchRoutine = LLInt::getCodePtr<ExceptionHandlerPtrTag>(handleUncaughtException).executableAddress();
 
-    ASSERT(bitwise_cast<uintptr_t>(callFrame) < bitwise_cast<uintptr_t>(vm->topEntryFrame));
+    ASSERT(bitwise_cast<uintptr_t>(callFrame) < bitwise_cast<uintptr_t>(vm.topEntryFrame));
 
     assertIsTaggedWith(catchRoutine, ExceptionHandlerPtrTag);
-    vm->callFrameForCatch = callFrame;
-    vm->targetMachinePCForThrow = catchRoutine;
-    vm->targetInterpreterPCForThrow = catchPCForInterpreter;
+    vm.callFrameForCatch = callFrame;
+    vm.targetMachinePCForThrow = catchRoutine;
+    vm.targetInterpreterPCForThrow = catchPCForInterpreter;
 
     RELEASE_ASSERT(catchRoutine);
 }

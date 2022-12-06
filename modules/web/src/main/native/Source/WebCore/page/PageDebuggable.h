@@ -41,14 +41,14 @@ public:
     PageDebuggable(Page&);
     ~PageDebuggable() = default;
 
-    Inspector::RemoteControllableTarget::Type type() const final { return Inspector::RemoteControllableTarget::Type::Web; }
+    Inspector::RemoteControllableTarget::Type type() const final { return Inspector::RemoteControllableTarget::Type::Page; }
 
     String name() const final;
     String url() const final;
     bool hasLocalDebugger() const final;
 
-    void connect(Inspector::FrontendChannel*, bool isAutomaticConnection = false, bool immediatelyPause = false) final;
-    void disconnect(Inspector::FrontendChannel*) final;
+    void connect(Inspector::FrontendChannel&, bool isAutomaticConnection = false, bool immediatelyPause = false) final;
+    void disconnect(Inspector::FrontendChannel&) final;
     void dispatchMessageFromRemote(const String& message) final;
     void setIndicating(bool) final;
 
@@ -58,11 +58,10 @@ public:
 private:
     Page& m_page;
     String m_nameOverride;
-    bool m_forcedDeveloperExtrasEnabled { false };
 };
 
 } // namespace WebCore
 
-SPECIALIZE_TYPE_TRAITS_CONTROLLABLE_TARGET(WebCore::PageDebuggable, Web);
+SPECIALIZE_TYPE_TRAITS_CONTROLLABLE_TARGET(WebCore::PageDebuggable, Page);
 
 #endif // ENABLE(REMOTE_INSPECTOR)

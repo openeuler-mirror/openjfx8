@@ -28,7 +28,6 @@
 
 #if ENABLE(DFG_JIT)
 
-#include "JSCInlines.h"
 #include <wtf/CommaPrinter.h>
 #include <wtf/StringPrintStream.h>
 
@@ -88,8 +87,14 @@ void dumpNodeFlags(PrintStream& actualOut, NodeFlags flags)
     if (flags & NodeMayHaveDoubleResult)
         out.print(comma, "MayHaveDoubleResult");
 
-    if (flags & NodeMayHaveNonNumberResult)
-        out.print(comma, "MayHaveNonNumberResult");
+    if (flags & NodeMayHaveBigInt32Result)
+        out.print(comma, "MayHaveBigInt32Result");
+
+    if (flags & NodeMayHaveHeapBigIntResult)
+        out.print(comma, "MayHaveHeapBigIntResult");
+
+    if (flags & NodeMayHaveNonNumericResult)
+        out.print(comma, "MayHaveNonNumericResult");
 
     if (flags & NodeMayOverflowInt52)
         out.print(comma, "MayOverflowInt52");

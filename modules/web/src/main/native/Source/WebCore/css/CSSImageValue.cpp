@@ -34,10 +34,11 @@
 
 namespace WebCore {
 
-CSSImageValue::CSSImageValue(URL&& url)
+CSSImageValue::CSSImageValue(URL&& url, LoadedFromOpaqueSource loadedFromOpaqueSource)
     : CSSValue(ImageClass)
     , m_url(WTFMove(url))
     , m_accessedImage(false)
+    , m_loadedFromOpaqueSource(loadedFromOpaqueSource)
 {
 }
 
@@ -62,7 +63,9 @@ CachedImage* CSSImageValue::loadImage(CachedResourceLoader& loader, const Resour
     if (!m_accessedImage) {
         m_accessedImage = true;
 
-        CachedResourceRequest request(ResourceRequest(loader.document()->completeURL(m_url.string())), options);
+        ResourceLoaderOptions loadOptions = options;
+        loadOptions.loadedFromOpaqueSource = m_loadedFromOpaqueSource;
+        CachedResourceRequest request(ResourceRequest(loader.document()->completeURL(m_url.string())), loadOptions);
         if (m_initiatorName.isEmpty())
             request.setInitiator(cachedResourceRequestInitiators().css);
         else
@@ -91,13 +94,13 @@ bool CSSImageValue::equals(const CSSImageValue& other) const
 
 String CSSImageValue::customCSSText() const
 {
-    return serializeURL(m_url);
+    return serializeURL(m_url.string());
 }
 
 Ref<DeprecatedCSSOMValue> CSSImageValue::createDeprecatedCSSOMWrapper(CSSStyleDeclaration& styleDeclaration) const
 {
     // NOTE: We expose CSSImageValues as URI primitive values in CSSOM to maintain old behavior.
-    return DeprecatedCSSOMPrimitiveValue::create(CSSPrimitiveValue::create(m_url, CSSPrimitiveValue::CSS_URI), styleDeclaration);
+    return DeprecatedCSSOMPrimitiveValue::create(CSSPrimitiveValue::create(m_url.string(), CSSUnitType::CSS_URI), styleDeclaration);
 }
 
 bool CSSImageValue::knownToBeOpaque(const RenderElement& renderer) const

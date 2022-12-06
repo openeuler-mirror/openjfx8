@@ -29,9 +29,14 @@ import logging
 import string
 from string import Template
 
-from .generator import Generator, ucfirst
-from .objc_generator import ObjCGenerator
-from .objc_generator_templates import ObjCGeneratorTemplates as ObjCTemplates
+try:
+    from .generator import Generator, ucfirst
+    from .objc_generator import ObjCGenerator
+    from .objc_generator_templates import ObjCGeneratorTemplates as ObjCTemplates
+except ValueError:
+    from generator import Generator, ucfirst
+    from objc_generator import ObjCGenerator
+    from objc_generator_templates import ObjCGeneratorTemplates as ObjCTemplates
 
 log = logging.getLogger('global')
 
@@ -65,10 +70,11 @@ class ObjCInternalHeaderGenerator(ObjCGenerator):
         return '\n\n'.join(sections)
 
     def _generate_event_dispatcher_private_interfaces(self, domain):
+        if not len(self.events_for_domain(domain)):
+            return ''
+
         lines = []
-        if len(self.events_for_domain(domain)):
-            objc_name = '%s%sDomainEventDispatcher' % (self.objc_prefix(), domain.domain_name)
-            lines.append('@interface %s (Private)' % objc_name)
-            lines.append('- (instancetype)initWithController:(Inspector::AugmentableInspectorController*)controller;')
-            lines.append('@end')
-        return '\n'.join(lines)
+        lines.append('@interface %s%sDomainEventDispatcher (Private)' % (self.objc_prefix(), domain.domain_name))
+        lines.append('- (instancetype)initWithController:(Inspector::AugmentableInspectorController*)controller;')
+        lines.append('@end')
+        return self.wrap_with_guard_for_condition(domain.condition, '\n'.join(lines))

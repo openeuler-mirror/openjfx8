@@ -26,13 +26,17 @@
 
 #pragma once
 
-#include "URL.h"
-#include <wtf/EnumTraits.h>
+#include <wtf/Optional.h>
+#include <wtf/URL.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
 
 #ifdef __OBJC__
 #include <objc/objc.h>
+#endif
+
+#if USE(SOUP)
+typedef struct _SoupCookie SoupCookie;
 #endif
 
 namespace WebCore {
@@ -45,7 +49,7 @@ struct Cookie {
     }
 
     template<class Encoder> void encode(Encoder&) const;
-    template<class Decoder> static std::optional<Cookie> decode(Decoder&);
+    template<class Decoder> static Optional<Cookie> decode(Decoder&);
 
     WEBCORE_EXPORT bool operator==(const Cookie&) const;
     WEBCORE_EXPORT unsigned hash() const;
@@ -73,13 +77,20 @@ struct Cookie {
             && commentURL.isNull();
     }
 
+    bool isKeyEqual(const Cookie& otherCookie) const
+    {
+        return name == otherCookie.name
+            && domain == otherCookie.domain
+            && path == otherCookie.path;
+    }
+
     String name;
     String value;
     String domain;
     String path;
     // Creation and expiration dates are expressed as milliseconds since the UNIX epoch.
     double created { 0 };
-    double expires { 0 };
+    Optional<double> expires;
     bool httpOnly { false };
     bool secure { false };
     bool session { false };
@@ -123,35 +134,35 @@ void Cookie::encode(Encoder& encoder) const
 }
 
 template<class Decoder>
-std::optional<Cookie> Cookie::decode(Decoder& decoder)
+Optional<Cookie> Cookie::decode(Decoder& decoder)
 {
     Cookie cookie;
     if (!decoder.decode(cookie.name))
-        return std::nullopt;
+        return WTF::nullopt;
     if (!decoder.decode(cookie.value))
-        return std::nullopt;
+        return WTF::nullopt;
     if (!decoder.decode(cookie.domain))
-        return std::nullopt;
+        return WTF::nullopt;
     if (!decoder.decode(cookie.path))
-        return std::nullopt;
+        return WTF::nullopt;
     if (!decoder.decode(cookie.created))
-        return std::nullopt;
+        return WTF::nullopt;
     if (!decoder.decode(cookie.expires))
-        return std::nullopt;
+        return WTF::nullopt;
     if (!decoder.decode(cookie.httpOnly))
-        return std::nullopt;
+        return WTF::nullopt;
     if (!decoder.decode(cookie.secure))
-        return std::nullopt;
+        return WTF::nullopt;
     if (!decoder.decode(cookie.session))
-        return std::nullopt;
+        return WTF::nullopt;
     if (!decoder.decode(cookie.comment))
-        return std::nullopt;
+        return WTF::nullopt;
     if (!decoder.decode(cookie.commentURL))
-        return std::nullopt;
+        return WTF::nullopt;
     if (!decoder.decode(cookie.ports))
-        return std::nullopt;
+        return WTF::nullopt;
     if (!decoder.decode(cookie.sameSite))
-        return std::nullopt;
+        return WTF::nullopt;
     return cookie;
 }
 
@@ -159,13 +170,14 @@ std::optional<Cookie> Cookie::decode(Decoder& decoder)
 
 namespace WTF {
     template<typename T> struct DefaultHash;
-    template<> struct DefaultHash<WebCore::Cookie> {
-        typedef WebCore::CookieHash Hash;
-    };
+    template<> struct DefaultHash<WebCore::Cookie> : WebCore::CookieHash { };
     template<> struct HashTraits<WebCore::Cookie> : GenericHashTraits<WebCore::Cookie> {
         static WebCore::Cookie emptyValue() { return { }; }
         static void constructDeletedValue(WebCore::Cookie& slot) { slot = WebCore::Cookie(WTF::HashTableDeletedValue); }
         static bool isDeletedValue(const WebCore::Cookie& slot) { return slot.name.isHashTableDeletedValue(); }
+
+        static const bool hasIsEmptyValueFunction = true;
+        static bool isEmptyValue(const WebCore::Cookie& slot) { return slot.isNull(); }
     };
     template<> struct EnumTraits<WebCore::Cookie::SameSitePolicy> {
     using values = EnumValues<

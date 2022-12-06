@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(JIT)
+#if ENABLE(ASSEMBLER)
 
 #include "FPRInfo.h"
 #include "GPRInfo.h"
@@ -194,10 +194,10 @@ private:
         return !!(m_set[i >> 3] & (1 << (i & 7)));
     }
 
-    static const unsigned totalNumberOfRegisters =
+    static constexpr unsigned totalNumberOfRegisters =
         GPRInfo::numberOfRegisters + FPRInfo::numberOfRegisters;
 
-    static const unsigned numberOfBytesInTempRegisterSet =
+    static constexpr unsigned numberOfBytesInTempRegisterSet =
         (totalNumberOfRegisters + 7) >> 3;
 
     uint8_t m_set[numberOfBytesInTempRegisterSet];
@@ -205,7 +205,7 @@ private:
 
 } // namespace JSC
 
-#else // ENABLE(JIT) -> so if JIT is disabled
+#else // ENABLE(ASSEMBLER) -> so if JIT is disabled
 
 namespace JSC {
 
@@ -216,4 +216,4 @@ struct TempRegisterSet { };
 
 } // namespace JSC
 
-#endif // ENABLE(JIT)
+#endif // ENABLE(ASSEMBLER)

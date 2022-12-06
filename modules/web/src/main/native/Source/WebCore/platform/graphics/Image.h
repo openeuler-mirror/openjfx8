@@ -35,6 +35,7 @@
 #include "ImageTypes.h"
 #include "NativeImage.h"
 #include "Timer.h"
+#include <wtf/EnumTraits.h>
 #include <wtf/Optional.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
@@ -58,6 +59,9 @@ typedef struct HBITMAP__ *HBITMAP;
 
 #if PLATFORM(GTK)
 typedef struct _GdkPixbuf GdkPixbuf;
+#if USE(GTK4)
+typedef struct _GdkTexture GdkTexture;
+#endif
 #endif
 
 namespace WebCore {
@@ -68,7 +72,7 @@ class FloatSize;
 class GraphicsContext;
 class GraphicsContextImpl;
 class SharedBuffer;
-class URL;
+struct ImagePaintingOptions;
 struct Length;
 
 // This class gets notified when an image creates or destroys decoded frames and when it advances animation frames.
@@ -93,6 +97,7 @@ public:
     virtual bool isGradientImage() const { return false; }
     virtual bool isSVGImage() const { return false; }
     virtual bool isPDFDocumentImage() const { return false; }
+    virtual bool isCustomPaintImage() const { return false; }
 
     virtual bool currentFrameKnownToBeOpaque() const = 0;
     virtual bool isAnimated() const { return false; }
@@ -110,15 +115,12 @@ public:
     virtual bool hasRelativeHeight() const { return false; }
     virtual void computeIntrinsicDimensions(Length& intrinsicWidth, Length& intrinsicHeight, FloatSize& intrinsicRatio);
 
-    virtual FloatSize size() const = 0;
+    virtual FloatSize size(ImageOrientation = ImageOrientation::FromImage) const = 0;
     FloatRect rect() const { return FloatRect(FloatPoint(), size()); }
     float width() const { return size().width(); }
     float height() const { return size().height(); }
-    virtual std::optional<IntPoint> hotSpot() const { return std::nullopt; }
-
-#if PLATFORM(IOS)
-    virtual FloatSize originalSize() const { return size(); }
-#endif
+    virtual Optional<IntPoint> hotSpot() const { return WTF::nullopt; }
+    virtual ImageOrientation orientation() const { return ImageOrientation::FromImage; }
 
     WEBCORE_EXPORT EncodedDataStatus setData(RefPtr<SharedBuffer>&& data, bool allDataReceived);
     virtual EncodedDataStatus dataChanged(bool /*allDataReceived*/) { return EncodedDataStatus::Unknown; }
@@ -150,8 +152,9 @@ public:
     enum TileRule { StretchTile, RoundTile, SpaceTile, RepeatTile };
 
     virtual NativeImagePtr nativeImage(const GraphicsContext* = nullptr) { return nullptr; }
-    virtual NativeImagePtr nativeImageOfSize(const IntSize&, const GraphicsContext* = nullptr) { return nullptr; }
     virtual NativeImagePtr nativeImageForCurrentFrame(const GraphicsContext* = nullptr) { return nullptr; }
+    virtual NativeImagePtr nativeImageForCurrentFrameRespectingOrientation(const GraphicsContext* = nullptr) { return nullptr; }
+    virtual NativeImagePtr nativeImageOfSize(const IntSize&, const GraphicsContext* = nullptr) { return nullptr; }
 
     // Accessors for native image formats.
 
@@ -171,6 +174,9 @@ public:
 
 #if PLATFORM(GTK)
     virtual GdkPixbuf* getGdkPixbuf() { return nullptr; }
+#if USE(GTK4)
+    virtual GdkTexture* gdkTexture() { return nullptr; }
+#endif
 #endif
 
 #if PLATFORM(JAVA)
@@ -178,10 +184,9 @@ public:
     virtual void drawImage(GraphicsContext&, const FloatRect& dstRect, const FloatRect& srcRect, CompositeOperator, BlendMode);
 #endif
 
-    virtual void drawPattern(GraphicsContext&, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform& patternTransform,
-        const FloatPoint& phase, const FloatSize& spacing, CompositeOperator, BlendMode = BlendMode::Normal);
+    virtual void drawPattern(GraphicsContext&, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, const ImagePaintingOptions& = { });
 
-#if !ASSERT_DISABLED
+#if ASSERT_ENABLED
     virtual bool notSolidColor() { return true; }
 #endif
 
@@ -195,9 +200,9 @@ protected:
 #if PLATFORM(WIN)
     virtual void drawFrameMatchingSourceSize(GraphicsContext&, const FloatRect& dstRect, const IntSize& srcSize, CompositeOperator) { }
 #endif
-    virtual ImageDrawResult draw(GraphicsContext&, const FloatRect& dstRect, const FloatRect& srcRect, CompositeOperator, BlendMode, DecodingMode, ImageOrientationDescription) = 0;
-    ImageDrawResult drawTiled(GraphicsContext&, const FloatRect& dstRect, const FloatPoint& srcPoint, const FloatSize& tileSize, const FloatSize& spacing, CompositeOperator, BlendMode, DecodingMode);
-    ImageDrawResult drawTiled(GraphicsContext&, const FloatRect& dstRect, const FloatRect& srcRect, const FloatSize& tileScaleFactor, TileRule hRule, TileRule vRule, CompositeOperator);
+    virtual ImageDrawResult draw(GraphicsContext&, const FloatRect& dstRect, const FloatRect& srcRect, const ImagePaintingOptions& = { }) = 0;
+    ImageDrawResult drawTiled(GraphicsContext&, const FloatRect& dstRect, const FloatPoint& srcPoint, const FloatSize& tileSize, const FloatSize& spacing, const ImagePaintingOptions& = { });
+    ImageDrawResult drawTiled(GraphicsContext&, const FloatRect& dstRect, const FloatRect& srcRect, const FloatSize& tileScaleFactor, TileRule hRule, TileRule vRule, const ImagePaintingOptions& = { });
 
     // Supporting tiled drawing
     virtual Color singlePixelSolidColor() const { return Color(); }
@@ -206,6 +211,11 @@ private:
     RefPtr<SharedBuffer> m_encodedImageData;
     ImageObserver* m_imageObserver;
     std::unique_ptr<Timer> m_animationStartTimer;
+};
+
+class ImageHandle {
+public:
+    RefPtr<Image> image;
 };
 
 WTF::TextStream& operator<<(WTF::TextStream&, const Image&);
@@ -217,3 +227,17 @@ SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::ToClassName) \
     static bool isType(const WebCore::Image& image) { return image.is##ToClassName(); } \
 SPECIALIZE_TYPE_TRAITS_END()
 
+
+namespace WTF {
+
+template<> struct EnumTraits<WebCore::Image::TileRule> {
+    using values = EnumValues<
+        WebCore::Image::TileRule,
+        WebCore::Image::TileRule::StretchTile,
+        WebCore::Image::TileRule::RoundTile,
+        WebCore::Image::TileRule::SpaceTile,
+        WebCore::Image::TileRule::RepeatTile
+    >;
+};
+
+} // namespace WTF

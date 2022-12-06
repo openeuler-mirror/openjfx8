@@ -23,6 +23,7 @@
 
 #include "Document.h"
 #include "Frame.h"
+#include "FrameLoader.h"
 #include "FrameView.h"
 #include "HTMLFrameOwnerElement.h"
 #include "Page.h"
@@ -41,7 +42,7 @@ FrameTree::~FrameTree()
         child->setView(nullptr);
 }
 
-void FrameTree::setName(const AtomicString& name)
+void FrameTree::setName(const AtomString& name)
 {
     m_name = name;
     if (!parent()) {
@@ -93,7 +94,7 @@ void FrameTree::removeChild(Frame& child)
     m_scopedChildCount = invalidCount;
 }
 
-AtomicString FrameTree::uniqueChildName(const AtomicString& requestedName) const
+AtomString FrameTree::uniqueChildName(const AtomString& requestedName) const
 {
     // If the requested name (the frame's "name" attribute) is unique, just use that.
     if (!requestedName.isEmpty() && !child(requestedName) && !equalIgnoringASCIICase(requestedName, "_blank"))
@@ -104,7 +105,7 @@ AtomicString FrameTree::uniqueChildName(const AtomicString& requestedName) const
     return generateUniqueName();
 }
 
-AtomicString FrameTree::generateUniqueName() const
+AtomString FrameTree::generateUniqueName() const
 {
     auto& top = this->top();
     if (&top.tree() != this)
@@ -141,7 +142,7 @@ inline Frame* FrameTree::scopedChild(unsigned index, TreeScope* scope) const
     return nullptr;
 }
 
-inline Frame* FrameTree::scopedChild(const AtomicString& name, TreeScope* scope) const
+inline Frame* FrameTree::scopedChild(const AtomString& name, TreeScope* scope) const
 {
     if (!scope)
         return nullptr;
@@ -172,7 +173,7 @@ Frame* FrameTree::scopedChild(unsigned index) const
     return scopedChild(index, m_thisFrame.document());
 }
 
-Frame* FrameTree::scopedChild(const AtomicString& name) const
+Frame* FrameTree::scopedChild(const AtomString& name) const
 {
     return scopedChild(name, m_thisFrame.document());
 }
@@ -187,8 +188,16 @@ unsigned FrameTree::scopedChildCount() const
 unsigned FrameTree::childCount() const
 {
     unsigned count = 0;
-    for (Frame* result = firstChild(); result; result = result->tree().nextSibling())
+    for (auto* child = firstChild(); child; child = child->tree().nextSibling())
         ++count;
+    return count;
+}
+
+unsigned FrameTree::descendantCount() const
+{
+    unsigned count = 0;
+    for (auto* child = firstChild(); child; child = child->tree().nextSibling())
+        count += 1 + child->tree().descendantCount();
     return count;
 }
 
@@ -200,7 +209,7 @@ Frame* FrameTree::child(unsigned index) const
     return result;
 }
 
-Frame* FrameTree::child(const AtomicString& name) const
+Frame* FrameTree::child(const AtomString& name) const
 {
     for (Frame* child = firstChild(); child; child = child->tree().nextSibling())
         if (child->tree().uniqueName() == name)
@@ -208,7 +217,19 @@ Frame* FrameTree::child(const AtomicString& name) const
     return nullptr;
 }
 
-Frame* FrameTree::find(const AtomicString& name) const
+// FrameTree::find() only returns frames in pages that are related to the active
+// page by an opener <-> openee relationship.
+static bool isFrameFamiliarWith(Frame& frameA, Frame& frameB)
+{
+    if (frameA.page() == frameB.page())
+        return true;
+
+    auto* frameAOpener = frameA.mainFrame().loader().opener();
+    auto* frameBOpener = frameB.mainFrame().loader().opener();
+    return (frameAOpener && frameAOpener->page() == frameB.page()) || (frameBOpener && frameBOpener->page() == frameA.page()) || (frameAOpener && frameBOpener && frameAOpener->page() == frameBOpener->page());
+}
+
+Frame* FrameTree::find(const AtomString& name, Frame& activeFrame) const
 {
     // FIXME: _current is not part of the HTML specification.
     if (equalIgnoringASCIICase(name, "_self") || name == "_current" || name.isEmpty())
@@ -245,8 +266,8 @@ Frame* FrameTree::find(const AtomicString& name) const
     for (auto* otherPage : page->group().pages()) {
         if (otherPage == page)
             continue;
-        for (Frame* frame = &otherPage->mainFrame(); frame; frame = frame->tree().traverseNext()) {
-            if (frame->tree().uniqueName() == name)
+        for (auto* frame = &otherPage->mainFrame(); frame; frame = frame->tree().traverseNext()) {
+            if (frame->tree().uniqueName() == name && isFrameFamiliarWith(activeFrame, *frame))
                 return frame;
         }
     }

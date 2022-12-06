@@ -30,14 +30,22 @@
 
 #include "BlockFormattingContext.h"
 #include "BlockFormattingState.h"
-#include "BlockInvalidation.h"
 #include "DisplayBox.h"
+#include "DisplayPainter.h"
 #include "InlineFormattingContext.h"
 #include "InlineFormattingState.h"
-#include "InlineInvalidation.h"
-#include "Invalidation.h"
+#include "InvalidationContext.h"
+#include "InvalidationState.h"
 #include "LayoutBox.h"
-#include "LayoutContainer.h"
+#include "LayoutContainerBox.h"
+#include "LayoutPhase.h"
+#include "LayoutTreeBuilder.h"
+#include "RenderStyleConstants.h"
+#include "RenderView.h"
+#include "RuntimeEnabledFeatures.h"
+#include "TableFormattingContext.h"
+#include "TableFormattingState.h"
+#include "TableWrapperBlockFormattingContext.h"
 #include <wtf/IsoMallocInlines.h>
 
 namespace WebCore {
@@ -45,116 +53,93 @@ namespace Layout {
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(LayoutContext);
 
-LayoutContext::LayoutContext()
+LayoutContext::LayoutContext(LayoutState& layoutState)
+    : m_layoutState(layoutState)
 {
 }
 
-void LayoutContext::initializeRoot(const Container& root, const LayoutSize& containerSize)
+void LayoutContext::layout(const LayoutSize& rootContentBoxSize, InvalidationState& invalidationState)
 {
-    ASSERT(root.establishesFormattingContext());
-
-    m_root = makeWeakPtr(const_cast<Container&>(root));
-    auto& displayBox = createDisplayBox(root);
-
-    // FIXME: m_root could very well be a formatting context root with ancestors and resolvable border and padding (as opposed to the topmost root)
+    // Set the geometry on the root.
+    // Note that we never layout the root box. It has to have an already computed geometry (in case of ICB, it's the view geometry).
+    // ICB establishes the initial BFC, but it does not live in a formatting context and while a non-ICB root(subtree layout) has to have a formatting context,
+    // we could not lay it out even if we wanted to since it's outside of this LayoutContext.
+    auto& displayBox = layoutState().displayBoxForRootLayoutBox();
     displayBox.setHorizontalMargin({ });
     displayBox.setVerticalMargin({ });
-    displayBox.setVerticalNonCollapsedMargin({ });
     displayBox.setBorder({ });
     displayBox.setPadding({ });
-    displayBox.setContentBoxHeight(containerSize.height());
-    displayBox.setContentBoxWidth(containerSize.width());
     displayBox.setTopLeft({ });
+    displayBox.setContentBoxHeight(rootContentBoxSize.height());
+    displayBox.setContentBoxWidth(rootContentBoxSize.width());
 
-    m_formattingContextRootListForLayout.add(&root);
+    layoutWithPreparedRootGeometry(invalidationState);
 }
 
-void LayoutContext::updateLayout()
+void LayoutContext::layoutWithPreparedRootGeometry(InvalidationState& invalidationState)
 {
-    ASSERT(!m_formattingContextRootListForLayout.isEmpty());
-    for (auto* layoutRoot : m_formattingContextRootListForLayout)
-        layoutFormattingContextSubtree(*layoutRoot);
-    m_formattingContextRootListForLayout.clear();
+    PhaseScope scope(Phase::Type::Layout);
+
+    auto& formattingContextRootsForLayout = invalidationState.formattingContextRoots();
+    // When invalidation is empty, we assume constraint mutation and start running layout on the context root. Layout logic should be able to figure out the damage.
+    if (formattingContextRootsForLayout.computesEmpty())
+        return layoutFormattingContextSubtree(m_layoutState.root(), invalidationState);
+
+    for (auto& formattingContextRoot : formattingContextRootsForLayout)
+        layoutFormattingContextSubtree(formattingContextRoot, invalidationState);
 }
 
-void LayoutContext::layoutFormattingContextSubtree(const Box& layoutRoot)
+void LayoutContext::layoutFormattingContextSubtree(const ContainerBox& formattingContextRoot, InvalidationState& invalidationState)
 {
-    RELEASE_ASSERT(layoutRoot.establishesFormattingContext());
-    auto formattingContext = this->formattingContext(layoutRoot);
-    formattingContext->layout(*this, establishedFormattingState(layoutRoot));
-    formattingContext->layoutOutOfFlowDescendants(*this, layoutRoot);
-}
+    RELEASE_ASSERT(formattingContextRoot.establishesFormattingContext());
+    if (!formattingContextRoot.hasChild())
+        return;
 
-Display::Box& LayoutContext::createDisplayBox(const Box& layoutBox)
-{
-    std::unique_ptr<Display::Box> displayBox(new Display::Box(layoutBox.style()));
-    auto* displayBoxPtr = displayBox.get();
-    m_layoutToDisplayBox.add(&layoutBox, WTFMove(displayBox));
-    return *displayBoxPtr;
-}
+    auto formattingContext = createFormattingContext(formattingContextRoot, layoutState());
+    auto& displayBox = layoutState().displayBoxForLayoutBox(formattingContextRoot);
 
-void LayoutContext::styleChanged(const Box& layoutBox, StyleDiff styleDiff)
-{
-    auto& formattingState = formattingStateForBox(layoutBox);
-    const Container* invalidationRoot = nullptr;
-    if (is<BlockFormattingState>(formattingState))
-        invalidationRoot = BlockInvalidation::invalidate(layoutBox, styleDiff, *this, downcast<BlockFormattingState>(formattingState)).root;
-    else if (is<InlineFormattingState>(formattingState))
-        invalidationRoot = InlineInvalidation::invalidate(layoutBox, styleDiff, *this, downcast<InlineFormattingState>(formattingState)).root;
-    else
-        ASSERT_NOT_IMPLEMENTED_YET();
-    ASSERT(invalidationRoot);
-    m_formattingContextRootListForLayout.addVoid(invalidationRoot);
-}
-
-void LayoutContext::markNeedsUpdate(const Box&, OptionSet<UpdateType>)
-{
-}
-
-FormattingState& LayoutContext::formattingStateForBox(const Box& layoutBox) const
-{
-    auto& root = layoutBox.formattingContextRoot();
-    RELEASE_ASSERT(m_formattingStates.contains(&root));
-    return *m_formattingStates.get(&root);
-}
-
-FormattingState& LayoutContext::establishedFormattingState(const Box& formattingRoot)
-{
-    if (formattingRoot.establishesInlineFormattingContext()) {
-        return *m_formattingStates.ensure(&formattingRoot, [&] {
-
-            // If the block container box that initiates this inline formatting context also establishes a block context, the floats outside of the formatting root
-            // should not interfere with the content inside.
-            // <div style="float: left"></div><div style="overflow: hidden"> <- is a non-intrusive float, because overflow: hidden triggers new block formatting context.</div>
-            if (formattingRoot.establishesBlockFormattingContext())
-                return std::make_unique<InlineFormattingState>(FloatingState::create(*this, formattingRoot), *this);
-
-            // Otherwise, the formatting context inherits the floats from the parent formatting context.
-            // Find the formatting state in which this formatting root lives, not the one it creates and use its floating state.
-            return std::make_unique<InlineFormattingState>(formattingStateForBox(formattingRoot).floatingState(), *this);
-        }).iterator->value;
+    if (formattingContextRoot.hasInFlowOrFloatingChild()) {
+        auto constraintsForInFlowContent = FormattingContext::ConstraintsForInFlowContent { { displayBox.contentBoxLeft(), displayBox.contentBoxWidth() }, { displayBox.contentBoxTop(), { } } };
+        formattingContext->layoutInFlowContent(invalidationState, constraintsForInFlowContent);
     }
 
-    if (formattingRoot.establishesBlockFormattingContext()) {
-        return *m_formattingStates.ensure(&formattingRoot, [&] {
-
-            // Block formatting context always establishes a new floating state.
-            return std::make_unique<BlockFormattingState>(FloatingState::create(*this, formattingRoot), *this);
-        }).iterator->value;
+    // FIXME: layoutFormattingContextSubtree() does not perform layout on the root, rather it lays out the root's content.
+    // It constructs an FC for descendant boxes and runs layout on them. The formattingContextRoot is laid out in the FC in which it lives (parent formatting context).
+    // It also means that the formattingContextRoot has to have a valid/clean geometry at this point.
+    {
+        auto constraints = FormattingContext::ConstraintsForOutOfFlowContent { { displayBox.paddingBoxLeft(), displayBox.paddingBoxWidth() },
+            { displayBox.paddingBoxTop(), displayBox.paddingBoxHeight() }, displayBox.contentBoxWidth() };
+        formattingContext->layoutOutOfFlowContent(invalidationState, constraints);
     }
+}
+
+std::unique_ptr<FormattingContext> LayoutContext::createFormattingContext(const ContainerBox& formattingContextRoot, LayoutState& layoutState)
+{
+    ASSERT(formattingContextRoot.establishesFormattingContext());
+    if (formattingContextRoot.establishesInlineFormattingContext()) {
+        auto& inlineFormattingState = layoutState.ensureInlineFormattingState(formattingContextRoot);
+        return makeUnique<InlineFormattingContext>(formattingContextRoot, inlineFormattingState);
+    }
+
+    if (formattingContextRoot.establishesBlockFormattingContext()) {
+        ASSERT(!formattingContextRoot.establishesInlineFormattingContext());
+        auto& blockFormattingState = layoutState.ensureBlockFormattingState(formattingContextRoot);
+        if (formattingContextRoot.isTableWrapperBox())
+            return makeUnique<TableWrapperBlockFormattingContext>(formattingContextRoot, blockFormattingState);
+        return makeUnique<BlockFormattingContext>(formattingContextRoot, blockFormattingState);
+    }
+
+    if (formattingContextRoot.establishesTableFormattingContext()) {
+        auto& tableFormattingState = layoutState.ensureTableFormattingState(formattingContextRoot);
+        return makeUnique<TableFormattingContext>(formattingContextRoot, tableFormattingState);
+    }
+
     CRASH();
 }
 
-std::unique_ptr<FormattingContext> LayoutContext::formattingContext(const Box& formattingContextRoot)
+void LayoutContext::paint(const LayoutState& layoutState, GraphicsContext& context, const IntRect& dirtyRect)
 {
-    if (formattingContextRoot.establishesBlockFormattingContext())
-        return std::make_unique<BlockFormattingContext>(formattingContextRoot);
-
-    if (formattingContextRoot.establishesInlineFormattingContext())
-        return std::make_unique<InlineFormattingContext>(formattingContextRoot);
-
-    ASSERT_NOT_IMPLEMENTED_YET();
-    return nullptr;
+    Display::Painter::paint(layoutState, context, dirtyRect);
 }
 
 }

@@ -127,10 +127,10 @@ def ccFlags = ["/nologo", "/W3", "/EHsc", "/c",
         "/D_STATIC_CPPLIB", "/D_DISABLE_DEPRECATE_STATIC_CPPLIB", "/DINLINE=__inline","/GS",
         "/DUNICODE", "/D_UNICODE", "/DWIN32", "/DIAL", "/D_LITTLE_ENDIAN", "/DWIN32_LEAN_AND_MEAN",
         "/I$JDK_HOME/include", "/I$JDK_HOME/include/win32",
-       "/I$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt",
-       "/I$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/include",
-       "/I$WIN.WINDOWS_KITS_INCLUDEDIR/um",
-       "/I$WIN.WINDOWS_KITS_INCLUDEDIR/shared",
+        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt",
+        "/I$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/include",
+        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/um",
+        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/shared",
         ccDebugFlags].flatten();
 
 def linkFlags = ["/nologo", "/dll", "/manifest", "/opt:REF", "/incremental:no", "/dynamicbase", "/nxcompat"];
@@ -191,6 +191,7 @@ if (hasProperty('toolchainDir')) {
 
 def compiler = cygpath("$msvcBinDir/cl.exe")
 def linker = cygpath("$msvcBinDir/link.exe")
+def ar = cygpath("$msvcBinDir/lib.exe")
 ext.RC = cygpath("$WIN.winSdkBinDir/rc.exe")
 def rcCompiler = RC
 ext.FXC = cygpath("$WIN.winSdkBinDir/fxc.exe")
@@ -251,6 +252,7 @@ def WinSDKDLLsPath = cygpath("${winSdkDllDir}")
 if (file(WinSDKDLLsPath).exists()) {
     def WinSDKDLLs = [
         "api-ms-win-core-console-l1-1-0.dll",
+        "api-ms-win-core-console-l1-2-0.dll",
         "api-ms-win-core-datetime-l1-1-0.dll",
         "api-ms-win-core-debug-l1-1-0.dll",
         "api-ms-win-core-errorhandling-l1-1-0.dll",
@@ -292,6 +294,11 @@ if (file(WinSDKDLLsPath).exists()) {
         "api-ms-win-crt-utility-l1-1-0.dll",
         "ucrtbase.dll"
     ];
+
+    if (!IS_64) {
+        WinSDKDLLs += "API-MS-Win-core-xstate-l2-1-0.dll"
+    }
+
     ext.WIN.WinSDKDLLs = []
         WinSDKDLLs.each { winsdkdll->
             ext.WIN.WinSDKDLLs += "$WinSDKDLLsPath/$winsdkdll"
@@ -332,10 +339,10 @@ def rcFlags = [
     "/d", "\"JFX_COPYRIGHT=Copyright \u00A9 ${Calendar.getInstance().get(Calendar.YEAR)}\"",
     "/d", "\"JFX_FVER=${rcVerComma}\"",
     "/d", "\"JFX_FTYPE=0x2L\"",
-   "/I",file("$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt/"),
-   "/I",file("$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/include"),
-   "/I",file("$WIN.WINDOWS_KITS_INCLUDEDIR/um"),
-   "/I",file("$WIN.WINDOWS_KITS_INCLUDEDIR/shared"),
+    "/I",file("$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt/"),
+    "/I",file("$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/include"),
+    "/I",file("$WIN.WINDOWS_KITS_INCLUDEDIR/um"),
+    "/I",file("$WIN.WINDOWS_KITS_INCLUDEDIR/shared"),
     "/nologo"
 ];
 
@@ -352,10 +359,10 @@ WIN.glass.rcCompiler = rcCompiler;
 WIN.glass.rcSource = file("modules/graphics/src/main/native-glass/win/GlassResources.rc");
 WIN.glass.rcFlags = [
     "/I", file("modules/graphics/src/main/resources"),
-   "/I",file("$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt/"),
-   "/I",file("$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/include"),
-   "/I",file("$WIN.WINDOWS_KITS_INCLUDEDIR/um"),
-   "/I",file("$WIN.WINDOWS_KITS_INCLUDEDIR/shared"),
+    "/I",file("$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt/"),
+    "/I",file("$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/include"),
+    "/I",file("$WIN.WINDOWS_KITS_INCLUDEDIR/um"),
+    "/I",file("$WIN.WINDOWS_KITS_INCLUDEDIR/shared"),
     "/d", "JFX_FNAME=glass.dll",
     "/d", "JFX_INTERNAL_NAME=glass",
     rcFlags].flatten();
@@ -420,10 +427,10 @@ WIN.launcher = [:]
 WIN.launcher.compiler = compiler
 WIN.launcher.ccFlags = ["/nologo", "/W3", "/MT", "/EHsc", "/D_WINDOWS", "/DUNICODE", "/D_UNICODE", "/DWIN32","/GS",
         "/D_LITTLE_ENDIAN", "/DWIN32_LEAN_AND_MEAN", "/I$JDK_HOME/include", "/I$JDK_HOME/include/win32",
-       "/I$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt",
-       "/I$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/include",
-       "/I$WIN.WINDOWS_KITS_INCLUDEDIR/um",
-       "/I$WIN.WINDOWS_KITS_INCLUDEDIR/shared",
+        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt",
+        "/I$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/include",
+        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/um",
+        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/shared",
         ccDebugFlags].flatten();
 WIN.launcher.linker = linker
 WIN.launcher.linkFlags = ["/link", "/nologo", "/WX", "/SUBSYSTEM:WINDOWS", "user32.lib", "shell32.lib", "advapi32.lib"]
@@ -443,10 +450,10 @@ WIN.launcherlibrary.compiler = compiler
 WIN.launcherlibrary.ccFlags = ["/nologo", "/W3","/GS",
         // "/WX",
         "/EHsc", "/c", "/D_WINDOWS", "/DUNICODE", "/D_UNICODE", "/DWIN32",
-       "/I$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt/",
-       "/I$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/include",
-       "/I$WIN.WINDOWS_KITS_INCLUDEDIR/um",
-       "/I$WIN.WINDOWS_KITS_INCLUDEDIR/shared",
+        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt/",
+        "/I$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/include",
+        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/um",
+        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/shared",
         "/D_LITTLE_ENDIAN", "/DWIN32_LEAN_AND_MEAN", "/I$JDK_HOME/include", "/I$JDK_HOME/include/win32",
         ccDebugFlags].flatten();
 WIN.launcherlibrary.linker = linker
@@ -466,10 +473,10 @@ WIN.launcherlibrary.linkFlags.add(IS_64
 WIN.iconLauncher = [:]
 WIN.iconLauncher.compiler = compiler
 WIN.iconLauncher.ccFlags = ["/nologo", "/W3", "/EHsc", "/D_WINDOWS", "/DUNICODE", "/D_UNICODE","/GS",
-       "/I$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt",
-       "/I$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/include",
-       "/I$WIN.WINDOWS_KITS_INCLUDEDIR/um",
-       "/I$WIN.WINDOWS_KITS_INCLUDEDIR/shared",
+        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/ucrt",
+        "/I$WIN.WINDOWS_VS_VSINSTALLDIR/VC/Tools/MSVC/14.16.27023/include",
+        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/um",
+        "/I$WIN.WINDOWS_KITS_INCLUDEDIR/shared",
         "/O2"];
 WIN.iconLauncher.linker = linker
 WIN.iconLauncher.linkFlags = ["/link", "/nologo",
@@ -546,20 +553,6 @@ WIN.font.rcCompiler = rcCompiler;
 WIN.font.rcSource = defaultRcSource
 WIN.font.rcFlags = ["/d", "JFX_FNAME=javafx_font.dll", "/d", "JFX_INTERNAL_NAME=font", rcFlags].flatten();
 
-WIN.fontT2K = [:]
-WIN.fontT2K.javahInclude = ["com/sun/javafx/font/t2k/**/*"]
-WIN.fontT2K.nativeSource = [
-        file("$closedDir/javafx-font-t2k-native/src"),
-        file("$closedDir/javafx-font-t2k-native/src/layout")]
-WIN.fontT2K.compiler = compiler
-WIN.fontT2K.ccFlags = ["/DJFXFONT_PLUS", "/DLE_STANDALONE", ccFlags].flatten()
-WIN.fontT2K.linker = linker
-WIN.fontT2K.linkFlags = [linkFlags, "advapi32.lib", "gdi32.lib", "user32.lib"].flatten()
-WIN.fontT2K.lib = "javafx_font_t2k"
-WIN.fontT2K.rcCompiler = rcCompiler;
-WIN.fontT2K.rcSource = defaultRcSource
-WIN.fontT2K.rcFlags = ["/d", "JFX_FNAME=javafx_font_t2k.dll", "/d", "JFX_INTERNAL_NAME=fontT2K", rcFlags].flatten();
-
 WIN.media = [:]
 WIN.media.rcCompiler = rcCompiler
 WIN.media.rcSource = defaultRcSource
@@ -571,6 +564,9 @@ WIN.media.glibRcFlags = ["/d", "JFX_FNAME=glib-lite.dll", "/d", "JFX_INTERNAL_NA
 WIN.media.gstreamerRcFlags = ["/d", "JFX_FNAME=gstreamer-lite.dll", "/d", "JFX_INTERNAL_NAME=gstreamer", rcFlags].flatten()
 WIN.media.fxpluginsRcFlags = ["/d", "JFX_FNAME=fxplugins.dll", "/d", "JFX_INTERNAL_NAME=fxplugins", rcFlags].flatten()
 WIN.media.jfxmediaRcFlags = ["/d", "JFX_FNAME=jfxmedia.dll", "/d", "JFX_INTERNAL_NAME=jfxmedia", rcFlags].flatten()
+WIN.media.ar = ar
+WIN.media.compiler = compiler
+WIN.media.linker = linker
 
 WIN.webkit = [:]
 WIN.webkit.compiler = compiler
@@ -578,3 +574,4 @@ WIN.webkit.linker = linker
 WIN.webkit.rcCompiler = rcCompiler
 WIN.webkit.rcSource = defaultRcSource
 WIN.webkit.rcFlags = ["/d", "JFX_FNAME=jfxwebkit.dll", "/d", "JFX_INTERNAL_NAME=webkit", rcFlags].flatten();
+

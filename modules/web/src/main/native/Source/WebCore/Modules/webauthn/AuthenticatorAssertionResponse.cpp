@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,29 +28,60 @@
 
 #if ENABLE(WEB_AUTHN)
 
+#include "AuthenticatorResponseData.h"
+
 namespace WebCore {
 
-AuthenticatorAssertionResponse::AuthenticatorAssertionResponse(RefPtr<ArrayBuffer>&& clientDataJSON, RefPtr<ArrayBuffer>&& authenticatorData, RefPtr<ArrayBuffer>&& signature, RefPtr<ArrayBuffer>&& userHandle)
-    : AuthenticatorResponse(WTFMove(clientDataJSON))
+Ref<AuthenticatorAssertionResponse> AuthenticatorAssertionResponse::create(Ref<ArrayBuffer>&& rawId, Ref<ArrayBuffer>&& authenticatorData, Ref<ArrayBuffer>&& signature, RefPtr<ArrayBuffer>&& userHandle, Optional<AuthenticationExtensionsClientOutputs>&& extensions)
+{
+    auto response = adoptRef(*new AuthenticatorAssertionResponse(WTFMove(rawId), WTFMove(authenticatorData), WTFMove(signature), WTFMove(userHandle)));
+    if (extensions)
+        response->setExtensions(WTFMove(*extensions));
+    return response;
+}
+
+Ref<AuthenticatorAssertionResponse> AuthenticatorAssertionResponse::create(const Vector<uint8_t>& rawId, const Vector<uint8_t>& authenticatorData, const Vector<uint8_t>& signature, const Vector<uint8_t>& userHandle)
+{
+    RefPtr<ArrayBuffer> userhandleBuffer;
+    if (!userHandle.isEmpty())
+        userhandleBuffer = ArrayBuffer::create(userHandle.data(), userHandle.size());
+    return create(ArrayBuffer::create(rawId.data(), rawId.size()), ArrayBuffer::create(authenticatorData.data(), authenticatorData.size()), ArrayBuffer::create(signature.data(), signature.size()), WTFMove(userhandleBuffer), WTF::nullopt);
+}
+
+Ref<AuthenticatorAssertionResponse> AuthenticatorAssertionResponse::create(Ref<ArrayBuffer>&& rawId, Ref<ArrayBuffer>&& userHandle, String&& name, SecAccessControlRef accessControl)
+{
+    return adoptRef(*new AuthenticatorAssertionResponse(WTFMove(rawId), WTFMove(userHandle), WTFMove(name), accessControl));
+}
+
+void AuthenticatorAssertionResponse::setAuthenticatorData(Vector<uint8_t>&& authenticatorData)
+{
+    m_authenticatorData = ArrayBuffer::create(authenticatorData.data(), authenticatorData.size());
+}
+
+AuthenticatorAssertionResponse::AuthenticatorAssertionResponse(Ref<ArrayBuffer>&& rawId, Ref<ArrayBuffer>&& authenticatorData, Ref<ArrayBuffer>&& signature, RefPtr<ArrayBuffer>&& userHandle)
+    : AuthenticatorResponse(WTFMove(rawId))
     , m_authenticatorData(WTFMove(authenticatorData))
     , m_signature(WTFMove(signature))
     , m_userHandle(WTFMove(userHandle))
 {
 }
 
-ArrayBuffer* AuthenticatorAssertionResponse::authenticatorData() const
+AuthenticatorAssertionResponse::AuthenticatorAssertionResponse(Ref<ArrayBuffer>&& rawId, Ref<ArrayBuffer>&& userHandle, String&& name, SecAccessControlRef accessControl)
+    : AuthenticatorResponse(WTFMove(rawId))
+    , m_userHandle(WTFMove(userHandle))
+    , m_name(WTFMove(name))
+    , m_accessControl(accessControl)
 {
-    return m_authenticatorData.get();
 }
 
-ArrayBuffer* AuthenticatorAssertionResponse::signature() const
+AuthenticatorResponseData AuthenticatorAssertionResponse::data() const
 {
-    return m_signature.get();
-}
-
-ArrayBuffer* AuthenticatorAssertionResponse::userHandle() const
-{
-    return m_userHandle.get();
+    auto data = AuthenticatorResponse::data();
+    data.isAuthenticatorAttestationResponse = false;
+    data.authenticatorData = m_authenticatorData.copyRef();
+    data.signature = m_signature.copyRef();
+    data.userHandle = m_userHandle;
+    return data;
 }
 
 } // namespace WebCore

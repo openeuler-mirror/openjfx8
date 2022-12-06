@@ -46,10 +46,10 @@ COMPILER_FLAGS = -nologo -W3 -WX- -EHsc -GS -fp:precise -Gm- \
                  -Zc:wchar_t -Zc:forScope- -Gd -wd"4430" -analyze- -errorReport:queue
 
 INCLUDES =  -I$(BASECLASSES_DIR) \
-           -I$(INCLUDE1) \
-           -I$(INCLUDE2) \
-           -I$(INCLUDE3) \
-           -I$(INCLUDE4)
+            -I$(INCLUDE1) \
+            -I$(INCLUDE2) \
+            -I$(INCLUDE3) \
+            -I$(INCLUDE4)
 
 CFLAGS =   -DWIN32 \
            -GS     \

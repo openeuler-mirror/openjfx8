@@ -35,24 +35,35 @@
 #include "CachedResourceClient.h"
 #include "CachedResourceHandle.h"
 #include "LinkLoaderClient.h"
+#include "LinkRelAttribute.h"
+#include "ReferrerPolicy.h"
 
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
 
 class Document;
-class URL;
 class LinkPreloadResourceClient;
 
-struct LinkRelAttribute;
+struct LinkLoadParameters {
+    LinkRelAttribute relAttribute;
+    URL href;
+    String as;
+    String media;
+    String mimeType;
+    String crossOrigin;
+    String imageSrcSet;
+    String imageSizes;
+    ReferrerPolicy referrerPolicy { ReferrerPolicy::EmptyString };
+};
 
 class LinkLoader : private CachedResourceClient, public CanMakeWeakPtr<LinkLoader> {
 public:
     explicit LinkLoader(LinkLoaderClient&);
     virtual ~LinkLoader();
 
-    bool loadLink(const LinkRelAttribute&, const URL&, const String& as, const String& media, const String& type, const String& crossOrigin, Document&);
-    static std::optional<CachedResource::Type> resourceTypeFromAsAttribute(const String& as);
+    void loadLink(const LinkLoadParameters&, Document&);
+    static Optional<CachedResource::Type> resourceTypeFromAsAttribute(const String& as);
 
     enum class MediaAttributeCheck { MediaAttributeEmpty, MediaAttributeNotEmpty, SkipMediaAttributeCheck };
     static void loadLinksFromHeader(const String& headerValue, const URL& baseURL, Document&, MediaAttributeCheck);
@@ -62,10 +73,10 @@ public:
     void cancelLoad();
 
 private:
-    void notifyFinished(CachedResource&) override;
-    static void preconnectIfNeeded(const LinkRelAttribute&, const URL& href, Document&, const String& crossOrigin);
-    static std::unique_ptr<LinkPreloadResourceClient> preloadIfNeeded(const LinkRelAttribute&, const URL& href, Document&, const String& as, const String& media, const String& type, const String& crossOriginMode, LinkLoader*);
-    void prefetchIfNeeded(const LinkRelAttribute&, const URL& href, Document&);
+    void notifyFinished(CachedResource&, const NetworkLoadMetrics&) override;
+    static void preconnectIfNeeded(const LinkLoadParameters&, Document&);
+    static std::unique_ptr<LinkPreloadResourceClient> preloadIfNeeded(const LinkLoadParameters&, Document&, LinkLoader*);
+    void prefetchIfNeeded(const LinkLoadParameters&, Document&);
 
     LinkLoaderClient& m_client;
     CachedResourceHandle<CachedResource> m_cachedLinkResource;

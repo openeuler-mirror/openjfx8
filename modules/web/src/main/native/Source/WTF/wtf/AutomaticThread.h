@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,13 +23,13 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef WTF_AutomaticThread_h
-#define WTF_AutomaticThread_h
+#pragma once
 
 #include <wtf/Box.h>
 #include <wtf/Condition.h>
 #include <wtf/Lock.h>
 #include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/Threading.h>
 #include <wtf/Vector.h>
 
 namespace WTF {
@@ -133,6 +133,8 @@ protected:
     // calls AutomaticThreadCondition::notifyOne() or notifyAll().
     AutomaticThread(const AbstractLocker&, Box<Lock>, Ref<AutomaticThreadCondition>&&, Seconds timeout = 10_s);
 
+    AutomaticThread(const AbstractLocker&, Box<Lock>, Ref<AutomaticThreadCondition>&&, ThreadType, Seconds timeout = 10_s);
+
     // To understand PollResult and WorkResult, imagine that poll() and work() are being called like
     // so:
     //
@@ -184,6 +186,7 @@ private:
     Box<Lock> m_lock;
     Ref<AutomaticThreadCondition> m_condition;
     Seconds m_timeout;
+    ThreadType m_threadType { ThreadType::Unknown };
     bool m_isRunning { true };
     bool m_isWaiting { false };
     bool m_hasUnderlyingThread { false };
@@ -195,6 +198,3 @@ private:
 
 using WTF::AutomaticThread;
 using WTF::AutomaticThreadCondition;
-
-#endif // WTF_AutomaticThread_h
-

@@ -178,6 +178,10 @@ private:
     RenderFragmentContainer& m_fragment;
 };
 
+#ifndef NDEBUG
+TextStream& operator<<(TextStream&, const RenderFragmentContainer&);
+#endif
+
 } // namespace WebCore
 
 SPECIALIZE_TYPE_TRAITS_RENDER_OBJECT(RenderFragmentContainer, isRenderFragmentContainer())

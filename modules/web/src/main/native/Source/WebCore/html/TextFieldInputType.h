@@ -53,7 +53,7 @@ class TextFieldInputType : public InputType, protected SpinButtonElement::SpinBu
 protected:
     explicit TextFieldInputType(HTMLInputElement&);
     virtual ~TextFieldInputType();
-    void handleKeydownEvent(KeyboardEvent&) override;
+    ShouldCallBaseEventHandler handleKeydownEvent(KeyboardEvent&) override;
     void handleKeydownEventForSpinButton(KeyboardEvent&);
 #if ENABLE(DATALIST_ELEMENT)
     void handleClickEvent(MouseEvent&) final;
@@ -124,20 +124,24 @@ private:
     void createAutoFillButton(AutoFillButtonType);
 
 #if ENABLE(DATALIST_ELEMENT)
+    void createDataListDropdownIndicator();
     bool isPresentingAttachedView() const final;
-    void listAttributeTargetChanged() final;
+    void dataListMayHaveChanged() final;
     void displaySuggestions(DataListSuggestionActivationType);
     void closeSuggestions();
 
     // DataListSuggestionsClient
     IntRect elementRectInRootViewCoordinates() const final;
-    Vector<String> suggestions() const final;
+    Vector<DataListSuggestion> suggestions() final;
     void didSelectDataListOption(const String&) final;
     void didCloseSuggestions() final;
+
+    static bool shouldOnlyShowDataListDropdownButtonWhenFocusedOrEdited();
 
     void dataListButtonElementWasClicked() final;
     RefPtr<DataListButtonElement> m_dataListDropdownIndicator;
 
+    std::pair<String, Vector<DataListSuggestion>> m_cachedSuggestions;
     std::unique_ptr<DataListSuggestionPicker> m_suggestionPicker;
 #endif
 

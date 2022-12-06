@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,50 +33,78 @@
 
 #if USE(LIBWEBRTC)
 
-#include "Logging.h"
-
 namespace WebCore {
 
 RealtimeIncomingVideoSource::RealtimeIncomingVideoSource(rtc::scoped_refptr<webrtc::VideoTrackInterface>&& videoTrack, String&& videoTrackId)
-    : RealtimeMediaSource(WTFMove(videoTrackId), RealtimeMediaSource::Type::Video, String())
+    : RealtimeMediaSource(Type::Video, "remote video"_s, WTFMove(videoTrackId))
     , m_videoTrack(WTFMove(videoTrack))
 {
-    m_currentSettings.setWidth(640);
-    m_currentSettings.setHeight(480);
-    notifyMutedChange(!m_videoTrack);
+    ASSERT(m_videoTrack);
+
+    RealtimeMediaSourceSupportedConstraints constraints;
+    constraints.setSupportsWidth(true);
+    constraints.setSupportsHeight(true);
+    m_currentSettings = RealtimeMediaSourceSettings { };
+    m_currentSettings->setSupportedConstraints(WTFMove(constraints));
+
+    m_videoTrack->RegisterObserver(this);
+}
+
+RealtimeIncomingVideoSource::~RealtimeIncomingVideoSource()
+{
+    stop();
+    m_videoTrack->UnregisterObserver(this);
 }
 
 void RealtimeIncomingVideoSource::startProducingData()
 {
-    if (m_videoTrack)
-        m_videoTrack->AddOrUpdateSink(this, rtc::VideoSinkWants());
-}
-
-void RealtimeIncomingVideoSource::setSourceTrack(rtc::scoped_refptr<webrtc::VideoTrackInterface>&& track)
-{
-    ASSERT(!m_videoTrack);
-    ASSERT(track);
-
-    m_videoTrack = WTFMove(track);
-    notifyMutedChange(!m_videoTrack);
-    if (isProducingData())
-        m_videoTrack->AddOrUpdateSink(this, rtc::VideoSinkWants());
+    m_videoTrack->AddOrUpdateSink(this, rtc::VideoSinkWants());
 }
 
 void RealtimeIncomingVideoSource::stopProducingData()
 {
-    if (m_videoTrack)
-        m_videoTrack->RemoveSink(this);
+    m_videoTrack->RemoveSink(this);
 }
 
-const RealtimeMediaSourceCapabilities& RealtimeIncomingVideoSource::capabilities() const
+void RealtimeIncomingVideoSource::OnChanged()
+{
+    callOnMainThread([this, weakThis = makeWeakPtr(this)] {
+        if (!weakThis)
+            return;
+
+        if (m_videoTrack->state() == webrtc::MediaStreamTrackInterface::kEnded)
+            end();
+    });
+}
+
+const RealtimeMediaSourceCapabilities& RealtimeIncomingVideoSource::capabilities()
 {
     return RealtimeMediaSourceCapabilities::emptyCapabilities();
 }
 
-const RealtimeMediaSourceSettings& RealtimeIncomingVideoSource::settings() const
+const RealtimeMediaSourceSettings& RealtimeIncomingVideoSource::settings()
 {
-    return m_currentSettings;
+    if (m_currentSettings)
+        return m_currentSettings.value();
+
+    RealtimeMediaSourceSupportedConstraints constraints;
+    constraints.setSupportsWidth(true);
+    constraints.setSupportsHeight(true);
+
+    RealtimeMediaSourceSettings settings;
+    auto& size = this->size();
+    settings.setWidth(size.width());
+    settings.setHeight(size.height());
+    settings.setSupportedConstraints(constraints);
+
+    m_currentSettings = WTFMove(settings);
+    return m_currentSettings.value();
+}
+
+void RealtimeIncomingVideoSource::settingsDidChange(OptionSet<RealtimeMediaSourceSettings::Flag> settings)
+{
+    if (settings.containsAny({ RealtimeMediaSourceSettings::Flag::Width, RealtimeMediaSourceSettings::Flag::Height }))
+        m_currentSettings = WTF::nullopt;
 }
 
 } // namespace WebCore

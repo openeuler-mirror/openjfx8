@@ -38,6 +38,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.LinkedList;
+import java.util.Optional;
 
 public abstract class Application {
 
@@ -219,28 +220,31 @@ public abstract class Application {
         return userHome + File.separator + "." + name + File.separator;
     }
 
-    private void notifyWillFinishLaunching() {
+    // Subclasses can override the following notify methods.
+    // Overridden methods need to call super.
+
+    protected void notifyWillFinishLaunching() {
         EventHandler handler = getEventHandler();
         if (handler != null) {
             handler.handleWillFinishLaunchingAction(this, System.nanoTime());
         }
     }
 
-    private void notifyDidFinishLaunching() {
+    protected void notifyDidFinishLaunching() {
         EventHandler handler = getEventHandler();
         if (handler != null) {
             handler.handleDidFinishLaunchingAction(this, System.nanoTime());
         }
     }
 
-    private void notifyWillBecomeActive() {
+    protected void notifyWillBecomeActive() {
         EventHandler handler = getEventHandler();
         if (handler != null) {
             handler.handleWillBecomeActiveAction(this, System.nanoTime());
         }
     }
 
-    private void notifyDidBecomeActive() {
+    protected void notifyDidBecomeActive() {
         this.initialActiveEventReceived = true;
         EventHandler handler = getEventHandler();
         if (handler != null) {
@@ -248,14 +252,14 @@ public abstract class Application {
         }
     }
 
-    private void notifyWillResignActive() {
+    protected void notifyWillResignActive() {
         EventHandler handler = getEventHandler();
         if (handler != null) {
             handler.handleWillResignActiveAction(this, System.nanoTime());
         }
     }
 
-    private boolean notifyThemeChanged(String themeName) {
+    protected boolean notifyThemeChanged(String themeName) {
         EventHandler handler = getEventHandler();
         if (handler != null) {
             return handler.handleThemeChanged(themeName);
@@ -263,42 +267,42 @@ public abstract class Application {
         return false;
     }
 
-    private void notifyDidResignActive() {
+    protected void notifyDidResignActive() {
         EventHandler handler = getEventHandler();
         if (handler != null) {
             handler.handleDidResignActiveAction(this, System.nanoTime());
         }
     }
 
-    private void notifyDidReceiveMemoryWarning() {
+    protected void notifyDidReceiveMemoryWarning() {
         EventHandler handler = getEventHandler();
         if (handler != null) {
             handler.handleDidReceiveMemoryWarning(this, System.nanoTime());
         }
     }
 
-    private void notifyWillHide() {
+    protected void notifyWillHide() {
         EventHandler handler = getEventHandler();
         if (handler != null) {
             handler.handleWillHideAction(this, System.nanoTime());
         }
     }
 
-    private void notifyDidHide() {
+    protected void notifyDidHide() {
         EventHandler handler = getEventHandler();
         if (handler != null) {
             handler.handleDidHideAction(this, System.nanoTime());
         }
     }
 
-    private void notifyWillUnhide() {
+    protected void notifyWillUnhide() {
         EventHandler handler = getEventHandler();
         if (handler != null) {
             handler.handleWillUnhideAction(this, System.nanoTime());
         }
     }
 
-    private void notifyDidUnhide() {
+    protected void notifyDidUnhide() {
         EventHandler handler = getEventHandler();
         if (handler != null) {
             handler.handleDidUnhideAction(this, System.nanoTime());
@@ -306,7 +310,7 @@ public abstract class Application {
     }
 
     // notificiation when user drag and drops files onto app icon
-    private void notifyOpenFiles(String files[]) {
+    protected void notifyOpenFiles(String files[]) {
         if ((this.initialActiveEventReceived == false) && (this.initialOpenedFiles == null)) {
             // rememeber the initial opened files
             this.initialOpenedFiles = files;
@@ -317,7 +321,7 @@ public abstract class Application {
         }
     }
 
-    private void notifyWillQuit() {
+    protected void notifyWillQuit() {
         EventHandler handler = getEventHandler();
         if (handler != null) {
             handler.handleQuitAction(this, System.nanoTime());
@@ -739,5 +743,23 @@ public abstract class Application {
      */
     public static int getKeyCodeForChar(char c) {
         return application._getKeyCodeForChar(c);
+    }
+
+    protected int _isKeyLocked(int keyCode) {
+        // Overridden in subclasses
+        return KeyEvent.KEY_LOCK_UNKNOWN;
+    }
+
+    public final Optional<Boolean> isKeyLocked(int keyCode) {
+        checkEventThread();
+        int lockState = _isKeyLocked(keyCode);
+        switch (lockState) {
+            case KeyEvent.KEY_LOCK_OFF:
+                return Optional.of(false);
+            case KeyEvent.KEY_LOCK_ON:
+                return Optional.of(true);
+            default:
+                return Optional.empty();
+        }
     }
 }

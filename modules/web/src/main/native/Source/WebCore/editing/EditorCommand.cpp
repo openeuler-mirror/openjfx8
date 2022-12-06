@@ -46,9 +46,12 @@
 #include "HTMLImageElement.h"
 #include "HTMLNames.h"
 #include "IndentOutdentCommand.h"
+#include "InsertEditableImageCommand.h"
 #include "InsertListCommand.h"
+#include "InsertNestedListCommand.h"
 #include "Page.h"
 #include "Pasteboard.h"
+#include "Range.h"
 #include "RenderBox.h"
 #include "ReplaceSelectionCommand.h"
 #include "Scrollbar.h"
@@ -61,7 +64,7 @@
 #include "markup.h"
 #include <pal/system/Sound.h>
 #include <pal/text/KillRing.h>
-#include <wtf/text/AtomicString.h>
+#include <wtf/text/AtomString.h>
 
 namespace WebCore {
 
@@ -105,7 +108,7 @@ static bool applyCommandToFrame(Frame& frame, EditorCommandSource source, EditAc
         return true;
     case CommandFromDOM:
     case CommandFromDOMWithUserInterface:
-        frame.editor().applyStyle(WTFMove(style), EditActionUnspecified, Editor::ColorFilterMode::UseOriginalColor);
+        frame.editor().applyStyle(WTFMove(style), EditAction::Unspecified, Editor::ColorFilterMode::UseOriginalColor);
         return true;
     }
     ASSERT_NOT_REACHED();
@@ -119,7 +122,7 @@ static bool isStylePresent(Editor& editor, CSSPropertyID propertyID, const char*
     // Windows: present throughout the selection
     if (editor.behavior().shouldToggleStyleBasedOnStartOfSelection())
         return editor.selectionStartHasStyle(propertyID, onValue);
-    return editor.selectionHasStyle(propertyID, onValue) == TrueTriState;
+    return editor.selectionHasStyle(propertyID, onValue) == TriState::True;
 }
 
 static bool executeApplyStyle(Frame& frame, EditorCommandSource source, EditAction action, CSSPropertyID propertyID, const String& propertyValue)
@@ -140,16 +143,16 @@ static bool executeToggleStyle(Frame& frame, EditorCommandSource source, EditAct
 
 static bool executeApplyParagraphStyle(Frame& frame, EditorCommandSource source, EditAction action, CSSPropertyID propertyID, const String& propertyValue)
 {
-    RefPtr<MutableStyleProperties> style = MutableStyleProperties::create();
+    auto style = MutableStyleProperties::create();
     style->setProperty(propertyID, propertyValue);
     // FIXME: We don't call shouldApplyStyle when the source is DOM; is there a good reason for that?
     switch (source) {
     case CommandFromMenuOrKeyBinding:
-        frame.editor().applyParagraphStyleToSelection(style.get(), action);
+        frame.editor().applyParagraphStyleToSelection(style.ptr(), action);
         return true;
     case CommandFromDOM:
     case CommandFromDOMWithUserInterface:
-        frame.editor().applyParagraphStyle(style.get());
+        frame.editor().applyParagraphStyle(style.ptr());
         return true;
     }
     ASSERT_NOT_REACHED();
@@ -159,7 +162,7 @@ static bool executeApplyParagraphStyle(Frame& frame, EditorCommandSource source,
 static bool executeInsertFragment(Frame& frame, Ref<DocumentFragment>&& fragment)
 {
     ASSERT(frame.document());
-    ReplaceSelectionCommand::create(*frame.document(), WTFMove(fragment), ReplaceSelectionCommand::PreventNesting, EditActionInsert)->apply();
+    ReplaceSelectionCommand::create(*frame.document(), WTFMove(fragment), ReplaceSelectionCommand::PreventNesting, EditAction::Insert)->apply();
     return true;
 }
 
@@ -174,24 +177,23 @@ static bool executeInsertNode(Frame& frame, Ref<Node>&& content)
 static bool expandSelectionToGranularity(Frame& frame, TextGranularity granularity)
 {
     VisibleSelection selection = frame.selection().selection();
+    auto oldRange = selection.toNormalizedRange();
     selection.expandUsingGranularity(granularity);
-    RefPtr<Range> newRange = selection.toNormalizedRange();
-    if (!newRange)
+    auto newRange = selection.toNormalizedRange();
+    if (!newRange || newRange->collapsed())
         return false;
-    if (newRange->collapsed())
+    auto affinity = selection.affinity();
+    if (!frame.editor().client()->shouldChangeSelectedRange(*oldRange, *newRange, affinity, false))
         return false;
-    RefPtr<Range> oldRange = selection.toNormalizedRange();
-    EAffinity affinity = selection.affinity();
-    if (!frame.editor().client()->shouldChangeSelectedRange(oldRange.get(), newRange.get(), affinity, false))
-        return false;
-    frame.selection().setSelectedRange(newRange.get(), affinity, true);
+    frame.selection().setSelectedRange(*newRange, affinity, FrameSelection::ShouldCloseTyping::Yes);
+    // FIXME: Why do we ignore the return value from setSelectedRange here?
     return true;
 }
 
 static TriState stateStyle(Frame& frame, CSSPropertyID propertyID, const char* desiredValue)
 {
     if (frame.editor().behavior().shouldToggleStyleBasedOnStartOfSelection())
-        return frame.editor().selectionStartHasStyle(propertyID, desiredValue) ? TrueTriState : FalseTriState;
+        return frame.editor().selectionStartHasStyle(propertyID, desiredValue) ? TriState::True : TriState::False;
     return frame.editor().selectionHasStyle(propertyID, desiredValue);
 }
 
@@ -207,8 +209,8 @@ static TriState stateTextWritingDirection(Frame& frame, WritingDirection directi
     bool hasNestedOrMultipleEmbeddings;
     WritingDirection selectionDirection = EditingStyle::textDirectionForSelection(frame.selection().selection(),
         frame.selection().typingStyle(), hasNestedOrMultipleEmbeddings);
-    // FXIME: We should be returning MixedTriState when selectionDirection == direction && hasNestedOrMultipleEmbeddings
-    return (selectionDirection == direction && !hasNestedOrMultipleEmbeddings) ? TrueTriState : FalseTriState;
+    // FXIME: We should be returning TriState::Indeterminate when selectionDirection == direction && hasNestedOrMultipleEmbeddings
+    return (selectionDirection == direction && !hasNestedOrMultipleEmbeddings) ? TriState::True : TriState::False;
 }
 
 static unsigned verticalScrollDistance(Frame& frame)
@@ -226,23 +228,23 @@ static unsigned verticalScrollDistance(Frame& frame)
     return static_cast<unsigned>(Scrollbar::pageStep(height));
 }
 
-static RefPtr<Range> unionDOMRanges(Range& a, Range& b)
+static SimpleRange unionRanges(const SimpleRange& a, const SimpleRange& b)
 {
-    Range& start = a.compareBoundaryPoints(Range::START_TO_START, b).releaseReturnValue() <= 0 ? a : b;
-    Range& end = a.compareBoundaryPoints(Range::END_TO_END, b).releaseReturnValue() <= 0 ? b : a;
-    return Range::create(a.ownerDocument(), &start.startContainer(), start.startOffset(), &end.endContainer(), end.endOffset());
+    auto& start = createLiveRange(a)->compareBoundaryPoints(Range::START_TO_START, createLiveRange(b)).releaseReturnValue() <= 0 ? a : b;
+    auto& end = createLiveRange(a)->compareBoundaryPoints(Range::END_TO_END, createLiveRange(b)).releaseReturnValue() <= 0 ? b : a;
+    return { start.start, end.end };
 }
 
 // Execute command functions
 
 static bool executeBackColor(Frame& frame, Event*, EditorCommandSource source, const String& value)
 {
-    return executeApplyStyle(frame, source, EditActionSetBackgroundColor, CSSPropertyBackgroundColor, value);
+    return executeApplyStyle(frame, source, EditAction::SetBackgroundColor, CSSPropertyBackgroundColor, value);
 }
 
-static bool executeCopy(Frame& frame, Event*, EditorCommandSource, const String&)
+static bool executeCopy(Frame& frame, Event*, EditorCommandSource source, const String&)
 {
-    frame.editor().copy();
+    frame.editor().copy(source == CommandFromMenuOrKeyBinding ? Editor::FromMenuOrKeyBinding::Yes : Editor::FromMenuOrKeyBinding::No);
     return true;
 }
 
@@ -260,7 +262,7 @@ static bool executeCut(Frame& frame, Event*, EditorCommandSource source, const S
 {
     if (source == CommandFromMenuOrKeyBinding) {
         UserTypingGestureIndicator typingGestureIndicator(frame);
-        frame.editor().cut();
+        frame.editor().cut(Editor::FromMenuOrKeyBinding::Yes);
     } else
         frame.editor().cut();
     return true;
@@ -295,7 +297,7 @@ static bool executeDelete(Frame& frame, Event*, EditorCommandSource source, cons
     case CommandFromDOMWithUserInterface:
         // If the current selection is a caret, delete the preceding character. IE performs forwardDelete, but we currently side with Firefox.
         // Doesn't scroll to make the selection visible, or modify the kill ring (this time, siding with IE, not Firefox).
-        TypingCommand::deleteKeyPressed(*frame.document(), frame.selection().granularity() == WordGranularity ? TypingCommand::SmartDelete : 0);
+        TypingCommand::deleteKeyPressed(*frame.document(), frame.editor().shouldSmartDelete() ? TypingCommand::SmartDelete : 0);
         return true;
     }
     ASSERT_NOT_REACHED();
@@ -304,32 +306,32 @@ static bool executeDelete(Frame& frame, Event*, EditorCommandSource source, cons
 
 static bool executeDeleteBackward(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.editor().deleteWithDirection(DirectionBackward, CharacterGranularity, false, true);
+    frame.editor().deleteWithDirection(SelectionDirection::Backward, TextGranularity::CharacterGranularity, false, true);
     return true;
 }
 
 static bool executeDeleteBackwardByDecomposingPreviousCharacter(Frame& frame, Event*, EditorCommandSource, const String&)
 {
     LOG_ERROR("DeleteBackwardByDecomposingPreviousCharacter is not implemented, doing DeleteBackward instead");
-    frame.editor().deleteWithDirection(DirectionBackward, CharacterGranularity, false, true);
+    frame.editor().deleteWithDirection(SelectionDirection::Backward, TextGranularity::CharacterGranularity, false, true);
     return true;
 }
 
 static bool executeDeleteForward(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.editor().deleteWithDirection(DirectionForward, CharacterGranularity, false, true);
+    frame.editor().deleteWithDirection(SelectionDirection::Forward, TextGranularity::CharacterGranularity, false, true);
     return true;
 }
 
 static bool executeDeleteToBeginningOfLine(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.editor().deleteWithDirection(DirectionBackward, LineBoundary, true, false);
+    frame.editor().deleteWithDirection(SelectionDirection::Backward, TextGranularity::LineBoundary, true, false);
     return true;
 }
 
 static bool executeDeleteToBeginningOfParagraph(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.editor().deleteWithDirection(DirectionBackward, ParagraphBoundary, true, false);
+    frame.editor().deleteWithDirection(SelectionDirection::Backward, TextGranularity::ParagraphBoundary, true, false);
     return true;
 }
 
@@ -337,7 +339,7 @@ static bool executeDeleteToEndOfLine(Frame& frame, Event*, EditorCommandSource, 
 {
     // Despite its name, this command should delete the newline at the end of
     // a paragraph if you are at the end of a paragraph (like DeleteToEndOfParagraph).
-    frame.editor().deleteWithDirection(DirectionForward, LineBoundary, true, false);
+    frame.editor().deleteWithDirection(SelectionDirection::Forward, TextGranularity::LineBoundary, true, false);
     return true;
 }
 
@@ -345,18 +347,16 @@ static bool executeDeleteToEndOfParagraph(Frame& frame, Event*, EditorCommandSou
 {
     // Despite its name, this command should delete the newline at the end of
     // a paragraph if you are at the end of a paragraph.
-    frame.editor().deleteWithDirection(DirectionForward, ParagraphBoundary, true, false);
+    frame.editor().deleteWithDirection(SelectionDirection::Forward, TextGranularity::ParagraphBoundary, true, false);
     return true;
 }
 
 static bool executeDeleteToMark(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    RefPtr<Range> mark = frame.editor().mark().toNormalizedRange();
-    FrameSelection& selection = frame.selection();
+    auto mark = frame.editor().mark().toNormalizedRange();
+    auto& selection = frame.selection();
     if (mark && frame.editor().selectedRange()) {
-        bool selected = selection.setSelectedRange(unionDOMRanges(*mark, *frame.editor().selectedRange()).get(), DOWNSTREAM, true);
-        ASSERT(selected);
-        if (!selected)
+        if (!selection.setSelectedRange(unionRanges(*mark, *frame.editor().selectedRange()), DOWNSTREAM, FrameSelection::ShouldCloseTyping::Yes))
             return false;
     }
     frame.editor().performDelete();
@@ -366,13 +366,13 @@ static bool executeDeleteToMark(Frame& frame, Event*, EditorCommandSource, const
 
 static bool executeDeleteWordBackward(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.editor().deleteWithDirection(DirectionBackward, WordGranularity, true, false);
+    frame.editor().deleteWithDirection(SelectionDirection::Backward, TextGranularity::WordGranularity, true, false);
     return true;
 }
 
 static bool executeDeleteWordForward(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.editor().deleteWithDirection(DirectionForward, WordGranularity, true, false);
+    frame.editor().deleteWithDirection(SelectionDirection::Forward, TextGranularity::WordGranularity, true, false);
     return true;
 }
 
@@ -383,7 +383,7 @@ static bool executeFindString(Frame& frame, Event*, EditorCommandSource, const S
 
 static bool executeFontName(Frame& frame, Event*, EditorCommandSource source, const String& value)
 {
-    return executeApplyStyle(frame, source, EditActionSetFont, CSSPropertyFontFamily, value);
+    return executeApplyStyle(frame, source, EditAction::SetFont, CSSPropertyFontFamily, value);
 }
 
 static bool executeFontSize(Frame& frame, Event*, EditorCommandSource source, const String& value)
@@ -391,17 +391,17 @@ static bool executeFontSize(Frame& frame, Event*, EditorCommandSource source, co
     CSSValueID size;
     if (!HTMLFontElement::cssValueFromFontSizeNumber(value, size))
         return false;
-    return executeApplyStyle(frame, source, EditActionChangeAttributes, CSSPropertyFontSize, size);
+    return executeApplyStyle(frame, source, EditAction::ChangeAttributes, CSSPropertyFontSize, size);
 }
 
 static bool executeFontSizeDelta(Frame& frame, Event*, EditorCommandSource source, const String& value)
 {
-    return executeApplyStyle(frame, source, EditActionChangeAttributes, CSSPropertyWebkitFontSizeDelta, value);
+    return executeApplyStyle(frame, source, EditAction::ChangeAttributes, CSSPropertyWebkitFontSizeDelta, value);
 }
 
 static bool executeForeColor(Frame& frame, Event*, EditorCommandSource source, const String& value)
 {
-    return executeApplyStyle(frame, source, EditActionSetColor, CSSPropertyColor, value);
+    return executeApplyStyle(frame, source, EditAction::SetColor, CSSPropertyColor, value);
 }
 
 static bool executeFormatBlock(Frame& frame, Event*, EditorCommandSource, const String& value)
@@ -424,7 +424,7 @@ static bool executeForwardDelete(Frame& frame, Event*, EditorCommandSource sourc
 {
     switch (source) {
     case CommandFromMenuOrKeyBinding:
-        frame.editor().deleteWithDirection(DirectionForward, CharacterGranularity, false, true);
+        frame.editor().deleteWithDirection(SelectionDirection::Forward, TextGranularity::CharacterGranularity, false, true);
         return true;
     case CommandFromDOM:
     case CommandFromDOMWithUserInterface:
@@ -477,6 +477,13 @@ static bool executeInsertImage(Frame& frame, Event*, EditorCommandSource, const 
     return executeInsertNode(frame, WTFMove(image));
 }
 
+static bool executeInsertEditableImage(Frame& frame, Event*, EditorCommandSource, const String&)
+{
+    ASSERT(frame.document());
+    InsertEditableImageCommand::create(*frame.document())->apply();
+    return true;
+}
+
 static bool executeInsertLineBreak(Frame& frame, Event* event, EditorCommandSource source, const String&)
 {
     switch (source) {
@@ -509,7 +516,7 @@ static bool executeInsertNewlineInQuotedContent(Frame& frame, Event*, EditorComm
 static bool executeInsertOrderedList(Frame& frame, Event*, EditorCommandSource, const String&)
 {
     ASSERT(frame.document());
-    InsertListCommand::create(*frame.document(), InsertListCommand::OrderedList)->apply();
+    InsertListCommand::create(*frame.document(), InsertListCommand::Type::OrderedList)->apply();
     return true;
 }
 
@@ -533,99 +540,113 @@ static bool executeInsertText(Frame& frame, Event*, EditorCommandSource, const S
 static bool executeInsertUnorderedList(Frame& frame, Event*, EditorCommandSource, const String&)
 {
     ASSERT(frame.document());
-    InsertListCommand::create(*frame.document(), InsertListCommand::UnorderedList)->apply();
+    InsertListCommand::create(*frame.document(), InsertListCommand::Type::UnorderedList)->apply();
+    return true;
+}
+
+static bool executeInsertNestedUnorderedList(Frame& frame, Event*, EditorCommandSource, const String&)
+{
+    ASSERT(frame.document());
+    InsertNestedListCommand::insertUnorderedList(*frame.document());
+    return true;
+}
+
+static bool executeInsertNestedOrderedList(Frame& frame, Event*, EditorCommandSource, const String&)
+{
+    ASSERT(frame.document());
+    InsertNestedListCommand::insertOrderedList(*frame.document());
     return true;
 }
 
 static bool executeJustifyCenter(Frame& frame, Event*, EditorCommandSource source, const String&)
 {
-    return executeApplyParagraphStyle(frame, source, EditActionCenter, CSSPropertyTextAlign, "center"_s);
+    return executeApplyParagraphStyle(frame, source, EditAction::Center, CSSPropertyTextAlign, "center"_s);
 }
 
 static bool executeJustifyFull(Frame& frame, Event*, EditorCommandSource source, const String&)
 {
-    return executeApplyParagraphStyle(frame, source, EditActionJustify, CSSPropertyTextAlign, "justify"_s);
+    return executeApplyParagraphStyle(frame, source, EditAction::Justify, CSSPropertyTextAlign, "justify"_s);
 }
 
 static bool executeJustifyLeft(Frame& frame, Event*, EditorCommandSource source, const String&)
 {
-    return executeApplyParagraphStyle(frame, source, EditActionAlignLeft, CSSPropertyTextAlign, "left"_s);
+    return executeApplyParagraphStyle(frame, source, EditAction::AlignLeft, CSSPropertyTextAlign, "left"_s);
 }
 
 static bool executeJustifyRight(Frame& frame, Event*, EditorCommandSource source, const String&)
 {
-    return executeApplyParagraphStyle(frame, source, EditActionAlignRight, CSSPropertyTextAlign, "right"_s);
+    return executeApplyParagraphStyle(frame, source, EditAction::AlignRight, CSSPropertyTextAlign, "right"_s);
 }
 
 static bool executeMakeTextWritingDirectionLeftToRight(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    RefPtr<MutableStyleProperties> style = MutableStyleProperties::create();
+    auto style = MutableStyleProperties::create();
     style->setProperty(CSSPropertyUnicodeBidi, CSSValueEmbed);
     style->setProperty(CSSPropertyDirection, CSSValueLtr);
-    frame.editor().applyStyle(style.get(), EditActionSetWritingDirection);
+    frame.editor().applyStyle(style.ptr(), EditAction::SetInlineWritingDirection);
     return true;
 }
 
 static bool executeMakeTextWritingDirectionNatural(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    RefPtr<MutableStyleProperties> style = MutableStyleProperties::create();
+    auto style = MutableStyleProperties::create();
     style->setProperty(CSSPropertyUnicodeBidi, CSSValueNormal);
-    frame.editor().applyStyle(style.get(), EditActionSetWritingDirection);
+    frame.editor().applyStyle(style.ptr(), EditAction::SetInlineWritingDirection);
     return true;
 }
 
 static bool executeMakeTextWritingDirectionRightToLeft(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    RefPtr<MutableStyleProperties> style = MutableStyleProperties::create();
+    auto style = MutableStyleProperties::create();
     style->setProperty(CSSPropertyUnicodeBidi, CSSValueEmbed);
     style->setProperty(CSSPropertyDirection, CSSValueRtl);
-    frame.editor().applyStyle(style.get(), EditActionSetWritingDirection);
+    frame.editor().applyStyle(style.ptr(), EditAction::SetInlineWritingDirection);
     return true;
 }
 
 static bool executeMoveBackward(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationMove, DirectionBackward, CharacterGranularity, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationMove, SelectionDirection::Backward, TextGranularity::CharacterGranularity, UserTriggered);
     return true;
 }
 
 static bool executeMoveBackwardAndModifySelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationExtend, DirectionBackward, CharacterGranularity, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationExtend, SelectionDirection::Backward, TextGranularity::CharacterGranularity, UserTriggered);
     return true;
 }
 
 static bool executeMoveDown(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    return frame.selection().modify(FrameSelection::AlterationMove, DirectionForward, LineGranularity, UserTriggered);
+    return frame.selection().modify(FrameSelection::AlterationMove, SelectionDirection::Forward, TextGranularity::LineGranularity, UserTriggered);
 }
 
 static bool executeMoveDownAndModifySelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationExtend, DirectionForward, LineGranularity, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationExtend, SelectionDirection::Forward, TextGranularity::LineGranularity, UserTriggered);
     return true;
 }
 
 static bool executeMoveForward(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationMove, DirectionForward, CharacterGranularity, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationMove, SelectionDirection::Forward, TextGranularity::CharacterGranularity, UserTriggered);
     return true;
 }
 
 static bool executeMoveForwardAndModifySelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationExtend, DirectionForward, CharacterGranularity, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationExtend, SelectionDirection::Forward, TextGranularity::CharacterGranularity, UserTriggered);
     return true;
 }
 
 static bool executeMoveLeft(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    return frame.selection().modify(FrameSelection::AlterationMove, DirectionLeft, CharacterGranularity, UserTriggered);
+    return frame.selection().modify(FrameSelection::AlterationMove, SelectionDirection::Left, TextGranularity::CharacterGranularity, UserTriggered);
 }
 
 static bool executeMoveLeftAndModifySelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationExtend, DirectionLeft, CharacterGranularity, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationExtend, SelectionDirection::Left, TextGranularity::CharacterGranularity, UserTriggered);
     return true;
 }
 
@@ -667,203 +688,203 @@ static bool executeMovePageUpAndModifySelection(Frame& frame, Event*, EditorComm
 
 static bool executeMoveRight(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    return frame.selection().modify(FrameSelection::AlterationMove, DirectionRight, CharacterGranularity, UserTriggered);
+    return frame.selection().modify(FrameSelection::AlterationMove, SelectionDirection::Right, TextGranularity::CharacterGranularity, UserTriggered);
 }
 
 static bool executeMoveRightAndModifySelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationExtend, DirectionRight, CharacterGranularity, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationExtend, SelectionDirection::Right, TextGranularity::CharacterGranularity, UserTriggered);
     return true;
 }
 
 static bool executeMoveToBeginningOfDocument(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationMove, DirectionBackward, DocumentBoundary, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationMove, SelectionDirection::Backward, TextGranularity::DocumentBoundary, UserTriggered);
     return true;
 }
 
 static bool executeMoveToBeginningOfDocumentAndModifySelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationExtend, DirectionBackward, DocumentBoundary, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationExtend, SelectionDirection::Backward, TextGranularity::DocumentBoundary, UserTriggered);
     return true;
 }
 
 static bool executeMoveToBeginningOfLine(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationMove, DirectionBackward, LineBoundary, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationMove, SelectionDirection::Backward, TextGranularity::LineBoundary, UserTriggered);
     return true;
 }
 
 static bool executeMoveToBeginningOfLineAndModifySelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationExtend, DirectionBackward, LineBoundary, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationExtend, SelectionDirection::Backward, TextGranularity::LineBoundary, UserTriggered);
     return true;
 }
 
 static bool executeMoveToBeginningOfParagraph(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationMove, DirectionBackward, ParagraphBoundary, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationMove, SelectionDirection::Backward, TextGranularity::ParagraphBoundary, UserTriggered);
     return true;
 }
 
 static bool executeMoveToBeginningOfParagraphAndModifySelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationExtend, DirectionBackward, ParagraphBoundary, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationExtend, SelectionDirection::Backward, TextGranularity::ParagraphBoundary, UserTriggered);
     return true;
 }
 
 static bool executeMoveToBeginningOfSentence(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationMove, DirectionBackward, SentenceBoundary, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationMove, SelectionDirection::Backward, TextGranularity::SentenceBoundary, UserTriggered);
     return true;
 }
 
 static bool executeMoveToBeginningOfSentenceAndModifySelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationExtend, DirectionBackward, SentenceBoundary, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationExtend, SelectionDirection::Backward, TextGranularity::SentenceBoundary, UserTriggered);
     return true;
 }
 
 static bool executeMoveToEndOfDocument(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationMove, DirectionForward, DocumentBoundary, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationMove, SelectionDirection::Forward, TextGranularity::DocumentBoundary, UserTriggered);
     return true;
 }
 
 static bool executeMoveToEndOfDocumentAndModifySelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationExtend, DirectionForward, DocumentBoundary, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationExtend, SelectionDirection::Forward, TextGranularity::DocumentBoundary, UserTriggered);
     return true;
 }
 
 static bool executeMoveToEndOfSentence(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationMove, DirectionForward, SentenceBoundary, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationMove, SelectionDirection::Forward, TextGranularity::SentenceBoundary, UserTriggered);
     return true;
 }
 
 static bool executeMoveToEndOfSentenceAndModifySelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationExtend, DirectionForward, SentenceBoundary, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationExtend, SelectionDirection::Forward, TextGranularity::SentenceBoundary, UserTriggered);
     return true;
 }
 
 static bool executeMoveToEndOfLine(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationMove, DirectionForward, LineBoundary, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationMove, SelectionDirection::Forward, TextGranularity::LineBoundary, UserTriggered);
     return true;
 }
 
 static bool executeMoveToEndOfLineAndModifySelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationExtend, DirectionForward, LineBoundary, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationExtend, SelectionDirection::Forward, TextGranularity::LineBoundary, UserTriggered);
     return true;
 }
 
 static bool executeMoveToEndOfParagraph(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationMove, DirectionForward, ParagraphBoundary, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationMove, SelectionDirection::Forward, TextGranularity::ParagraphBoundary, UserTriggered);
     return true;
 }
 
 static bool executeMoveToEndOfParagraphAndModifySelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationExtend, DirectionForward, ParagraphBoundary, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationExtend, SelectionDirection::Forward, TextGranularity::ParagraphBoundary, UserTriggered);
     return true;
 }
 
 static bool executeMoveParagraphBackwardAndModifySelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationExtend, DirectionBackward, ParagraphGranularity, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationExtend, SelectionDirection::Backward, TextGranularity::ParagraphGranularity, UserTriggered);
     return true;
 }
 
 static bool executeMoveParagraphForwardAndModifySelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationExtend, DirectionForward, ParagraphGranularity, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationExtend, SelectionDirection::Forward, TextGranularity::ParagraphGranularity, UserTriggered);
     return true;
 }
 
 static bool executeMoveUp(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    return frame.selection().modify(FrameSelection::AlterationMove, DirectionBackward, LineGranularity, UserTriggered);
+    return frame.selection().modify(FrameSelection::AlterationMove, SelectionDirection::Backward, TextGranularity::LineGranularity, UserTriggered);
 }
 
 static bool executeMoveUpAndModifySelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationExtend, DirectionBackward, LineGranularity, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationExtend, SelectionDirection::Backward, TextGranularity::LineGranularity, UserTriggered);
     return true;
 }
 
 static bool executeMoveWordBackward(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationMove, DirectionBackward, WordGranularity, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationMove, SelectionDirection::Backward, TextGranularity::WordGranularity, UserTriggered);
     return true;
 }
 
 static bool executeMoveWordBackwardAndModifySelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationExtend, DirectionBackward, WordGranularity, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationExtend, SelectionDirection::Backward, TextGranularity::WordGranularity, UserTriggered);
     return true;
 }
 
 static bool executeMoveWordForward(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationMove, DirectionForward, WordGranularity, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationMove, SelectionDirection::Forward, TextGranularity::WordGranularity, UserTriggered);
     return true;
 }
 
 static bool executeMoveWordForwardAndModifySelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationExtend, DirectionForward, WordGranularity, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationExtend, SelectionDirection::Forward, TextGranularity::WordGranularity, UserTriggered);
     return true;
 }
 
 static bool executeMoveWordLeft(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationMove, DirectionLeft, WordGranularity, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationMove, SelectionDirection::Left, TextGranularity::WordGranularity, UserTriggered);
     return true;
 }
 
 static bool executeMoveWordLeftAndModifySelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationExtend, DirectionLeft, WordGranularity, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationExtend, SelectionDirection::Left, TextGranularity::WordGranularity, UserTriggered);
     return true;
 }
 
 static bool executeMoveWordRight(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationMove, DirectionRight, WordGranularity, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationMove, SelectionDirection::Right, TextGranularity::WordGranularity, UserTriggered);
     return true;
 }
 
 static bool executeMoveWordRightAndModifySelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationExtend, DirectionRight, WordGranularity, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationExtend, SelectionDirection::Right, TextGranularity::WordGranularity, UserTriggered);
     return true;
 }
 
 static bool executeMoveToLeftEndOfLine(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationMove, DirectionLeft, LineBoundary, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationMove, SelectionDirection::Left, TextGranularity::LineBoundary, UserTriggered);
     return true;
 }
 
 static bool executeMoveToLeftEndOfLineAndModifySelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationExtend, DirectionLeft, LineBoundary, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationExtend, SelectionDirection::Left, TextGranularity::LineBoundary, UserTriggered);
     return true;
 }
 
 static bool executeMoveToRightEndOfLine(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationMove, DirectionRight, LineBoundary, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationMove, SelectionDirection::Right, TextGranularity::LineBoundary, UserTriggered);
     return true;
 }
 
 static bool executeMoveToRightEndOfLineAndModifySelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    frame.selection().modify(FrameSelection::AlterationExtend, DirectionRight, LineBoundary, UserTriggered);
+    frame.selection().modify(FrameSelection::AlterationExtend, SelectionDirection::Right, TextGranularity::LineBoundary, UserTriggered);
     return true;
 }
 
@@ -884,9 +905,14 @@ static bool executePaste(Frame& frame, Event*, EditorCommandSource source, const
 {
     if (source == CommandFromMenuOrKeyBinding) {
         UserTypingGestureIndicator typingGestureIndicator(frame);
-        frame.editor().paste();
-    } else
-        frame.editor().paste();
+        frame.editor().paste(Editor::FromMenuOrKeyBinding::Yes);
+        return true;
+    }
+
+    if (!frame.requestDOMPasteAccess())
+        return false;
+
+    frame.editor().paste();
     return true;
 }
 
@@ -910,9 +936,14 @@ static bool executePasteAndMatchStyle(Frame& frame, Event*, EditorCommandSource 
 {
     if (source == CommandFromMenuOrKeyBinding) {
         UserTypingGestureIndicator typingGestureIndicator(frame);
-        frame.editor().pasteAsPlainText();
-    } else
-        frame.editor().pasteAsPlainText();
+        frame.editor().pasteAsPlainText(Editor::FromMenuOrKeyBinding::Yes);
+        return true;
+    }
+
+    if (!frame.requestDOMPasteAccess())
+        return false;
+
+    frame.editor().pasteAsPlainText();
     return true;
 }
 
@@ -920,9 +951,29 @@ static bool executePasteAsPlainText(Frame& frame, Event*, EditorCommandSource so
 {
     if (source == CommandFromMenuOrKeyBinding) {
         UserTypingGestureIndicator typingGestureIndicator(frame);
-        frame.editor().pasteAsPlainText();
-    } else
-        frame.editor().pasteAsPlainText();
+        frame.editor().pasteAsPlainText(Editor::FromMenuOrKeyBinding::Yes);
+        return true;
+    }
+
+    if (!frame.requestDOMPasteAccess())
+        return false;
+
+    frame.editor().pasteAsPlainText();
+    return true;
+}
+
+static bool executePasteAsQuotation(Frame& frame, Event*, EditorCommandSource source, const String&)
+{
+    if (source == CommandFromMenuOrKeyBinding) {
+        UserTypingGestureIndicator typingGestureIndicator(frame);
+        frame.editor().pasteAsQuotation(Editor::FromMenuOrKeyBinding::Yes);
+        return true;
+    }
+
+    if (!frame.requestDOMPasteAccess())
+        return false;
+
+    frame.editor().pasteAsQuotation();
     return true;
 }
 
@@ -984,34 +1035,35 @@ static bool executeSelectAll(Frame& frame, Event*, EditorCommandSource, const St
 
 static bool executeSelectLine(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    return expandSelectionToGranularity(frame, LineGranularity);
+    return expandSelectionToGranularity(frame, TextGranularity::LineGranularity);
 }
 
 static bool executeSelectParagraph(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    return expandSelectionToGranularity(frame, ParagraphGranularity);
+    return expandSelectionToGranularity(frame, TextGranularity::ParagraphGranularity);
 }
 
 static bool executeSelectSentence(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    return expandSelectionToGranularity(frame, SentenceGranularity);
+    return expandSelectionToGranularity(frame, TextGranularity::SentenceGranularity);
 }
 
 static bool executeSelectToMark(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    RefPtr<Range> mark = frame.editor().mark().toNormalizedRange();
-    RefPtr<Range> selection = frame.editor().selectedRange();
+    auto mark = frame.editor().mark().toNormalizedRange();
+    auto selection = frame.editor().selectedRange();
     if (!mark || !selection) {
         PAL::systemBeep();
         return false;
     }
-    frame.selection().setSelectedRange(unionDOMRanges(*mark, *selection).get(), DOWNSTREAM, true);
+    frame.selection().setSelectedRange(unionRanges(*mark, *selection), DOWNSTREAM, FrameSelection::ShouldCloseTyping::Yes);
+    // FIXME: Why do we ignore the return value from setSelectedRange here?
     return true;
 }
 
 static bool executeSelectWord(Frame& frame, Event*, EditorCommandSource, const String&)
 {
-    return expandSelectionToGranularity(frame, WordGranularity);
+    return expandSelectionToGranularity(frame, TextGranularity::WordGranularity);
 }
 
 static bool executeSetMark(Frame& frame, Event*, EditorCommandSource, const String&)
@@ -1029,8 +1081,7 @@ static bool executeStrikethrough(Frame& frame, Event*, EditorCommandSource sourc
 {
     Ref<EditingStyle> style = EditingStyle::create();
     style->setStrikeThroughChange(textDecorationChangeForToggling(frame.editor(), CSSPropertyWebkitTextDecorationsInEffect, "line-through"_s));
-    // FIXME: Needs a new EditAction!
-    return applyCommandToFrame(frame, source, EditActionUnderline, WTFMove(style));
+    return applyCommandToFrame(frame, source, EditAction::StrikeThrough, WTFMove(style));
 }
 
 static bool executeStyleWithCSS(Frame& frame, Event*, EditorCommandSource, const String& value)
@@ -1047,16 +1098,17 @@ static bool executeUseCSS(Frame& frame, Event*, EditorCommandSource, const Strin
 
 static bool executeSubscript(Frame& frame, Event*, EditorCommandSource source, const String&)
 {
-    return executeToggleStyle(frame, source, EditActionSubscript, CSSPropertyVerticalAlign, "baseline"_s, "sub"_s);
+    return executeToggleStyle(frame, source, EditAction::Subscript, CSSPropertyVerticalAlign, "baseline"_s, "sub"_s);
 }
 
 static bool executeSuperscript(Frame& frame, Event*, EditorCommandSource source, const String&)
 {
-    return executeToggleStyle(frame, source, EditActionSuperscript, CSSPropertyVerticalAlign, "baseline"_s, "super"_s);
+    return executeToggleStyle(frame, source, EditAction::Superscript, CSSPropertyVerticalAlign, "baseline"_s, "super"_s);
 }
 
 static bool executeSwapWithMark(Frame& frame, Event*, EditorCommandSource, const String&)
 {
+    RefPtr<Document> protection(frame.document());
     Ref<Frame> protector(frame);
     const VisibleSelection& mark = frame.editor().mark();
     const VisibleSelection& selection = frame.selection().selection();
@@ -1069,22 +1121,24 @@ static bool executeSwapWithMark(Frame& frame, Event*, EditorCommandSource, const
     return true;
 }
 
-#if PLATFORM(MAC)
+#if PLATFORM(COCOA)
+
 static bool executeTakeFindStringFromSelection(Frame& frame, Event*, EditorCommandSource, const String&)
 {
     frame.editor().takeFindStringFromSelection();
     return true;
 }
-#endif
+
+#endif // PLATFORM(COCOA)
 
 static bool executeToggleBold(Frame& frame, Event*, EditorCommandSource source, const String&)
 {
-    return executeToggleStyle(frame, source, EditActionBold, CSSPropertyFontWeight, "normal"_s, "bold"_s);
+    return executeToggleStyle(frame, source, EditAction::Bold, CSSPropertyFontWeight, "normal"_s, "bold"_s);
 }
 
 static bool executeToggleItalic(Frame& frame, Event*, EditorCommandSource source, const String&)
 {
-    return executeToggleStyle(frame, source, EditActionItalics, CSSPropertyFontStyle, "normal"_s, "italic"_s);
+    return executeToggleStyle(frame, source, EditAction::Italics, CSSPropertyFontStyle, "normal"_s, "italic"_s);
 }
 
 static bool executeTranspose(Frame& frame, Event*, EditorCommandSource, const String&)
@@ -1098,7 +1152,7 @@ static bool executeUnderline(Frame& frame, Event*, EditorCommandSource source, c
     Ref<EditingStyle> style = EditingStyle::create();
     TextDecorationChange change = textDecorationChangeForToggling(frame.editor(), CSSPropertyWebkitTextDecorationsInEffect, "underline"_s);
     style->setUnderlineChange(change);
-    return applyCommandToFrame(frame, source, EditActionUnderline, WTFMove(style));
+    return applyCommandToFrame(frame, source, EditAction::Underline, WTFMove(style));
 }
 
 static bool executeUndo(Frame& frame, Event*, EditorCommandSource, const String&)
@@ -1116,7 +1170,7 @@ static bool executeUnlink(Frame& frame, Event*, EditorCommandSource, const Strin
 
 static bool executeUnscript(Frame& frame, Event*, EditorCommandSource source, const String&)
 {
-    return executeApplyStyle(frame, source, EditActionUnscript, CSSPropertyVerticalAlign, "baseline"_s);
+    return executeApplyStyle(frame, source, EditAction::Unscript, CSSPropertyVerticalAlign, "baseline"_s);
 }
 
 static bool executeUnselect(Frame& frame, Event*, EditorCommandSource, const String&)
@@ -1180,12 +1234,21 @@ static bool supportedCopyCut(Frame* frame)
     return client ? client->canCopyCut(frame, defaultValue) : defaultValue;
 }
 
+static bool defaultValueForSupportedPaste(Frame& frame)
+{
+    auto& settings = frame.settings();
+    if (settings.javaScriptCanAccessClipboard() && settings.DOMPasteAllowed())
+        return true;
+
+    return settings.domPasteAccessRequestsEnabled();
+}
+
 static bool supportedPaste(Frame* frame)
 {
     if (!frame)
         return false;
 
-    bool defaultValue = frame->settings().javaScriptCanAccessClipboard() && frame->settings().DOMPasteAllowed();
+    bool defaultValue = defaultValueForSupportedPaste(*frame);
 
     EditorClient* client = frame->editor().client();
     return client ? client->canPaste(frame, defaultValue) : defaultValue;
@@ -1314,9 +1377,26 @@ static bool enabledInRichlyEditableText(Frame& frame, Event*, EditorCommandSourc
     return selection.isCaretOrRange() && selection.isContentRichlyEditable() && selection.rootEditableElement();
 }
 
-static bool enabledPaste(Frame& frame, Event*, EditorCommandSource)
+static bool allowPasteFromDOM(Frame& frame)
 {
-    return frame.editor().canPaste();
+    auto& settings = frame.settings();
+    if (settings.javaScriptCanAccessClipboard() && settings.DOMPasteAllowed())
+        return true;
+
+    return settings.domPasteAccessRequestsEnabled() && UserGestureIndicator::processingUserGesture();
+}
+
+static bool enabledPaste(Frame& frame, Event*, EditorCommandSource source)
+{
+    switch (source) {
+    case CommandFromMenuOrKeyBinding:
+        return frame.editor().canDHTMLPaste() || frame.editor().canPaste();
+    case CommandFromDOM:
+    case CommandFromDOMWithUserInterface:
+        return allowPasteFromDOM(frame) && (frame.editor().canDHTMLPaste() || frame.editor().canPaste());
+    }
+    ASSERT_NOT_REACHED();
+    return false;
 }
 
 static bool enabledRangeInEditableText(Frame& frame, Event*, EditorCommandSource)
@@ -1334,23 +1414,32 @@ static bool enabledRedo(Frame& frame, Event*, EditorCommandSource)
     return frame.editor().canRedo();
 }
 
-#if PLATFORM(MAC)
+#if PLATFORM(COCOA)
+
 static bool enabledTakeFindStringFromSelection(Frame& frame, Event*, EditorCommandSource)
 {
     return frame.editor().canCopyExcludingStandaloneImages();
 }
-#endif
+
+#endif // PLATFORM(COCOA)
 
 static bool enabledUndo(Frame& frame, Event*, EditorCommandSource)
 {
     return frame.editor().canUndo();
 }
 
+static bool enabledInRichlyEditableTextWithEditableImagesEnabled(Frame& frame, Event* event, EditorCommandSource source)
+{
+    if (!frame.settings().editableImagesEnabled())
+        return false;
+    return enabledInRichlyEditableText(frame, event, source);
+}
+
 // State functions
 
 static TriState stateNone(Frame&, Event*)
 {
-    return FalseTriState;
+    return TriState::False;
 }
 
 static TriState stateBold(Frame& frame, Event*)
@@ -1375,7 +1464,7 @@ static TriState stateStrikethrough(Frame& frame, Event*)
 
 static TriState stateStyleWithCSS(Frame& frame, Event*)
 {
-    return frame.editor().shouldStyleWithCSS() ? TrueTriState : FalseTriState;
+    return frame.editor().shouldStyleWithCSS() ? TriState::True : TriState::False;
 }
 
 static TriState stateSubscript(Frame& frame, Event*)
@@ -1390,17 +1479,17 @@ static TriState stateSuperscript(Frame& frame, Event*)
 
 static TriState stateTextWritingDirectionLeftToRight(Frame& frame, Event*)
 {
-    return stateTextWritingDirection(frame, LeftToRightWritingDirection);
+    return stateTextWritingDirection(frame, WritingDirection::LeftToRight);
 }
 
 static TriState stateTextWritingDirectionNatural(Frame& frame, Event*)
 {
-    return stateTextWritingDirection(frame, NaturalWritingDirection);
+    return stateTextWritingDirection(frame, WritingDirection::Natural);
 }
 
 static TriState stateTextWritingDirectionRightToLeft(Frame& frame, Event*)
 {
-    return stateTextWritingDirection(frame, RightToLeftWritingDirection);
+    return stateTextWritingDirection(frame, WritingDirection::RightToLeft);
 }
 
 static TriState stateUnderline(Frame& frame, Event*)
@@ -1483,7 +1572,7 @@ static String valueFormatBlock(Frame& frame, Event*)
     const VisibleSelection& selection = frame.selection().selection();
     if (selection.isNoneOrOrphaned() || !selection.isContentEditable())
         return emptyString();
-    Element* formatBlockElement = FormatBlockCommand::elementForFormatBlockCommand(selection.firstRange().get());
+    auto* formatBlockElement = FormatBlockCommand::elementForFormatBlockCommand(selection.firstRange());
     if (!formatBlockElement)
         return emptyString();
     return formatBlockElement->localName();
@@ -1565,6 +1654,7 @@ static const CommandMap& createCommandMap()
         { "IgnoreSpelling", { executeIgnoreSpelling, supportedFromMenuOrKeyBinding, enabledInEditableText, stateNone, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled } },
         { "Indent", { executeIndent, supported, enabledInRichlyEditableText, stateNone, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled } },
         { "InsertBacktab", { executeInsertBacktab, supportedFromMenuOrKeyBinding, enabledInEditableText, stateNone, valueNull, isTextInsertion, doNotAllowExecutionWhenDisabled } },
+        { "InsertEditableImage", { executeInsertEditableImage, supported, enabledInRichlyEditableTextWithEditableImagesEnabled, stateNone, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled } },
         { "InsertHTML", { executeInsertHTML, supported, enabledInEditableText, stateNone, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled } },
         { "InsertHorizontalRule", { executeInsertHorizontalRule, supported, enabledInRichlyEditableText, stateNone, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled } },
         { "InsertImage", { executeInsertImage, supported, enabledInRichlyEditableText, stateNone, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled } },
@@ -1572,10 +1662,12 @@ static const CommandMap& createCommandMap()
         { "InsertNewline", { executeInsertNewline, supportedFromMenuOrKeyBinding, enabledInEditableText, stateNone, valueNull, isTextInsertion, doNotAllowExecutionWhenDisabled } },
         { "InsertNewlineInQuotedContent", { executeInsertNewlineInQuotedContent, supported, enabledInRichlyEditableText, stateNone, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled } },
         { "InsertOrderedList", { executeInsertOrderedList, supported, enabledInRichlyEditableText, stateOrderedList, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled } },
+        { "InsertNestedOrderedList", { executeInsertNestedOrderedList, supported, enabledInRichlyEditableText, stateOrderedList, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled } },
         { "InsertParagraph", { executeInsertParagraph, supported, enabledInEditableText, stateNone, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled } },
         { "InsertTab", { executeInsertTab, supportedFromMenuOrKeyBinding, enabledInEditableText, stateNone, valueNull, isTextInsertion, doNotAllowExecutionWhenDisabled } },
         { "InsertText", { executeInsertText, supported, enabledInEditableText, stateNone, valueNull, isTextInsertion, doNotAllowExecutionWhenDisabled } },
         { "InsertUnorderedList", { executeInsertUnorderedList, supported, enabledInRichlyEditableText, stateUnorderedList, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled } },
+        { "InsertNestedUnorderedList", { executeInsertNestedUnorderedList, supported, enabledInRichlyEditableText, stateUnorderedList, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled } },
         { "Italic", { executeToggleItalic, supported, enabledInRichlyEditableText, stateItalic, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled } },
         { "JustifyCenter", { executeJustifyCenter, supported, enabledInRichlyEditableText, stateJustifyCenter, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled } },
         { "JustifyFull", { executeJustifyFull, supported, enabledInRichlyEditableText, stateJustifyFull, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled } },
@@ -1636,6 +1728,7 @@ static const CommandMap& createCommandMap()
         { "Paste", { executePaste, supportedPaste, enabledPaste, stateNone, valueNull, notTextInsertion, allowExecutionWhenDisabledPaste } },
         { "PasteAndMatchStyle", { executePasteAndMatchStyle, supportedPaste, enabledPaste, stateNone, valueNull, notTextInsertion, allowExecutionWhenDisabledPaste } },
         { "PasteAsPlainText", { executePasteAsPlainText, supportedPaste, enabledPaste, stateNone, valueNull, notTextInsertion, allowExecutionWhenDisabledPaste } },
+        { "PasteAsQuotation", { executePasteAsQuotation, supportedPaste, enabledPaste, stateNone, valueNull, notTextInsertion, allowExecutionWhenDisabledPaste } },
         { "Print", { executePrint, supported, enabled, stateNone, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled } },
         { "Redo", { executeRedo, supported, enabledRedo, stateNone, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled } },
         { "RemoveFormat", { executeRemoveFormat, supported, enabledRangeInEditableText, stateNone, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled } },
@@ -1674,7 +1767,7 @@ static const CommandMap& createCommandMap()
         { "PasteGlobalSelection", { executePasteGlobalSelection, supportedFromMenuOrKeyBinding, enabledPaste, stateNone, valueNull, notTextInsertion, allowExecutionWhenDisabled } },
 #endif
 
-#if PLATFORM(MAC)
+#if PLATFORM(COCOA)
         { "TakeFindStringFromSelection", { executeTakeFindStringFromSelection, supportedFromMenuOrKeyBinding, enabledTakeFindStringFromSelection, stateNone, valueNull, notTextInsertion, doNotAllowExecutionWhenDisabled } },
 #endif
     };
@@ -1743,12 +1836,12 @@ static const EditorInternalCommand* internalCommand(const String& commandName)
 
 Editor::Command Editor::command(const String& commandName)
 {
-    return Command(internalCommand(commandName), CommandFromMenuOrKeyBinding, m_frame);
+    return Command(internalCommand(commandName), CommandFromMenuOrKeyBinding, m_document);
 }
 
 Editor::Command Editor::command(const String& commandName, EditorCommandSource source)
 {
-    return Command(internalCommand(commandName), source, m_frame);
+    return Command(internalCommand(commandName), source, m_document);
 }
 
 bool Editor::commandIsSupportedFromMenuOrKeyBinding(const String& commandName)
@@ -1760,12 +1853,13 @@ Editor::Command::Command()
 {
 }
 
-Editor::Command::Command(const EditorInternalCommand* command, EditorCommandSource source, Frame& frame)
+Editor::Command::Command(const EditorInternalCommand* command, EditorCommandSource source, Document& document)
     : m_command(command)
     , m_source(source)
-    , m_frame(command ? &frame : nullptr)
+    , m_document(command ? &document : nullptr)
+    , m_frame(command ? document.frame() : nullptr)
 {
-    ASSERT(command || !m_frame);
+    ASSERT(command || !m_document);
 }
 
 bool Editor::Command::execute(const String& parameter, Event* triggeringEvent) const
@@ -1775,9 +1869,9 @@ bool Editor::Command::execute(const String& parameter, Event* triggeringEvent) c
         if (!allowExecutionWhenDisabled())
             return false;
     }
-    auto document = m_frame->document();
-    document->updateLayoutIgnorePendingStylesheets();
-    if (m_frame->document() != document)
+
+    m_document->updateLayoutIgnorePendingStylesheets();
+    if (m_document->frame() != m_frame)
         return false;
 
     return m_command->execute(*m_frame, triggeringEvent, m_source, parameter);
@@ -1813,7 +1907,7 @@ bool Editor::Command::isEnabled(Event* triggeringEvent) const
 TriState Editor::Command::state(Event* triggeringEvent) const
 {
     if (!isSupported() || !m_frame)
-        return FalseTriState;
+        return TriState::False;
     return m_command->state(*m_frame, triggeringEvent);
 }
 
@@ -1822,7 +1916,7 @@ String Editor::Command::value(Event* triggeringEvent) const
     if (!isSupported() || !m_frame)
         return String();
     if (m_command->value == valueNull && m_command->state != stateNone)
-        return m_command->state(*m_frame, triggeringEvent) == TrueTriState ? "true"_s : "false"_s;
+        return m_command->state(*m_frame, triggeringEvent) == TriState::True ? "true"_s : "false"_s;
     return m_command->value(*m_frame, triggeringEvent);
 }
 

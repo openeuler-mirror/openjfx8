@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,49 +27,119 @@
 #include "ArithProfile.h"
 
 #include "CCallHelpers.h"
-#include "JSCInlines.h"
+#include "JSCJSValueInlines.h"
 
 namespace JSC {
 
 #if ENABLE(JIT)
-void ArithProfile::emitObserveResult(CCallHelpers& jit, JSValueRegs regs, TagRegistersMode mode)
+template<typename BitfieldType>
+void ArithProfile<BitfieldType>::emitObserveResult(CCallHelpers& jit, JSValueRegs regs, GPRReg tempGPR, TagRegistersMode mode)
 {
-    if (!shouldEmitSetDouble() && !shouldEmitSetNonNumber())
+    if (!shouldEmitSetDouble() && !shouldEmitSetNonNumeric() && !shouldEmitSetHeapBigInt() && !shouldEmitSetBigInt32())
         return;
 
-    CCallHelpers::Jump isInt32 = jit.branchIfInt32(regs, mode);
+    CCallHelpers::JumpList done;
+    CCallHelpers::JumpList nonNumeric;
+
+    done.append(jit.branchIfInt32(regs, mode));
     CCallHelpers::Jump notDouble = jit.branchIfNotDoubleKnownNotInt32(regs, mode);
     emitSetDouble(jit);
-    CCallHelpers::Jump done = jit.jump();
+    done.append(jit.jump());
+
     notDouble.link(&jit);
-    emitSetNonNumber(jit);
+
+#if USE(BIGINT32)
+    CCallHelpers::Jump notBigInt32 = jit.branchIfNotBigInt32(regs, tempGPR, mode);
+    emitSetBigInt32(jit);
+    done.append(jit.jump());
+    notBigInt32.link(&jit);
+#else
+    UNUSED_PARAM(tempGPR);
+#endif
+
+    nonNumeric.append(jit.branchIfNotCell(regs, mode));
+    nonNumeric.append(jit.branchIfNotHeapBigInt(regs.payloadGPR()));
+    emitSetHeapBigInt(jit);
+    done.append(jit.jump());
+
+    nonNumeric.link(&jit);
+    emitSetNonNumeric(jit);
+
     done.link(&jit);
-    isInt32.link(&jit);
 }
 
-bool ArithProfile::shouldEmitSetDouble() const
+template<typename BitfieldType>
+bool ArithProfile<BitfieldType>::shouldEmitSetDouble() const
 {
-    uint32_t mask = ArithProfile::Int32Overflow | ArithProfile::Int52Overflow | ArithProfile::NegZeroDouble | ArithProfile::NonNegZeroDouble;
+    BitfieldType mask = ObservedResults::Int32Overflow | ObservedResults::Int52Overflow | ObservedResults::NegZeroDouble | ObservedResults::NonNegZeroDouble;
     return (m_bits & mask) != mask;
 }
 
-void ArithProfile::emitSetDouble(CCallHelpers& jit) const
+template<typename BitfieldType>
+void ArithProfile<BitfieldType>::emitSetDouble(CCallHelpers& jit) const
 {
     if (shouldEmitSetDouble())
-        jit.or32(CCallHelpers::TrustedImm32(ArithProfile::Int32Overflow | ArithProfile::Int52Overflow | ArithProfile::NegZeroDouble | ArithProfile::NonNegZeroDouble), CCallHelpers::AbsoluteAddress(addressOfBits()));
+        emitUnconditionalSet(jit, ObservedResults::Int32Overflow | ObservedResults::Int52Overflow | ObservedResults::NegZeroDouble | ObservedResults::NonNegZeroDouble);
 }
 
-bool ArithProfile::shouldEmitSetNonNumber() const
+template<typename BitfieldType>
+bool ArithProfile<BitfieldType>::shouldEmitSetNonNumeric() const
 {
-    uint32_t mask = ArithProfile::NonNumber;
+    BitfieldType mask = ObservedResults::NonNumeric;
     return (m_bits & mask) != mask;
 }
 
-void ArithProfile::emitSetNonNumber(CCallHelpers& jit) const
+template<typename BitfieldType>
+void ArithProfile<BitfieldType>::emitSetNonNumeric(CCallHelpers& jit) const
 {
-    if (shouldEmitSetNonNumber())
-        jit.or32(CCallHelpers::TrustedImm32(ArithProfile::NonNumber), CCallHelpers::AbsoluteAddress(addressOfBits()));
+    if (shouldEmitSetNonNumeric())
+        emitUnconditionalSet(jit, ObservedResults::NonNumeric);
 }
+
+template<typename BitfieldType>
+bool ArithProfile<BitfieldType>::shouldEmitSetBigInt32() const
+{
+#if USE(BIGINT32)
+    BitfieldType mask = ObservedResults::BigInt32;
+    return (m_bits & mask) != mask;
+#else
+    return false;
+#endif
+}
+
+template<typename BitfieldType>
+bool ArithProfile<BitfieldType>::shouldEmitSetHeapBigInt() const
+{
+    BitfieldType mask = ObservedResults::HeapBigInt;
+    return (m_bits & mask) != mask;
+}
+
+template<typename BitfieldType>
+void ArithProfile<BitfieldType>::emitSetHeapBigInt(CCallHelpers& jit) const
+{
+    if (shouldEmitSetHeapBigInt())
+        emitUnconditionalSet(jit, ObservedResults::HeapBigInt);
+}
+
+#if USE(BIGINT32)
+template<typename BitfieldType>
+void ArithProfile<BitfieldType>::emitSetBigInt32(CCallHelpers& jit) const
+{
+    if (shouldEmitSetBigInt32())
+        emitUnconditionalSet(jit, ObservedResults::BigInt32);
+}
+#endif
+
+template<typename BitfieldType>
+void ArithProfile<BitfieldType>::emitUnconditionalSet(CCallHelpers& jit, BitfieldType mask) const
+{
+    static_assert(std::is_same<BitfieldType, uint16_t>::value);
+    jit.or16(CCallHelpers::TrustedImm32(mask), CCallHelpers::AbsoluteAddress(addressOfBits()));
+}
+
+// Generate the implementations of the functions above for UnaryArithProfile/BinaryArithProfile
+// If changing the size of either, add the corresponding lines here.
+template class ArithProfile<uint16_t>;
 #endif // ENABLE(JIT)
 
 } // namespace JSC
@@ -78,7 +148,8 @@ namespace WTF {
 
 using namespace JSC;
 
-void printInternal(PrintStream& out, const ArithProfile& profile)
+template <typename T>
+void printInternal(PrintStream& out, const ArithProfile<T>& profile)
 {
     const char* separator = "";
 
@@ -95,8 +166,8 @@ void printInternal(PrintStream& out, const ArithProfile& profile)
             out.print(separator, "NonNegZeroDouble");
             separator = "|";
         }
-        if (profile.didObserveNonNumber()) {
-            out.print(separator, "NonNumber");
+        if (profile.didObserveNonNumeric()) {
+            out.print(separator, "NonNumeric");
             separator = "|";
         }
         if (profile.didObserveInt32Overflow()) {
@@ -107,19 +178,38 @@ void printInternal(PrintStream& out, const ArithProfile& profile)
             out.print(separator, "Int52Overflow");
             separator = "|";
         }
+        if (profile.didObserveHeapBigInt()) {
+            out.print(separator, "HeapBigInt");
+            separator = "|";
+        }
+        if (profile.didObserveBigInt32()) {
+            out.print(separator, "BigInt32");
+            separator = "|";
+        }
     }
-    if (profile.tookSpecialFastPath())
-        out.print(separator, "Took special fast path.");
     out.print(">");
+}
+
+void printInternal(PrintStream& out, const UnaryArithProfile& profile)
+{
+    printInternal(out, static_cast<ArithProfile<UnaryArithProfileBase>>(profile));
+
+    out.print(" Arg ObservedType:<");
+    out.print(profile.argObservedType());
+    out.print(">");
+}
+
+void printInternal(PrintStream& out, const BinaryArithProfile& profile)
+{
+    printInternal(out, static_cast<ArithProfile<UnaryArithProfileBase>>(profile));
+
+    if (profile.tookSpecialFastPath())
+        out.print(" Took special fast path.");
 
     out.print(" LHS ObservedType:<");
     out.print(profile.lhsObservedType());
     out.print("> RHS ObservedType:<");
     out.print(profile.rhsObservedType());
-    out.print(">");
-
-    out.print(" LHS ResultType:<", RawPointer(bitwise_cast<void*>(static_cast<uintptr_t>(profile.lhsResultType().bits()))));
-    out.print("> RHS ResultType:<", RawPointer(bitwise_cast<void*>(static_cast<uintptr_t>(profile.rhsResultType().bits()))));
     out.print(">");
 }
 

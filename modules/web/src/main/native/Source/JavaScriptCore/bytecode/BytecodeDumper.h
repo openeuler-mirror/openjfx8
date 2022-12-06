@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2017 Yusuke Suzuki <utatane.tea@gmail.com>
- * Copyright (C) 2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,71 +26,124 @@
 
 #pragma once
 
+#include "BytecodeGeneratorBase.h"
 #include "CallLinkInfo.h"
 #include "ICStatusMap.h"
+#include "InstructionStream.h"
 #include "StructureStubInfo.h"
 
 namespace JSC {
 
+class BytecodeGraph;
+
 struct Instruction;
 
-template<class Block>
-class BytecodeDumper {
+class BytecodeDumperBase {
 public:
-    typedef typename Block::Instruction Instruction;
-
-    static void dumpBytecode(Block*, PrintStream& out, const Instruction* begin, const Instruction*& it, const ICStatusMap& statusMap = ICStatusMap());
-    static void dumpBlock(Block*, const typename Block::UnpackedInstructions&, PrintStream& out, const ICStatusMap& statusMap = ICStatusMap());
-
-private:
-    BytecodeDumper(Block* block, const Instruction* instructionsBegin)
-        : m_block(block)
-        , m_instructionsBegin(instructionsBegin)
+    virtual ~BytecodeDumperBase()
     {
     }
 
+    void printLocationAndOp(InstructionStream::Offset location, const char* op);
+
+    template<typename T>
+    void dumpOperand(T operand, bool isFirst = false)
+    {
+        if (!isFirst)
+            m_out.print(", ");
+        dumpValue(operand);
+    }
+
+    void dumpValue(VirtualRegister);
+
+    template<typename Traits>
+    void dumpValue(GenericBoundLabel<Traits>);
+
+    template<typename T>
+    void dumpValue(T v) { m_out.print(v); }
+
+protected:
+    virtual CString registerName(VirtualRegister) const = 0;
+    virtual int outOfLineJumpOffset(InstructionStream::Offset) const = 0;
+
+    BytecodeDumperBase(PrintStream& out)
+        : m_out(out)
+    {
+    }
+
+    PrintStream& m_out;
+    InstructionStream::Offset m_currentLocation { 0 };
+};
+
+template<class Block>
+class BytecodeDumper : public BytecodeDumperBase {
+public:
+    static void dumpBytecode(Block*, PrintStream& out, const InstructionStream::Ref& it, const ICStatusMap& = ICStatusMap());
+
+    BytecodeDumper(Block* block, PrintStream& out)
+        : BytecodeDumperBase(out)
+        , m_block(block)
+    {
+    }
+
+    ~BytecodeDumper() override { }
+
+protected:
     Block* block() const { return m_block; }
-    const Instruction* instructionsBegin() const { return m_instructionsBegin; }
 
-    ALWAYS_INLINE VM* vm() const;
+    void dumpBytecode(const InstructionStream::Ref& it, const ICStatusMap&);
 
-    CString registerName(int r) const;
-    CString constantName(int index) const;
+    CString registerName(VirtualRegister) const override;
+    int outOfLineJumpOffset(InstructionStream::Offset offset) const override;
 
-    const Identifier& identifier(int index) const;
-
-    void dumpIdentifiers(PrintStream& out);
-    void dumpConstants(PrintStream& out);
-    void dumpExceptionHandlers(PrintStream& out);
-    void dumpSwitchJumpTables(PrintStream& out);
-    void dumpStringSwitchJumpTables(PrintStream& out);
-
-    void printUnaryOp(PrintStream& out, int location, const Instruction*& it, const char* op);
-    void printBinaryOp(PrintStream& out, int location, const Instruction*& it, const char* op);
-    void printConditionalJump(PrintStream& out, const Instruction*, const Instruction*& it, int location, const char* op);
-    void printCompareJump(PrintStream& out, const Instruction*, const Instruction*& it, int location, const char* op);
-    void printGetByIdOp(PrintStream& out, int location, const Instruction*& it);
-    void printGetByIdCacheStatus(PrintStream& out, int location, const ICStatusMap&);
-    void printPutByIdCacheStatus(PrintStream& out, int location, const ICStatusMap&);
-    void printInByIdCacheStatus(PrintStream& out, int location, const ICStatusMap&);
-    enum CacheDumpMode { DumpCaches, DontDumpCaches };
-    void printCallOp(PrintStream& out, int location, const Instruction*& it, const char* op, CacheDumpMode, bool& hasPrintedProfiling, const ICStatusMap&);
-    void printPutByIdOp(PrintStream& out, int location, const Instruction*& it, const char* op);
-    void printLocationOpAndRegisterOperand(PrintStream& out, int location, const Instruction*& it, const char* op, int operand);
-    void dumpBytecode(PrintStream& out, const Instruction* begin, const Instruction*& it, const ICStatusMap&);
-
-    void dumpValueProfiling(PrintStream&, const Instruction*&, bool& hasPrintedProfiling);
-    void dumpArrayProfiling(PrintStream&, const Instruction*&, bool& hasPrintedProfiling);
-    void dumpProfilesForBytecodeOffset(PrintStream&, unsigned location, bool& hasPrintedProfiling);
-
-    void* actualPointerFor(Special::Pointer) const;
-
-#if ENABLE(JIT)
-    void dumpCallLinkStatus(PrintStream&, unsigned location, const ICStatusMap&);
-#endif
+private:
+    virtual CString constantName(VirtualRegister) const;
 
     Block* m_block;
-    const Instruction* m_instructionsBegin;
 };
+
+template<class Block>
+class CodeBlockBytecodeDumper final : public BytecodeDumper<Block> {
+public:
+    static void dumpBlock(Block*, const InstructionStream&, PrintStream& out, const ICStatusMap& = ICStatusMap());
+    static void dumpGraph(Block*, const InstructionStream&, BytecodeGraph&, PrintStream& out = WTF::dataFile(), const ICStatusMap& = ICStatusMap());
+
+    void dumpIdentifiers();
+    void dumpConstants();
+    void dumpExceptionHandlers();
+    void dumpSwitchJumpTables();
+    void dumpStringSwitchJumpTables();
+
+private:
+    using BytecodeDumper<Block>::BytecodeDumper;
+
+    ALWAYS_INLINE VM& vm() const;
+
+    const Identifier& identifier(int index) const;
+};
+
+#if ENABLE(WEBASSEMBLY)
+
+namespace Wasm {
+
+class FunctionCodeBlock;
+struct ModuleInformation;
+enum Type : int8_t;
+
+class BytecodeDumper final : public JSC::BytecodeDumper<FunctionCodeBlock> {
+public:
+    static void dumpBlock(FunctionCodeBlock*, const ModuleInformation&, PrintStream& out);
+
+private:
+    using JSC::BytecodeDumper<FunctionCodeBlock>::BytecodeDumper;
+
+    void dumpConstants();
+    CString constantName(VirtualRegister index) const final;
+    CString formatConstant(Type, uint64_t) const;
+};
+
+} // namespace Wasm
+
+#endif // ENABLE(WEBASSEMBLY)
 
 }

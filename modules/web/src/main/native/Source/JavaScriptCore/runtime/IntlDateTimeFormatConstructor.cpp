@@ -27,21 +27,16 @@
 #include "config.h"
 #include "IntlDateTimeFormatConstructor.h"
 
-#if ENABLE(INTL)
-
-#include "Error.h"
 #include "IntlDateTimeFormat.h"
 #include "IntlDateTimeFormatPrototype.h"
-#include "IntlObject.h"
 #include "IntlObjectInlines.h"
 #include "JSCInlines.h"
-#include "Lookup.h"
 
 namespace JSC {
 
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(IntlDateTimeFormatConstructor);
 
-static EncodedJSValue JSC_HOST_CALL IntlDateTimeFormatConstructorFuncSupportedLocalesOf(ExecState*);
+static EncodedJSValue JSC_HOST_CALL IntlDateTimeFormatConstructorFuncSupportedLocalesOf(JSGlobalObject*, CallFrame*);
 
 }
 
@@ -57,10 +52,10 @@ const ClassInfo IntlDateTimeFormatConstructor::s_info = { "Function", &InternalF
 @end
 */
 
-IntlDateTimeFormatConstructor* IntlDateTimeFormatConstructor::create(VM& vm, Structure* structure, IntlDateTimeFormatPrototype* dateTimeFormatPrototype, Structure* dateTimeFormatStructure)
+IntlDateTimeFormatConstructor* IntlDateTimeFormatConstructor::create(VM& vm, Structure* structure, IntlDateTimeFormatPrototype* dateTimeFormatPrototype)
 {
     IntlDateTimeFormatConstructor* constructor = new (NotNull, allocateCell<IntlDateTimeFormatConstructor>(vm.heap)) IntlDateTimeFormatConstructor(vm, structure);
-    constructor->finishCreation(vm, dateTimeFormatPrototype, dateTimeFormatStructure);
+    constructor->finishCreation(vm, dateTimeFormatPrototype);
     return constructor;
 }
 
@@ -69,93 +64,80 @@ Structure* IntlDateTimeFormatConstructor::createStructure(VM& vm, JSGlobalObject
     return Structure::create(vm, globalObject, prototype, TypeInfo(InternalFunctionType, StructureFlags), info());
 }
 
-static EncodedJSValue JSC_HOST_CALL callIntlDateTimeFormat(ExecState*);
-static EncodedJSValue JSC_HOST_CALL constructIntlDateTimeFormat(ExecState*);
+static EncodedJSValue JSC_HOST_CALL callIntlDateTimeFormat(JSGlobalObject*, CallFrame*);
+static EncodedJSValue JSC_HOST_CALL constructIntlDateTimeFormat(JSGlobalObject*, CallFrame*);
 
 IntlDateTimeFormatConstructor::IntlDateTimeFormatConstructor(VM& vm, Structure* structure)
     : InternalFunction(vm, structure, callIntlDateTimeFormat, constructIntlDateTimeFormat)
 {
 }
 
-void IntlDateTimeFormatConstructor::finishCreation(VM& vm, IntlDateTimeFormatPrototype* dateTimeFormatPrototype, Structure* dateTimeFormatStructure)
+void IntlDateTimeFormatConstructor::finishCreation(VM& vm, IntlDateTimeFormatPrototype* dateTimeFormatPrototype)
 {
-    Base::finishCreation(vm, "DateTimeFormat"_s);
+    Base::finishCreation(vm, "DateTimeFormat"_s, NameAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, dateTimeFormatPrototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectWithoutTransition(vm, vm.propertyNames->length, jsNumber(0), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
     dateTimeFormatPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, this, static_cast<unsigned>(PropertyAttribute::DontEnum));
-    m_dateTimeFormatStructure.set(vm, this, dateTimeFormatStructure);
 }
 
-static EncodedJSValue JSC_HOST_CALL constructIntlDateTimeFormat(ExecState* state)
+static EncodedJSValue JSC_HOST_CALL constructIntlDateTimeFormat(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
-    VM& vm = state->vm();
+    VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     // 12.1.2 Intl.DateTimeFormat ([locales [, options]]) (ECMA-402 2.0)
     // 1. If NewTarget is undefined, let newTarget be the active function object, else let newTarget be NewTarget.
     // 2. Let dateTimeFormat be OrdinaryCreateFromConstructor(newTarget, %DateTimeFormatPrototype%).
     // 3. ReturnIfAbrupt(dateTimeFormat).
-    Structure* structure = InternalFunction::createSubclassStructure(state, state->newTarget(), jsCast<IntlDateTimeFormatConstructor*>(state->jsCallee())->dateTimeFormatStructure());
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    JSObject* newTarget = asObject(callFrame->newTarget());
+    Structure* structure = newTarget == callFrame->jsCallee()
+        ? globalObject->dateTimeFormatStructure()
+        : InternalFunction::createSubclassStructure(globalObject, newTarget, getFunctionRealm(vm, newTarget)->dateTimeFormatStructure());
+    RETURN_IF_EXCEPTION(scope, { });
+
     IntlDateTimeFormat* dateTimeFormat = IntlDateTimeFormat::create(vm, structure);
     ASSERT(dateTimeFormat);
 
     // 4. Return InitializeDateTimeFormat(dateTimeFormat, locales, options).
     scope.release();
-    dateTimeFormat->initializeDateTimeFormat(*state, state->argument(0), state->argument(1));
+    dateTimeFormat->initializeDateTimeFormat(globalObject, callFrame->argument(0), callFrame->argument(1));
     return JSValue::encode(dateTimeFormat);
 }
 
-static EncodedJSValue JSC_HOST_CALL callIntlDateTimeFormat(ExecState* state)
+static EncodedJSValue JSC_HOST_CALL callIntlDateTimeFormat(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // 12.1.2 Intl.DateTimeFormat ([locales [, options]]) (ECMA-402 2.0)
     // 1. If NewTarget is undefined, let newTarget be the active function object, else let newTarget be NewTarget.
     // NewTarget is always undefined when called as a function.
 
-    IntlDateTimeFormatConstructor* callee = jsCast<IntlDateTimeFormatConstructor*>(state->jsCallee());
-
     // FIXME: Workaround to provide compatibility with ECMA-402 1.0 call/apply patterns.
     // https://bugs.webkit.org/show_bug.cgi?id=153679
-    return JSValue::encode(constructIntlInstanceWithWorkaroundForLegacyIntlConstructor<IntlDateTimeFormat>(*state, state->thisValue(), callee, [&] (VM& vm) {
+    return JSValue::encode(constructIntlInstanceWithWorkaroundForLegacyIntlConstructor<IntlDateTimeFormat>(globalObject, callFrame->thisValue(), callFrame->jsCallee(), [&] (VM& vm) {
         // 2. Let dateTimeFormat be OrdinaryCreateFromConstructor(newTarget, %DateTimeFormatPrototype%).
         // 3. ReturnIfAbrupt(dateTimeFormat).
-        IntlDateTimeFormat* dateTimeFormat = IntlDateTimeFormat::create(vm, callee->dateTimeFormatStructure());
+        IntlDateTimeFormat* dateTimeFormat = IntlDateTimeFormat::create(vm, globalObject->dateTimeFormatStructure());
         ASSERT(dateTimeFormat);
 
         // 4. Return InitializeDateTimeFormat(dateTimeFormat, locales, options).
-        dateTimeFormat->initializeDateTimeFormat(*state, state->argument(0), state->argument(1));
+        dateTimeFormat->initializeDateTimeFormat(globalObject, callFrame->argument(0), callFrame->argument(1));
         return dateTimeFormat;
     }));
 }
 
-EncodedJSValue JSC_HOST_CALL IntlDateTimeFormatConstructorFuncSupportedLocalesOf(ExecState* state)
+EncodedJSValue JSC_HOST_CALL IntlDateTimeFormatConstructorFuncSupportedLocalesOf(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
-    VM& vm = state->vm();
+    VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     // 12.2.2 Intl.DateTimeFormat.supportedLocalesOf(locales [, options]) (ECMA-402 2.0)
 
     // 1. Let availableLocales be %DateTimeFormat%.[[availableLocales]].
-    JSGlobalObject* globalObject = state->jsCallee()->globalObject(vm);
-    const HashSet<String> availableLocales = globalObject->intlDateTimeFormatAvailableLocales();
+    const HashSet<String>& availableLocales = intlDateTimeFormatAvailableLocales();
 
     // 2. Let requestedLocales be CanonicalizeLocaleList(locales).
-    Vector<String> requestedLocales = canonicalizeLocaleList(*state, state->argument(0));
+    Vector<String> requestedLocales = canonicalizeLocaleList(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     // 3. Return SupportedLocales(availableLocales, requestedLocales, options).
-    scope.release();
-    return JSValue::encode(supportedLocales(*state, availableLocales, requestedLocales, state->argument(1)));
-}
-
-void IntlDateTimeFormatConstructor::visitChildren(JSCell* cell, SlotVisitor& visitor)
-{
-    IntlDateTimeFormatConstructor* thisObject = jsCast<IntlDateTimeFormatConstructor*>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-
-    Base::visitChildren(thisObject, visitor);
-
-    visitor.append(thisObject->m_dateTimeFormatStructure);
+    RELEASE_AND_RETURN(scope, JSValue::encode(supportedLocales(globalObject, availableLocales, requestedLocales, callFrame->argument(1))));
 }
 
 } // namespace JSC
-
-#endif // ENABLE(INTL)

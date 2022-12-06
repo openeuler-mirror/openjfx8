@@ -31,29 +31,59 @@
 #include "AudioContext.h"
 #include "AudioNodeOutput.h"
 #include "Logging.h"
+#include "MediaStreamAudioSourceOptions.h"
+#include <wtf/IsoMallocInlines.h>
 #include <wtf/Locker.h>
 
 namespace WebCore {
 
-Ref<MediaStreamAudioSourceNode> MediaStreamAudioSourceNode::create(AudioContext& context, MediaStream& mediaStream, MediaStreamTrack& audioTrack)
+WTF_MAKE_ISO_ALLOCATED_IMPL(MediaStreamAudioSourceNode);
+
+ExceptionOr<Ref<MediaStreamAudioSourceNode>> MediaStreamAudioSourceNode::create(BaseAudioContext& context, MediaStreamAudioSourceOptions&& options)
 {
-    return adoptRef(*new MediaStreamAudioSourceNode(context, mediaStream, audioTrack));
+    RELEASE_ASSERT(options.mediaStream);
+
+    if (context.isStopped())
+        return Exception { InvalidStateError };
+
+    auto audioTracks = options.mediaStream->getAudioTracks();
+    if (audioTracks.isEmpty())
+        return Exception { InvalidStateError, "Media stream has no audio tracks"_s };
+
+    MediaStreamTrack* providerTrack = nullptr;
+    for (auto& track : audioTracks) {
+        if (track->audioSourceProvider()) {
+            providerTrack = track.get();
+            break;
+        }
+    }
+    if (!providerTrack)
+        return Exception { InvalidStateError, "Could not find an audio track with an audio source provider"_s };
+
+    context.lazyInitialize();
+
+    auto node = adoptRef(*new MediaStreamAudioSourceNode(context, *options.mediaStream, *providerTrack));
+    node->setFormat(2, context.sampleRate());
+
+    context.refNode(node); // context keeps reference until node is disconnected
+
+    return node;
 }
 
-MediaStreamAudioSourceNode::MediaStreamAudioSourceNode(AudioContext& context, MediaStream& mediaStream, MediaStreamTrack& audioTrack)
-    : AudioNode(context, context.sampleRate())
+MediaStreamAudioSourceNode::MediaStreamAudioSourceNode(BaseAudioContext& context, MediaStream& mediaStream, MediaStreamTrack& audioTrack)
+    : AudioNode(context)
     , m_mediaStream(mediaStream)
     , m_audioTrack(audioTrack)
 {
+    setNodeType(NodeTypeMediaStreamAudioSource);
+
     AudioSourceProvider* audioSourceProvider = m_audioTrack->audioSourceProvider();
     ASSERT(audioSourceProvider);
 
     audioSourceProvider->setClient(this);
 
     // Default to stereo. This could change depending on the format of the MediaStream's audio track.
-    addOutput(std::make_unique<AudioNodeOutput>(this, 2));
-
-    setNodeType(NodeTypeMediaStreamAudioSource);
+    addOutput(makeUnique<AudioNodeOutput>(this, 2));
 
     initialize();
 }
@@ -69,7 +99,7 @@ MediaStreamAudioSourceNode::~MediaStreamAudioSourceNode()
 void MediaStreamAudioSourceNode::setFormat(size_t numberOfChannels, float sourceSampleRate)
 {
     float sampleRate = this->sampleRate();
-    if (numberOfChannels == m_sourceNumberOfChannels && sourceSampleRate == sampleRate)
+    if (numberOfChannels == m_sourceNumberOfChannels && sourceSampleRate == m_sourceSampleRate)
         return;
 
     // The sample-rate must be equal to the context's sample-rate.
@@ -81,7 +111,7 @@ void MediaStreamAudioSourceNode::setFormat(size_t numberOfChannels, float source
     }
 
     // Synchronize with process().
-    std::lock_guard<Lock> lock(m_processMutex);
+    auto locker = holdLock(m_processMutex);
 
     m_sourceNumberOfChannels = numberOfChannels;
     m_sourceSampleRate = sourceSampleRate;
@@ -90,7 +120,7 @@ void MediaStreamAudioSourceNode::setFormat(size_t numberOfChannels, float source
         m_multiChannelResampler = nullptr;
     else {
         double scaleFactor = sourceSampleRate / sampleRate;
-        m_multiChannelResampler = std::make_unique<MultiChannelResampler>(scaleFactor, numberOfChannels);
+        m_multiChannelResampler = makeUnique<MultiChannelResampler>(scaleFactor, numberOfChannels);
     }
 
     m_sourceNumberOfChannels = numberOfChannels;
@@ -123,6 +153,13 @@ void MediaStreamAudioSourceNode::process(size_t numberOfFrames)
         outputBus->zero();
         return;
     }
+    if (m_sourceNumberOfChannels != outputBus->numberOfChannels()) {
+        outputBus->zero();
+        return;
+    }
+
+    if (numberOfFrames > outputBus->length())
+        numberOfFrames = outputBus->length();
 
     if (m_multiChannelResampler.get()) {
         ASSERT(m_sourceSampleRate != sampleRate());

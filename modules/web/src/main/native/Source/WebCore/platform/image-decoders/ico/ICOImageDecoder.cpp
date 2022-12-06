@@ -61,7 +61,7 @@ void ICOImageDecoder::setData(SharedBuffer& data, bool allDataReceived)
 
     for (BMPReaders::iterator i(m_bmpReaders.begin()); i != m_bmpReaders.end(); ++i) {
         if (*i)
-            (*i)->setData(&data);
+            (*i)->setData(*m_data);
     }
     for (size_t i = 0; i < m_pngDecoders.size(); ++i)
         setDataForPNGDecoderAtIndex(i);
@@ -109,7 +109,7 @@ bool ICOImageDecoder::setFailed()
     return ScalableImageDecoder::setFailed();
 }
 
-std::optional<IntPoint> ICOImageDecoder::hotSpot() const
+Optional<IntPoint> ICOImageDecoder::hotSpot() const
 {
     // When unspecified, the default frame is always frame 0. This is consistent with
     // BitmapImage where currentFrame() starts at 0 and only increases when animation is
@@ -117,10 +117,10 @@ std::optional<IntPoint> ICOImageDecoder::hotSpot() const
     return hotSpotAtIndex(0);
 }
 
-std::optional<IntPoint> ICOImageDecoder::hotSpotAtIndex(size_t index) const
+Optional<IntPoint> ICOImageDecoder::hotSpotAtIndex(size_t index) const
 {
     if (index >= m_dirEntries.size() || m_fileType != CURSOR)
-        return std::nullopt;
+        return WTF::nullopt;
 
     return m_dirEntries[index].m_hotSpot;
 }
@@ -144,8 +144,8 @@ void ICOImageDecoder::setDataForPNGDecoderAtIndex(size_t index)
     // Copy out PNG data to a separate vector and send to the PNG decoder.
     // FIXME: Save this copy by making the PNG decoder able to take an
     // optional offset.
-    RefPtr<SharedBuffer> pngData(SharedBuffer::create(&m_data->data()[dirEntry.m_imageOffset], m_data->size() - dirEntry.m_imageOffset));
-    m_pngDecoders[index]->setData(*pngData, isAllDataReceived());
+    auto pngData = SharedBuffer::create(&m_data->data()[dirEntry.m_imageOffset], m_data->size() - dirEntry.m_imageOffset);
+    m_pngDecoders[index]->setData(pngData.get(), isAllDataReceived());
 }
 
 void ICOImageDecoder::decode(size_t index, bool onlySize, bool allDataReceived)
@@ -195,8 +195,8 @@ bool ICOImageDecoder::decodeAtIndex(size_t index)
             // We need to have already sized m_frameBufferCache before this, and
             // we must not resize it again later (see caution in frameCount()).
             ASSERT(m_frameBufferCache.size() == m_dirEntries.size());
-            m_bmpReaders[index] = std::make_unique<BMPImageReader>(this, dirEntry.m_imageOffset, 0, true);
-            m_bmpReaders[index]->setData(m_data.get());
+            m_bmpReaders[index] = makeUnique<BMPImageReader>(this, dirEntry.m_imageOffset, 0, true);
+            m_bmpReaders[index]->setData(*m_data);
             m_bmpReaders[index]->setBuffer(&m_frameBufferCache[index]);
         }
         m_frameSize = dirEntry.m_size;

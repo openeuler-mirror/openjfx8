@@ -28,15 +28,25 @@
 
 #if ENABLE(INDEXED_DATABASE)
 
+#include "IDBBindingUtilities.h"
 #include "IDBCursorWithValue.h"
-#include <JavaScriptCore/HeapInlines.h>
+#include <JavaScriptCore/JSCInlines.h>
 
 namespace WebCore {
 using namespace JSC;
 
+JSC::JSValue JSIDBCursorWithValue::value(JSC::JSGlobalObject& lexicalGlobalObject) const
+{
+    return cachedPropertyValue(lexicalGlobalObject, *this, wrapped().valueWrapper(), [&] {
+        auto result = deserializeIDBValueWithKeyInjection(lexicalGlobalObject, wrapped().value(), wrapped().primaryKey(), wrapped().primaryKeyPath());
+        return result ? result.value() : jsNull();
+    });
+}
+
 void JSIDBCursorWithValue::visitAdditionalChildren(SlotVisitor& visitor)
 {
     JSIDBCursor::visitAdditionalChildren(visitor);
+    wrapped().valueWrapper().visit(visitor);
 }
 
 } // namespace WebCore

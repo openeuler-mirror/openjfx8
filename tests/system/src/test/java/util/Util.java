@@ -39,7 +39,7 @@ import junit.framework.AssertionFailedError;
 public class Util {
 
     // Test timeout value in milliseconds
-    public static final int TIMEOUT = 50000;
+    public static final int TIMEOUT = 100000;
 
     private static interface Future {
         public abstract boolean await(long timeout, TimeUnit unit);
@@ -66,6 +66,14 @@ public class Util {
         try {
             Thread.sleep(msec);
         } catch (InterruptedException ex) {}
+    }
+
+    public static boolean await(final CountDownLatch latch) {
+        try {
+            return latch.await(TIMEOUT, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException ex) {
+            throw new AssertionError(ex);
+        }
     }
 
     private static Future submit(final Runnable r, final CountDownLatch delayLatch) {

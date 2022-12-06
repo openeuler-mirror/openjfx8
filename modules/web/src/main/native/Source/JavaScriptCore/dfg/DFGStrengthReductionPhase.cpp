@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,16 +28,14 @@
 
 #if ENABLE(DFG_JIT)
 
+#include "ButterflyInlines.h"
 #include "DFGAbstractHeap.h"
 #include "DFGClobberize.h"
 #include "DFGGraph.h"
 #include "DFGInsertionSet.h"
 #include "DFGPhase.h"
-#include "DFGPredictionPropagationPhase.h"
-#include "DFGVariableAccessDataDump.h"
-#include "JSCInlines.h"
 #include "MathCommon.h"
-#include "RegExpConstructor.h"
+#include "RegExpObject.h"
 #include "StringPrototype.h"
 #include <cstdlib>
 #include <wtf/text/StringBuilder.h>
@@ -45,7 +43,7 @@
 namespace JSC { namespace DFG {
 
 class StrengthReductionPhase : public Phase {
-    static const bool verbose = false;
+    static constexpr bool verbose = false;
 
 public:
     StrengthReductionPhase(Graph& graph)
@@ -78,7 +76,7 @@ private:
     void handleNode()
     {
         switch (m_node->op()) {
-        case BitOr:
+        case ArithBitOr:
             handleCommutativity();
 
             if (m_node->child1().useKind() != UntypedUse && m_node->child2()->isInt32Constant() && !m_node->child2()->asInt32()) {
@@ -87,13 +85,13 @@ private:
             }
             break;
 
-        case BitXor:
-        case BitAnd:
+        case ArithBitXor:
+        case ArithBitAnd:
             handleCommutativity();
             break;
 
-        case BitLShift:
-        case BitRShift:
+        case ArithBitLShift:
+        case ArithBitRShift:
         case BitURShift:
             if (m_node->child1().useKind() != UntypedUse && m_node->child2()->isInt32Constant() && !(m_node->child2()->asInt32() & 0x1f)) {
                 convertToIdentityOverChild1();
@@ -120,6 +118,16 @@ private:
                 break;
             }
             break;
+
+        case ValueMul:
+        case ValueBitOr:
+        case ValueBitAnd:
+        case ValueBitXor: {
+            // FIXME: we should maybe support the case where one operand is always HeapBigInt and the other is always BigInt32?
+            if (m_node->binaryUseKind() == AnyBigIntUse || m_node->binaryUseKind() == BigInt32Use || m_node->binaryUseKind() == HeapBigIntUse)
+                handleCommutativity();
+            break;
+        }
 
         case ArithMul: {
             handleCommutativity();
@@ -204,7 +212,7 @@ private:
             if (m_node->isBinaryUseKind(DoubleRepUse)
                 && m_node->child2()->isNumberConstant()) {
 
-                if (std::optional<double> reciprocal = safeReciprocalForDivByConst(m_node->child2()->asNumber())) {
+                if (Optional<double> reciprocal = safeReciprocalForDivByConst(m_node->child2()->asNumber())) {
                     Node* reciprocalNode = m_insertionSet.insertConstant(m_nodeIndex, m_node->origin, jsDoubleNumber(*reciprocal), DoubleConstant);
                     m_node->setOp(ArithMul);
                     m_node->child2() = Edge(reciprocalNode, DoubleRepUse);
@@ -276,17 +284,17 @@ private:
             }
 
             Node* setLocal = nullptr;
-            VirtualRegister local = m_node->local();
+            Operand operand = m_node->operand();
 
             for (unsigned i = m_nodeIndex; i--;) {
                 Node* node = m_block->at(i);
 
-                if (node->op() == SetLocal && node->local() == local) {
+                if (node->op() == SetLocal && node->operand() == operand) {
                     setLocal = node;
                     break;
                 }
 
-                if (accessesOverlap(m_graph, node, AbstractHeap(Stack, local)))
+                if (accessesOverlap(m_graph, node, AbstractHeap(Stack, operand)))
                     break;
 
             }
@@ -341,7 +349,7 @@ private:
                     if (value.isInt32())
                         return String::number(value.asInt32());
                     if (value.isNumber())
-                        return String::numberToStringECMAScript(value.asNumber());
+                        return String::number(value.asNumber());
                     if (value.isBoolean())
                         return value.asBoolean() ? "true"_s : "false"_s;
                     if (value.isNull())
@@ -363,7 +371,12 @@ private:
                 builder.append(rightString);
                 convertToLazyJSValue(m_node, LazyJSValue::newString(m_graph, builder.toString()));
                 m_changed = true;
+                break;
             }
+
+            if (m_node->binaryUseKind() == BigInt32Use || m_node->binaryUseKind() == HeapBigIntUse || m_node->binaryUseKind() == AnyBigIntUse)
+                handleCommutativity();
+
             break;
         }
 
@@ -407,7 +420,7 @@ private:
                         if (value.isInt32())
                             result = String::number(value.asInt32());
                         else if (value.isNumber())
-                            result = String::numberToStringECMAScript(value.asNumber());
+                            result = String::number(value.asNumber());
 
                         if (!result.isNull()) {
                             convertToLazyJSValue(m_node, LazyJSValue::newString(m_graph, result));
@@ -521,6 +534,39 @@ private:
 
             ASSERT(m_node->op() != RegExpMatchFast);
 
+            unsigned lastIndex = UINT_MAX;
+            if (m_node->op() != RegExpExecNonGlobalOrSticky) {
+                // This will only work if we can prove what the value of lastIndex is. To do this
+                // safely, we need to execute the insertion set so that we see any previous strength
+                // reductions. This is needed for soundness since otherwise the effectfulness of any
+                // previous strength reductions would be invisible to us.
+                ASSERT(regExpObjectNode);
+                executeInsertionSet();
+                for (unsigned otherNodeIndex = m_nodeIndex; otherNodeIndex--;) {
+                    Node* otherNode = m_block->at(otherNodeIndex);
+                    if (otherNode == regExpObjectNode) {
+                        lastIndex = 0;
+                        break;
+                    }
+                    if (otherNode->op() == SetRegExpObjectLastIndex
+                        && otherNode->child1() == regExpObjectNode
+                        && otherNode->child2()->isInt32Constant()
+                        && otherNode->child2()->asInt32() >= 0) {
+                        lastIndex = otherNode->child2()->asUInt32();
+                        break;
+                    }
+                    if (writesOverlap(m_graph, otherNode, RegExpObject_lastIndex))
+                        break;
+                }
+                if (lastIndex == UINT_MAX) {
+                    if (verbose)
+                        dataLog("Giving up because the last index is not known.\n");
+                    break;
+                }
+            }
+            if (!regExp->globalOrSticky())
+                lastIndex = 0;
+
             auto foldToConstant = [&] {
                 Node* stringNode = nullptr;
                 if (m_node->op() == RegExpExecNonGlobalOrSticky)
@@ -557,47 +603,9 @@ private:
                     return false;
                 }
 
-                unsigned lastIndex;
-                if (regExp->globalOrSticky()) {
-                    // This will only work if we can prove what the value of lastIndex is. To do this
-                    // safely, we need to execute the insertion set so that we see any previous strength
-                    // reductions. This is needed for soundness since otherwise the effectfulness of any
-                    // previous strength reductions would be invisible to us.
-                    ASSERT(regExpObjectNode);
-                    executeInsertionSet();
-                    lastIndex = UINT_MAX;
-                    for (unsigned otherNodeIndex = m_nodeIndex; otherNodeIndex--;) {
-                        Node* otherNode = m_block->at(otherNodeIndex);
-                        if (otherNode == regExpObjectNode) {
-                            lastIndex = 0;
-                            break;
-                        }
-                        if (otherNode->op() == SetRegExpObjectLastIndex
-                            && otherNode->child1() == regExpObjectNode
-                            && otherNode->child2()->isInt32Constant()
-                            && otherNode->child2()->asInt32() >= 0) {
-                            lastIndex = static_cast<unsigned>(otherNode->child2()->asInt32());
-                            break;
-                        }
-                        if (writesOverlap(m_graph, otherNode, RegExpObject_lastIndex))
-                            break;
-                    }
-                    if (lastIndex == UINT_MAX) {
-                        if (verbose)
-                            dataLog("Giving up because the last index is not known.\n");
-                        return false;
-                    }
-                } else
-                    lastIndex = 0;
-
                 m_graph.watchpoints().addLazily(globalObject->havingABadTimeWatchpoint());
 
-                Structure* structure;
-                if ((m_node->op() == RegExpExec || m_node->op() == RegExpExecNonGlobalOrSticky) && regExp->hasNamedCaptures())
-                    structure = globalObject->regExpMatchesArrayWithGroupsStructure();
-                else
-                    structure = globalObject->regExpMatchesArrayStructure();
-
+                Structure* structure = globalObject->regExpMatchesArrayStructure();
                 if (structure->indexingType() != ArrayWithContiguous) {
                     // This is further protection against a race with haveABadTime.
                     if (verbose)
@@ -606,8 +614,7 @@ private:
                 }
                 m_graph.registerStructure(structure);
 
-                RegExpConstructor* constructor = globalObject->regExpConstructor();
-                FrozenValue* constructorFrozenValue = m_graph.freeze(constructor);
+                FrozenValue* globalObjectFrozenValue = m_graph.freeze(globalObject);
 
                 MatchResult result;
                 Vector<int> ovector;
@@ -661,8 +668,10 @@ private:
 
                         UniquedStringImpl* indexUID = vm().propertyNames->index.impl();
                         UniquedStringImpl* inputUID = vm().propertyNames->input.impl();
+                        UniquedStringImpl* groupsUID = vm().propertyNames->groups.impl();
                         unsigned indexIndex = m_graph.identifiers().ensure(indexUID);
                         unsigned inputIndex = m_graph.identifiers().ensure(inputUID);
+                        unsigned groupsIndex = m_graph.identifiers().ensure(groupsUID);
 
                         unsigned firstChild = m_graph.m_varArgChildren.size();
                         m_graph.m_varArgChildren.append(
@@ -689,6 +698,14 @@ private:
                         m_graph.m_varArgChildren.append(Edge(stringNode, UntypedUse));
                         data->m_properties.append(
                             PromotedLocationDescriptor(NamedPropertyPLoc, inputIndex));
+
+                        // FIXME: https://bugs.webkit.org/show_bug.cgi?id=176464
+                        // Implement strength reduction optimization for named capture groups.
+                        m_graph.m_varArgChildren.append(
+                            m_insertionSet.insertConstantForUse(
+                                m_nodeIndex, origin, jsUndefined(), UntypedUse));
+                        data->m_properties.append(
+                            PromotedLocationDescriptor(NamedPropertyPLoc, groupsIndex));
 
                         auto materializeString = [&] (const String& string) -> Node* {
                             if (string.isNull())
@@ -722,7 +739,7 @@ private:
                 } else
                     m_graph.convertToConstant(m_node, jsBoolean(!!result));
 
-                // Whether it's Exec or Test, we need to tell the constructor and RegExpObject what's up.
+                // Whether it's Exec or Test, we need to tell the globalObject and RegExpObject what's up.
                 // Because SetRegExpObjectLastIndex may exit and it clobbers exit state, we do that
                 // first.
 
@@ -742,7 +759,7 @@ private:
                     unsigned firstChild = m_graph.m_varArgChildren.size();
                     m_graph.m_varArgChildren.append(
                         m_insertionSet.insertConstantForUse(
-                            m_nodeIndex, origin, constructorFrozenValue, KnownCellUse));
+                            m_nodeIndex, origin, globalObjectFrozenValue, KnownCellUse));
                     m_graph.m_varArgChildren.append(
                         m_insertionSet.insertConstantForUse(
                             m_nodeIndex, origin, regExpFrozenValue, KnownCellUse));
@@ -841,9 +858,12 @@ private:
 
                 unsigned replLen = replace.length();
                 if (lastIndex < result.start || replLen) {
-                    builder.append(string, lastIndex, result.start - lastIndex);
-                    if (replLen)
-                        builder.append(substituteBackreferences(replace, string, ovector.data(), regExp));
+                    builder.appendSubstring(string, lastIndex, result.start - lastIndex);
+                    if (replLen) {
+                        StringBuilder replacement;
+                        substituteBackreferences(replacement, replace, string, ovector.data(), regExp);
+                        builder.append(replacement);
+                    }
                 }
 
                 lastIndex = result.end;
@@ -882,9 +902,7 @@ private:
             if (!lastIndex && builder.isEmpty())
                 m_node->convertToIdentityOn(stringNode);
             else {
-                if (lastIndex < string.length())
-                    builder.append(string, lastIndex, string.length() - lastIndex);
-
+                builder.appendSubstring(string, lastIndex);
                 m_node->convertToLazyJSConstant(m_graph, LazyJSValue::newString(m_graph, builder.toString()));
             }
 
@@ -911,6 +929,9 @@ private:
                 break;
 
             if (FunctionExecutable* functionExecutable = jsDynamicCast<FunctionExecutable*>(vm(), executable)) {
+                if (m_node->op() == Construct && functionExecutable->constructAbility() == ConstructAbility::CannotConstruct)
+                    break;
+
                 // We need to update m_parameterSlots before we get to the backend, but we don't
                 // want to do too much of this.
                 unsigned numAllocatedArgs =

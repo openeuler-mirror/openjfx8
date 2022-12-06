@@ -21,13 +21,14 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-
+from __future__ import print_function
 import io
 import os
 from optparse import OptionParser
-from io import StringIO
 import sys
 from jsmin import jsmin
+is_3 = sys.version_info >= (3, 0)
+
 
 def stringifyCodepoint(code):
     if code < 128:
@@ -68,15 +69,28 @@ def main():
     print('namespace {0:s} {{'.format(namespace), file=sourceFile)
 
     for inputFileName in inputPaths:
-        inputStream = open(inputFileName,'r')
+
+        if is_3:
+            inputStream = io.open(inputFileName, encoding='utf-8')
+        else:
+            inputStream = io.FileIO(inputFileName)
+
         data = inputStream.read()
 
         if not options.no_minify:
             characters = jsmin(data)
         else:
             characters = data
-        codepoints = bytearray(characters, encoding='utf-8')
+
+        if is_3:
+            codepoints = bytearray(characters, encoding='utf-8')
+        else:
+            codepoints = list(map(ord, characters))
+
+        # Use the size of codepoints instead of the characters
+        # because UTF-8 characters may need more than one byte.
         size = len(codepoints)
+
         variableName = os.path.splitext(os.path.basename(inputFileName))[0]
 
         print('extern const char {0:s}JavaScript[{1:d}];'.format(variableName, size), file=headerFile)

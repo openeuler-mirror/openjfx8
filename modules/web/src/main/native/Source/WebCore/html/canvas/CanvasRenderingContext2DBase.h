@@ -50,6 +50,8 @@
 
 namespace WebCore {
 
+class TypedOMCSSImageValue;
+class CachedImage;
 class CanvasBase;
 class CanvasGradient;
 class CanvasPattern;
@@ -60,21 +62,30 @@ class HTMLImageElement;
 class HTMLVideoElement;
 class ImageBitmap;
 class ImageData;
+class OffscreenCanvas;
 class Path2D;
 class RenderStyle;
+class RenderObject;
 class TextMetrics;
 
 struct DOMMatrix2DInit;
 
-#if ENABLE(VIDEO)
-using CanvasImageSource = Variant<RefPtr<HTMLImageElement>, RefPtr<HTMLVideoElement>, RefPtr<HTMLCanvasElement>, RefPtr<ImageBitmap>>;
-#else
-using CanvasImageSource = Variant<RefPtr<HTMLImageElement>, RefPtr<HTMLCanvasElement>, RefPtr<ImageBitmap>>;
+using CanvasImageSource = Variant<RefPtr<HTMLImageElement>, RefPtr<HTMLCanvasElement>, RefPtr<ImageBitmap>
+#if ENABLE(CSS_TYPED_OM)
+    , RefPtr<TypedOMCSSImageValue>
 #endif
+#if ENABLE(OFFSCREEN_CANVAS)
+    , RefPtr<OffscreenCanvas>
+#endif
+#if ENABLE(VIDEO)
+    , RefPtr<HTMLVideoElement>
+#endif
+    >;
 
 class CanvasRenderingContext2DBase : public CanvasRenderingContext, public CanvasPath {
+    WTF_MAKE_ISO_ALLOCATED(CanvasRenderingContext2DBase);
 public:
-    CanvasRenderingContext2DBase(CanvasBase&, bool usesCSSCompatibilityParseMode, bool usesDashboardCompatibilityMode);
+    CanvasRenderingContext2DBase(CanvasBase&, bool usesCSSCompatibilityParseMode);
     virtual ~CanvasRenderingContext2DBase();
 
     float lineWidth() const;
@@ -130,12 +141,12 @@ public:
     ExceptionOr<void> setTransform(DOMMatrix2DInit&&);
     void resetTransform();
 
-    void setStrokeColor(const String& color, std::optional<float> alpha = std::nullopt);
+    void setStrokeColor(const String& color, Optional<float> alpha = WTF::nullopt);
     void setStrokeColor(float grayLevel, float alpha = 1.0);
     void setStrokeColor(float r, float g, float b, float a);
     void setStrokeColor(float c, float m, float y, float k, float a);
 
-    void setFillColor(const String& color, std::optional<float> alpha = std::nullopt);
+    void setFillColor(const String& color, Optional<float> alpha = WTF::nullopt);
     void setFillColor(float grayLevel, float alpha = 1.0f);
     void setFillColor(float r, float g, float b, float a);
     void setFillColor(float c, float m, float y, float k, float a);
@@ -160,7 +171,7 @@ public:
     void fillRect(float x, float y, float width, float height);
     void strokeRect(float x, float y, float width, float height);
 
-    void setShadow(float width, float height, float blur, const String& color = String(), std::optional<float> alpha = std::nullopt);
+    void setShadow(float width, float height, float blur, const String& color = String(), Optional<float> alpha = WTF::nullopt);
     void setShadow(float width, float height, float blur, float grayLevel, float alpha = 1.0);
     void setShadow(float width, float height, float blur, float r, float g, float b, float a);
     void setShadow(float width, float height, float blur, float c, float m, float y, float k, float a);
@@ -173,11 +184,11 @@ public:
 
     void drawImageFromRect(HTMLImageElement&, float sx = 0, float sy = 0, float sw = 0, float sh = 0, float dx = 0, float dy = 0, float dw = 0, float dh = 0, const String& compositeOperation = emptyString());
 
-    using Style = Variant<String, RefPtr<CanvasGradient>, RefPtr<CanvasPattern>>;
-    Style strokeStyle() const;
-    void setStrokeStyle(Style&&);
-    Style fillStyle() const;
-    void setFillStyle(Style&&);
+    using StyleVariant = Variant<String, RefPtr<CanvasGradient>, RefPtr<CanvasPattern>>;
+    StyleVariant strokeStyle() const;
+    void setStrokeStyle(StyleVariant&&);
+    StyleVariant fillStyle() const;
+    void setFillStyle(StyleVariant&&);
 
     ExceptionOr<Ref<CanvasGradient>> createLinearGradient(float x0, float y0, float x1, float y1);
     ExceptionOr<Ref<CanvasGradient>> createRadialGradient(float x0, float y0, float r0, float x1, float y1, float r1);
@@ -207,12 +218,6 @@ public:
 
     bool usesDisplayListDrawing() const { return m_usesDisplayListDrawing; };
     void setUsesDisplayListDrawing(bool flag) { m_usesDisplayListDrawing = flag; };
-
-    bool tracksDisplayListReplay() const { return m_tracksDisplayListReplay; }
-    void setTracksDisplayListReplay(bool);
-
-    String displayListAsText(DisplayList::AsTextFlags) const;
-    String replayDisplayListAsText(DisplayList::AsTextFlags) const;
 
     using Direction = CanvasDirection;
 
@@ -274,6 +279,7 @@ public:
     };
 
     const State& state() const { return m_stateStack.last(); }
+    const Vector<State, 1>& stateStack();
 
 protected:
     static const int DefaultFontSize;
@@ -315,17 +321,24 @@ protected:
     void setFillStyle(CanvasStyle);
 
     ExceptionOr<RefPtr<CanvasPattern>> createPattern(HTMLImageElement&, bool repeatX, bool repeatY);
-    ExceptionOr<RefPtr<CanvasPattern>> createPattern(HTMLCanvasElement&, bool repeatX, bool repeatY);
+    ExceptionOr<RefPtr<CanvasPattern>> createPattern(CanvasBase&, bool repeatX, bool repeatY);
 #if ENABLE(VIDEO)
     ExceptionOr<RefPtr<CanvasPattern>> createPattern(HTMLVideoElement&, bool repeatX, bool repeatY);
 #endif
     ExceptionOr<RefPtr<CanvasPattern>> createPattern(ImageBitmap&, bool repeatX, bool repeatY);
+#if ENABLE(CSS_TYPED_OM)
+    ExceptionOr<RefPtr<CanvasPattern>> createPattern(TypedOMCSSImageValue&, bool repeatX, bool repeatY);
+#endif
 
     ExceptionOr<void> drawImage(HTMLImageElement&, const FloatRect& srcRect, const FloatRect& dstRect);
     ExceptionOr<void> drawImage(HTMLImageElement&, const FloatRect& srcRect, const FloatRect& dstRect, const CompositeOperator&, const BlendMode&);
-    ExceptionOr<void> drawImage(HTMLCanvasElement&, const FloatRect& srcRect, const FloatRect& dstRect);
+    ExceptionOr<void> drawImage(CanvasBase&, const FloatRect& srcRect, const FloatRect& dstRect);
+    ExceptionOr<void> drawImage(Document&, CachedImage*, const RenderObject*, const FloatRect& imageRect, const FloatRect& srcRect, const FloatRect& dstRect, const CompositeOperator&, const BlendMode&, ImageOrientation = ImageOrientation::FromImage);
 #if ENABLE(VIDEO)
     ExceptionOr<void> drawImage(HTMLVideoElement&, const FloatRect& srcRect, const FloatRect& dstRect);
+#endif
+#if ENABLE(CSS_TYPED_OM)
+    ExceptionOr<void> drawImage(TypedOMCSSImageValue&, const FloatRect& srcRect, const FloatRect& dstRect);
 #endif
     ExceptionOr<void> drawImage(ImageBitmap&, const FloatRect& srcRect, const FloatRect& dstRect);
 
@@ -352,11 +365,6 @@ protected:
 
     template<class T> void fullCanvasCompositedDrawImage(T&, const FloatRect&, const FloatRect&, CompositeOperator);
 
-    void prepareGradientForDashboard(CanvasGradient&) const;
-
-    ExceptionOr<RefPtr<ImageData>> getImageData(ImageBuffer::CoordinateSystem, float sx, float sy, float sw, float sh) const;
-    void putImageData(ImageData&, ImageBuffer::CoordinateSystem, float dx, float dy, float dirtyX, float dirtyY, float dirtyWidth, float dirtyHeight);
-
     bool isAccelerated() const override;
 
     bool hasInvertibleTransform() const override { return state().hasInvertibleTransform; }
@@ -365,18 +373,12 @@ protected:
     PlatformLayer* platformLayer() const override;
 #endif
 
-    void clearPathForDashboardBackwardCompatibilityMode();
-
     static const unsigned MaxSaveCount = 1024 * 16;
     Vector<State, 1> m_stateStack;
     unsigned m_unrealizedSaveCount { 0 };
     bool m_usesCSSCompatibilityParseMode;
-#if ENABLE(DASHBOARD_SUPPORT)
-    bool m_usesDashboardCompatibilityMode;
-#endif
     bool m_usesDisplayListDrawing { false };
-    bool m_tracksDisplayListReplay { false };
-    mutable std::unique_ptr<struct DisplayListDrawingContext> m_recordingContext;
+    mutable std::unique_ptr<DisplayList::DrawingContext> m_recordingContext;
 };
 
 } // namespace WebCore

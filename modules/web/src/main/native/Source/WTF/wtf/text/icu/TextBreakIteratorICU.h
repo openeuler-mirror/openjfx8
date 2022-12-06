@@ -22,11 +22,13 @@
 
 #include <unicode/ubrk.h>
 #include <wtf/Optional.h>
+#include <wtf/text/StringView.h>
 #include <wtf/text/icu/UTextProviderLatin1.h>
 
 namespace WTF {
 
 class TextBreakIteratorICU {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     enum class Mode {
         Line,
@@ -118,7 +120,7 @@ public:
         ASSERT(U_SUCCESS(status));
     }
 
-    std::optional<unsigned> preceding(unsigned location) const
+    Optional<unsigned> preceding(unsigned location) const
     {
         auto result = ubrk_preceding(m_iterator, location);
         if (result == UBRK_DONE)
@@ -126,7 +128,7 @@ public:
         return result;
     }
 
-    std::optional<unsigned> following(unsigned location) const
+    Optional<unsigned> following(unsigned location) const
     {
         auto result = ubrk_following(m_iterator, location);
         if (result == UBRK_DONE)

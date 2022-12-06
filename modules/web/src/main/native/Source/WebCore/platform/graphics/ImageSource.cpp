@@ -30,11 +30,14 @@
 #include "ImageDecoder.h"
 #include "ImageObserver.h"
 #include "Logging.h"
-#include "URL.h"
 #include <wtf/CheckedArithmetic.h>
-#include <wtf/MainThread.h>
-#include <wtf/RunLoop.h>
 #include <wtf/SystemTracing.h>
+#include <wtf/URL.h>
+
+#if USE(DIRECT2D)
+#include "GraphicsContext.h"
+#include "PlatformContextDirect2D.h"
+#endif
 
 namespace WebCore {
 
@@ -42,10 +45,12 @@ ImageSource::ImageSource(BitmapImage* image, AlphaOption alphaOption, GammaAndCo
     : m_image(image)
     , m_alphaOption(alphaOption)
     , m_gammaAndColorProfileOption(gammaAndColorProfileOption)
+    , m_runLoop(RunLoop::current())
 {
 }
 
 ImageSource::ImageSource(NativeImagePtr&& nativeImage)
+    : m_runLoop(RunLoop::current())
 {
     m_frameCount = 1;
     m_encodedDataStatus = EncodedDataStatus::Complete;
@@ -55,15 +60,14 @@ ImageSource::ImageSource(NativeImagePtr&& nativeImage)
 
     m_decodedSize = m_frames[0].frameBytes();
 
-    // The assumption is the memory image will be displayed with the default
-    // orientation. So set m_sizeRespectingOrientation to be the same as m_size.
     m_size = m_frames[0].size();
-    m_sizeRespectingOrientation = m_size;
+    m_orientation = ImageOrientation(ImageOrientation::None);
 }
 
 ImageSource::~ImageSource()
 {
     ASSERT(!hasAsyncDecodingQueue());
+    ASSERT(&m_runLoop == &RunLoop::current());
 }
 
 bool ImageSource::ensureDecoderAvailable(SharedBuffer* data)
@@ -74,6 +78,11 @@ bool ImageSource::ensureDecoderAvailable(SharedBuffer* data)
     m_decoder = ImageDecoder::create(*data, mimeType(), m_alphaOption, m_gammaAndColorProfileOption);
     if (!isDecoderAvailable())
         return false;
+
+    m_decoder->setEncodedDataStatusChangeCallback([weakThis = makeWeakPtr(this)] (auto status) {
+        if (weakThis)
+            weakThis->encodedDataStatusChanged(status);
+    });
 
     if (auto expectedContentSize = expectedContentLength())
         m_decoder->setExpectedContentSize(expectedContentSize);
@@ -148,6 +157,20 @@ void ImageSource::clearFrameBufferCache(size_t beforeFrame)
     if (!isDecoderAvailable())
         return;
     m_decoder->clearFrameBufferCache(beforeFrame);
+}
+
+void ImageSource::encodedDataStatusChanged(EncodedDataStatus status)
+{
+    if (status == m_encodedDataStatus)
+        return;
+
+    m_encodedDataStatus = status;
+
+    if (status >= EncodedDataStatus::SizeAvailable)
+        growFrames();
+
+    if (m_image && m_image->imageObserver())
+        m_image->imageObserver()->encodedDataStatusChanged(*m_image, status);
 }
 
 void ImageSource::decodedSizeChanged(long long decodedSize)
@@ -265,7 +288,7 @@ void ImageSource::cacheNativeImageAtIndex(NativeImagePtr&& nativeImage, size_t i
 
     // Do not cache the NativeImage if adding its frameByes to the MemoryCache will cause numerical overflow.
     size_t frameBytes = size().unclampedArea() * sizeof(uint32_t);
-    if (!WTF::isInBounds<unsigned>(frameBytes + decodedSize()))
+    if (!isInBounds<unsigned>(frameBytes + decodedSize()))
         return;
 
     // Move the new image to the cache.
@@ -322,8 +345,11 @@ void ImageSource::startAsyncDecodingQueue()
     if (hasAsyncDecodingQueue() || !isDecoderAvailable())
         return;
 
+    // Async decoding is only enabled for HTMLImageElement and CSS background images.
+    ASSERT(isMainThread());
+
     // We need to protect this, m_decodingQueue and m_decoder from being deleted while we are in the decoding loop.
-    decodingQueue().dispatch([protectedThis = makeRef(*this), protectedDecodingQueue = makeRef(decodingQueue()), protectedFrameRequestQueue = makeRef(frameRequestQueue()), protectedDecoder = makeRef(*m_decoder), sourceURL = sourceURL().string().isolatedCopy()] {
+    decodingQueue().dispatch([protectedThis = makeRef(*this), protectedDecodingQueue = makeRef(decodingQueue()), protectedFrameRequestQueue = makeRef(frameRequestQueue()), protectedDecoder = makeRef(*m_decoder), sourceURL = sourceURL().string().isolatedCopy()] () mutable {
         ImageFrameRequest frameRequest;
         Seconds minDecodingDuration = protectedThis->frameDecodingDurationForTesting();
 
@@ -347,10 +373,10 @@ void ImageSource::startAsyncDecodingQueue()
             if (minDecodingDuration > 0_s)
                 sleep(minDecodingDuration - (MonotonicTime::now() - startingTime));
 
-            // Update the cached frames on the main thread to avoid updating the MemoryCache from a different thread.
-            callOnMainThread([protectedThis = protectedThis.copyRef(), protectedQueue = protectedDecodingQueue.copyRef(), protectedDecoder = protectedDecoder.copyRef(), sourceURL = sourceURL.isolatedCopy(), nativeImage = WTFMove(nativeImage), frameRequest] () mutable {
+            // Update the cached frames on the creation thread to avoid updating the MemoryCache from a different thread.
+            callOnMainThread([protectedThis, protectedDecodingQueue, protectedDecoder, sourceURL = sourceURL.isolatedCopy(), nativeImage = WTFMove(nativeImage), frameRequest] () mutable {
                 // The queue may have been closed if after we got the frame NativeImage, stopAsyncDecodingQueue() was called.
-                if (protectedQueue.ptr() == protectedThis->m_decodingQueue && protectedDecoder.ptr() == protectedThis->m_decoder) {
+                if (protectedDecodingQueue.ptr() == protectedThis->m_decodingQueue && protectedDecoder.ptr() == protectedThis->m_decoder) {
                     ASSERT(protectedThis->m_frameCommitQueue.first() == frameRequest);
                     protectedThis->m_frameCommitQueue.removeFirst();
                     protectedThis->cacheNativeImageAtIndexAsync(WTFMove(nativeImage), frameRequest.index, frameRequest.subsamplingLevel, frameRequest.decodingOptions, frameRequest.decodingStatus);
@@ -358,10 +384,13 @@ void ImageSource::startAsyncDecodingQueue()
                     LOG(Images, "ImageSource::%s - %p - url: %s [frame %ld will not cached]", __FUNCTION__, protectedThis.ptr(), sourceURL.utf8().data(), frameRequest.index);
             });
         }
+
+        // Ensure destruction happens on creation thread.
+        callOnMainThread([protectedThis = WTFMove(protectedThis), protectedQueue = WTFMove(protectedDecodingQueue), protectedDecoder = WTFMove(protectedDecoder)] () mutable { });
     });
 }
 
-void ImageSource::requestFrameAsyncDecodingAtIndex(size_t index, SubsamplingLevel subsamplingLevel, const std::optional<IntSize>& sizeForDrawing)
+void ImageSource::requestFrameAsyncDecodingAtIndex(size_t index, SubsamplingLevel subsamplingLevel, const Optional<IntSize>& sizeForDrawing)
 {
     ASSERT(isDecoderAvailable());
     if (!hasAsyncDecodingQueue())
@@ -402,7 +431,7 @@ void ImageSource::stopAsyncDecodingQueue()
     LOG(Images, "ImageSource::%s - %p - url: %s [decoding has been stopped]", __FUNCTION__, this, sourceURL().string().utf8().data());
 }
 
-const ImageFrame& ImageSource::frameAtIndexCacheIfNeeded(size_t index, ImageFrame::Caching caching, const std::optional<SubsamplingLevel>& subsamplingLevel)
+const ImageFrame& ImageSource::frameAtIndexCacheIfNeeded(size_t index, ImageFrame::Caching caching, const Optional<SubsamplingLevel>& subsamplingLevel)
 {
     ASSERT(index < m_frames.size());
     ImageFrame& frame = m_frames[index];
@@ -435,11 +464,11 @@ const ImageFrame& ImageSource::frameAtIndexCacheIfNeeded(size_t index, ImageFram
 
 void ImageSource::clearMetadata()
 {
-    m_frameCount = std::nullopt;
-    m_repetitionCount = std::nullopt;
-    m_singlePixelSolidColor = std::nullopt;
-    m_encodedDataStatus = std::nullopt;
-    m_uti = std::nullopt;
+    m_frameCount = WTF::nullopt;
+    m_repetitionCount = WTF::nullopt;
+    m_singlePixelSolidColor = WTF::nullopt;
+    m_encodedDataStatus = WTF::nullopt;
+    m_uti = WTF::nullopt;
 }
 
 URL ImageSource::sourceURL() const
@@ -458,7 +487,7 @@ long long ImageSource::expectedContentLength() const
 }
 
 template<typename T, T (ImageDecoder::*functor)() const>
-T ImageSource::metadata(const T& defaultValue, std::optional<T>* cachedValue)
+T ImageSource::metadata(const T& defaultValue, Optional<T>* cachedValue)
 {
     if (cachedValue && *cachedValue)
         return cachedValue->value();
@@ -482,7 +511,7 @@ T ImageSource::frameMetadataAtIndex(size_t index, T (ImageFrame::*functor)(Args.
 }
 
 template<typename T, typename... Args>
-T ImageSource::frameMetadataAtIndexCacheIfNeeded(size_t index, T (ImageFrame::*functor)() const, std::optional<T>* cachedValue, Args&&... args)
+T ImageSource::frameMetadataAtIndexCacheIfNeeded(size_t index, T (ImageFrame::*functor)() const, Optional<T>* cachedValue, Args&&... args)
 {
     if (cachedValue && *cachedValue)
         return cachedValue->value();
@@ -526,25 +555,32 @@ String ImageSource::filenameExtension()
     return metadata<String, (&ImageDecoder::filenameExtension)>(String(), &m_filenameExtension);
 }
 
-std::optional<IntPoint> ImageSource::hotSpot()
+Optional<IntPoint> ImageSource::hotSpot()
 {
-    return metadata<std::optional<IntPoint>, (&ImageDecoder::hotSpot)>(std::nullopt, &m_hotSpot);
+    return metadata<Optional<IntPoint>, (&ImageDecoder::hotSpot)>(WTF::nullopt, &m_hotSpot);
 }
 
-IntSize ImageSource::size()
+ImageOrientation ImageSource::orientation()
 {
+    return frameMetadataAtIndexCacheIfNeeded<ImageOrientation>(0, (&ImageFrame::orientation), &m_orientation, ImageFrame::Caching::Metadata);
+}
+
+IntSize ImageSource::size(ImageOrientation orientation)
+{
+    IntSize size;
 #if !USE(CG)
     // It's possible that we have decoded the metadata, but not frame contents yet. In that case ImageDecoder claims to
     // have the size available, but the frame cache is empty. Return the decoder size without caching in such case.
     if (m_frames.isEmpty() && isDecoderAvailable())
-        return m_decoder->size();
+        size = m_decoder->size();
+    else
 #endif
-    return frameMetadataAtIndexCacheIfNeeded<IntSize>(0, (&ImageFrame::size), &m_size, ImageFrame::Caching::Metadata, SubsamplingLevel::Default);
-}
+        size = frameMetadataAtIndexCacheIfNeeded<IntSize>(0, (&ImageFrame::size), &m_size, ImageFrame::Caching::Metadata, SubsamplingLevel::Default);
 
-IntSize ImageSource::sizeRespectingOrientation()
-{
-    return frameMetadataAtIndexCacheIfNeeded<IntSize>(0, (&ImageFrame::sizeRespectingOrientation), &m_sizeRespectingOrientation, ImageFrame::Caching::Metadata, SubsamplingLevel::Default);
+    if (orientation == ImageOrientation::FromImage)
+        orientation = this->orientation();
+
+    return orientation.usesWidthAsHeight() ? size.transposedSize() : size;
 }
 
 Color ImageSource::singlePixelSolidColor()
@@ -591,7 +627,7 @@ bool ImageSource::frameIsBeingDecodedAndIsCompatibleWithOptionsAtIndex(size_t in
 
 DecodingStatus ImageSource::frameDecodingStatusAtIndex(size_t index)
 {
-    return frameMetadataAtIndex<DecodingStatus>(index, (&ImageFrame::decodingStatus));
+    return frameMetadataAtIndexCacheIfNeeded<DecodingStatus>(index, (&ImageFrame::decodingStatus), nullptr, ImageFrame::Caching::Metadata);
 }
 
 bool ImageSource::frameHasAlphaAtIndex(size_t index)
@@ -599,12 +635,12 @@ bool ImageSource::frameHasAlphaAtIndex(size_t index)
     return frameMetadataAtIndex<bool>(index, (&ImageFrame::hasAlpha));
 }
 
-bool ImageSource::frameHasFullSizeNativeImageAtIndex(size_t index, const std::optional<SubsamplingLevel>& subsamplingLevel)
+bool ImageSource::frameHasFullSizeNativeImageAtIndex(size_t index, const Optional<SubsamplingLevel>& subsamplingLevel)
 {
     return frameMetadataAtIndex<bool>(index, (&ImageFrame::hasFullSizeNativeImage), subsamplingLevel);
 }
 
-bool ImageSource::frameHasDecodedNativeImageCompatibleWithOptionsAtIndex(size_t index, const std::optional<SubsamplingLevel>& subsamplingLevel, const DecodingOptions& decodingOptions)
+bool ImageSource::frameHasDecodedNativeImageCompatibleWithOptionsAtIndex(size_t index, const Optional<SubsamplingLevel>& subsamplingLevel, const DecodingOptions& decodingOptions)
 {
     return frameMetadataAtIndex<bool>(index, (&ImageFrame::hasDecodedNativeImageCompatibleWithOptions), subsamplingLevel, decodingOptions);
 }
@@ -638,7 +674,7 @@ ImageOrientation ImageSource::frameOrientationAtIndex(size_t index)
 void ImageSource::setTargetContext(const GraphicsContext* targetContext)
 {
     if (isDecoderAvailable() && targetContext)
-        m_decoder->setTargetContext(targetContext->platformContext())
+        m_decoder->setTargetContext(targetContext->platformContext()->renderTarget());
 }
 #endif
 
@@ -665,7 +701,7 @@ void ImageSource::dump(TextStream& ts)
     ts.dumpProperty("solid-color", singlePixelSolidColor());
 
     ImageOrientation orientation = frameOrientationAtIndex(0);
-    if (orientation != OriginTopLeft)
+    if (orientation != ImageOrientation::None)
         ts.dumpProperty("orientation", orientation);
 }
 

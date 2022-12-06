@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2007-2019 Apple Inc. All rights reserved.
  * Copyright (C) 2008 Matt Lilek <webkit@mattlilek.com>
  *
  * Redistribution and use in source and binary forms, with or without
@@ -30,6 +30,7 @@
 #include "config.h"
 #include "InspectorFrontendHost.h"
 
+#include "CertificateInfo.h"
 #include "ContextMenu.h"
 #include "ContextMenuController.h"
 #include "ContextMenuItem.h"
@@ -38,10 +39,12 @@
 #include "Document.h"
 #include "Editor.h"
 #include "Event.h"
+#include "FloatRect.h"
 #include "FocusController.h"
 #include "Frame.h"
 #include "HitTestResult.h"
 #include "InspectorController.h"
+#include "InspectorDebuggableType.h"
 #include "InspectorFrontendClient.h"
 #include "JSDOMConvertInterface.h"
 #include "JSDOMExceptionHandling.h"
@@ -55,8 +58,10 @@
 #include "UserGestureIndicator.h"
 #include <JavaScriptCore/ScriptFunctionCall.h>
 #include <pal/system/Sound.h>
+#include <wtf/JSONValues.h>
 #include <wtf/StdLibExtras.h>
-
+#include <wtf/persistence/PersistentDecoder.h>
+#include <wtf/text/Base64.h>
 
 namespace WebCore {
 
@@ -84,7 +89,7 @@ private:
     {
     }
 
-    virtual ~FrontendMenuProvider()
+    ~FrontendMenuProvider() override
     {
         contextMenuCleared();
     }
@@ -150,15 +155,15 @@ void InspectorFrontendHost::disconnectClient()
 
 void InspectorFrontendHost::addSelfToGlobalObjectInWorld(DOMWrapperWorld& world)
 {
-    auto& state = *execStateFromPage(world, m_frontendPage);
-    auto& vm = state.vm();
+    auto& lexicalGlobalObject = *execStateFromPage(world, m_frontendPage);
+    auto& vm = lexicalGlobalObject.vm();
     JSC::JSLockHolder lock(vm);
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
-    auto& globalObject = *JSC::jsCast<JSDOMGlobalObject*>(state.lexicalGlobalObject());
-    globalObject.putDirect(vm, JSC::Identifier::fromString(&vm, "InspectorFrontendHost"), toJS<IDLInterface<InspectorFrontendHost>>(state, globalObject, *this));
+    auto& globalObject = *JSC::jsCast<JSDOMGlobalObject*>(&lexicalGlobalObject);
+    globalObject.putDirect(vm, JSC::Identifier::fromString(vm, "InspectorFrontendHost"), toJS<IDLInterface<InspectorFrontendHost>>(lexicalGlobalObject, globalObject, *this));
     if (UNLIKELY(scope.exception()))
-        reportException(&state, scope.exception());
+        reportException(&lexicalGlobalObject, scope.exception());
 }
 
 void InspectorFrontendHost::loaded()
@@ -167,18 +172,41 @@ void InspectorFrontendHost::loaded()
         m_client->frontendLoaded();
 }
 
-void InspectorFrontendHost::requestSetDockSide(const String& side)
+static Optional<InspectorFrontendClient::DockSide> dockSideFromString(const String& dockSideString)
+{
+    if (dockSideString == "undocked")
+        return InspectorFrontendClient::DockSide::Undocked;
+    if (dockSideString == "right")
+        return InspectorFrontendClient::DockSide::Right;
+    if (dockSideString == "left")
+        return InspectorFrontendClient::DockSide::Left;
+    if (dockSideString == "bottom")
+        return InspectorFrontendClient::DockSide::Bottom;
+    return WTF::nullopt;
+}
+
+bool InspectorFrontendHost::supportsDockSide(const String& dockSideString)
+{
+    if (!m_client)
+        return false;
+
+    auto dockSide = dockSideFromString(dockSideString);
+    if (!dockSide)
+        return false;
+
+    return m_client->supportsDockSide(dockSide.value());
+}
+
+void InspectorFrontendHost::requestSetDockSide(const String& dockSideString)
 {
     if (!m_client)
         return;
-    if (side == "undocked")
-        m_client->requestSetDockSide(InspectorFrontendClient::DockSide::Undocked);
-    else if (side == "right")
-        m_client->requestSetDockSide(InspectorFrontendClient::DockSide::Right);
-    else if (side == "left")
-        m_client->requestSetDockSide(InspectorFrontendClient::DockSide::Left);
-    else if (side == "bottom")
-        m_client->requestSetDockSide(InspectorFrontendClient::DockSide::Bottom);
+
+    auto dockSide = dockSideFromString(dockSideString);
+    if (!dockSide)
+        return;
+
+    m_client->requestSetDockSide(dockSide.value());
 }
 
 void InspectorFrontendHost::closeWindow()
@@ -187,6 +215,19 @@ void InspectorFrontendHost::closeWindow()
         m_client->closeWindow();
         disconnectClient(); // Disconnect from client.
     }
+}
+
+void InspectorFrontendHost::reopen()
+{
+    if (m_client)
+        m_client->reopen();
+}
+
+void InspectorFrontendHost::reset()
+{
+    if (m_client)
+        m_client->resetState();
+    reopen();
 }
 
 void InspectorFrontendHost::bringToFront()
@@ -215,6 +256,30 @@ float InspectorFrontendHost::zoomFactor()
     return 1.0;
 }
 
+void InspectorFrontendHost::setForcedAppearance(String appearance)
+{
+    if (appearance == "light"_s) {
+        if (m_frontendPage)
+            m_frontendPage->setUseDarkAppearanceOverride(false);
+        if (m_client)
+            m_client->setForcedAppearance(InspectorFrontendClient::Appearance::Light);
+        return;
+    }
+
+    if (appearance == "dark"_s) {
+        if (m_frontendPage)
+            m_frontendPage->setUseDarkAppearanceOverride(true);
+        if (m_client)
+            m_client->setForcedAppearance(InspectorFrontendClient::Appearance::Dark);
+        return;
+    }
+
+    if (m_frontendPage)
+        m_frontendPage->setUseDarkAppearanceOverride(WTF::nullopt);
+    if (m_client)
+        m_client->setForcedAppearance(InspectorFrontendClient::Appearance::System);
+}
+
 String InspectorFrontendHost::userInterfaceLayoutDirection()
 {
     if (m_client && m_client->userInterfaceLayoutDirection() == UserInterfaceLayoutDirection::RTL)
@@ -235,6 +300,12 @@ void InspectorFrontendHost::setAttachedWindowWidth(unsigned width)
         m_client->changeAttachedWindowWidth(width);
 }
 
+void InspectorFrontendHost::setSheetRect(float x, float y, unsigned width, unsigned height)
+{
+    if (m_client)
+        m_client->changeSheetRect(FloatRect(x, y, width, height));
+}
+
 void InspectorFrontendHost::startWindowDrag()
 {
     if (m_client)
@@ -247,29 +318,62 @@ void InspectorFrontendHost::moveWindowBy(float x, float y) const
         m_client->moveWindowBy(x, y);
 }
 
-String InspectorFrontendHost::localizedStringsURL()
+bool InspectorFrontendHost::isRemote() const
+{
+    return m_client && m_client->isRemote();
+}
+
+String InspectorFrontendHost::localizedStringsURL() const
 {
     return m_client ? m_client->localizedStringsURL() : String();
 }
 
-String InspectorFrontendHost::backendCommandsURL()
+String InspectorFrontendHost::backendCommandsURL() const
 {
     return m_client ? m_client->backendCommandsURL() : String();
 }
 
-String InspectorFrontendHost::debuggableType()
+static String debuggableTypeToString(DebuggableType debuggableType)
 {
-    return m_client ? m_client->debuggableType() : String();
+    switch (debuggableType) {
+    case DebuggableType::ITML:
+        return "itml"_s;
+    case DebuggableType::JavaScript:
+        return "javascript"_s;
+    case DebuggableType::Page:
+        return "page"_s;
+    case DebuggableType::ServiceWorker:
+        return "service-worker"_s;
+    case DebuggableType::WebPage:
+        return "web-page"_s;
+    }
+
+    ASSERT_NOT_REACHED();
+    return String();
 }
 
-unsigned InspectorFrontendHost::inspectionLevel()
+InspectorFrontendHost::DebuggableInfo InspectorFrontendHost::debuggableInfo() const
+{
+    if (!m_client)
+        return {debuggableTypeToString(DebuggableType::JavaScript), "Unknown"_s, "Unknown"_s, "Unknown"_s, false};
+
+    return {
+        debuggableTypeToString(m_client->debuggableType()),
+        m_client->targetPlatformName(),
+        m_client->targetBuildVersion(),
+        m_client->targetProductVersion(),
+        m_client->targetIsSimulator(),
+    };
+}
+
+unsigned InspectorFrontendHost::inspectionLevel() const
 {
     return m_client ? m_client->inspectionLevel() : 1;
 }
 
-String InspectorFrontendHost::platform()
+String InspectorFrontendHost::platform() const
 {
-#if PLATFORM(MAC) || PLATFORM(IOS)
+#if PLATFORM(COCOA)
     return "mac"_s;
 #elif OS(WINDOWS)
     return "windows"_s;
@@ -284,7 +388,7 @@ String InspectorFrontendHost::platform()
 #endif
 }
 
-String InspectorFrontendHost::port()
+String InspectorFrontendHost::port() const
 {
 #if PLATFORM(GTK)
     return "gtk"_s;
@@ -311,7 +415,7 @@ void InspectorFrontendHost::killText(const String& text, bool shouldPrependToKil
 
 void InspectorFrontendHost::openInNewTab(const String& url)
 {
-    if (WebCore::protocolIsJavaScript(url))
+    if (WTF::protocolIsJavaScript(url))
         return;
 
     if (m_client)
@@ -366,7 +470,7 @@ static void populateContextMenu(Vector<InspectorFrontendHost::ContextMenuItem>&&
         }
 
         auto type = item.type == "checkbox" ? CheckableActionType : ActionType;
-        auto action = static_cast<ContextMenuAction>(ContextMenuItemBaseCustomTag + item.id.value_or(0));
+        auto action = static_cast<ContextMenuAction>(ContextMenuItemBaseCustomTag + item.id.valueOr(0));
         ContextMenuItem menuItem = { type, action, item.label };
         if (item.enabled)
             menuItem.setEnabled(*item.enabled);
@@ -382,8 +486,9 @@ void InspectorFrontendHost::showContextMenu(Event& event, Vector<ContextMenuItem
 #if ENABLE(CONTEXT_MENUS)
     ASSERT(m_frontendPage);
 
-    auto& state = *execStateFromPage(debuggerWorld(), m_frontendPage);
-    auto value = state.lexicalGlobalObject()->get(&state, JSC::Identifier::fromString(&state.vm(), "InspectorFrontendAPI"));
+    auto& lexicalGlobalObject = *execStateFromPage(debuggerWorld(), m_frontendPage);
+    auto& vm = lexicalGlobalObject.vm();
+    auto value = lexicalGlobalObject.get(&lexicalGlobalObject, JSC::Identifier::fromString(vm, "InspectorFrontendAPI"));
     ASSERT(value);
     ASSERT(value.isObject());
     auto* frontendAPIObject = asObject(value);
@@ -391,7 +496,7 @@ void InspectorFrontendHost::showContextMenu(Event& event, Vector<ContextMenuItem
     ContextMenu menu;
     populateContextMenu(WTFMove(items), menu);
 
-    auto menuProvider = FrontendMenuProvider::create(this, { &state, frontendAPIObject }, menu.items());
+    auto menuProvider = FrontendMenuProvider::create(this, { &lexicalGlobalObject, frontendAPIObject }, menu.items());
     m_menuProvider = menuProvider.ptr();
     m_frontendPage->contextMenuController().showContextMenu(event, menuProvider);
 #else
@@ -407,10 +512,8 @@ void InspectorFrontendHost::dispatchEventAsContextMenuEvent(Event& event)
         return;
 
     auto& mouseEvent = downcast<MouseEvent>(event);
-    IntPoint mousePoint { mouseEvent.clientX(), mouseEvent.clientY() };
     auto& frame = *downcast<Node>(mouseEvent.target())->document().frame();
-
-    m_frontendPage->contextMenuController().showContextMenuAt(frame, mousePoint);
+    m_frontendPage->contextMenuController().showContextMenuAt(frame, roundedIntPoint(mouseEvent.absoluteLocation()));
 #else
     UNUSED_PARAM(event);
 #endif
@@ -419,6 +522,15 @@ void InspectorFrontendHost::dispatchEventAsContextMenuEvent(Event& event)
 bool InspectorFrontendHost::isUnderTest()
 {
     return m_client && m_client->isUnderTest();
+}
+
+bool InspectorFrontendHost::isExperimentalBuild()
+{
+#if ENABLE(EXPERIMENTAL_FEATURES)
+    return true;
+#else
+    return false;
+#endif
 }
 
 void InspectorFrontendHost::unbufferedLog(const String& message)
@@ -437,5 +549,117 @@ void InspectorFrontendHost::inspectInspector()
     if (m_frontendPage)
         m_frontendPage->inspectorController().show();
 }
+
+bool InspectorFrontendHost::isBeingInspected()
+{
+    if (!m_frontendPage)
+        return false;
+
+    InspectorController& inspectorController = m_frontendPage->inspectorController();
+    return inspectorController.hasLocalFrontend() || inspectorController.hasRemoteFrontend();
+}
+
+bool InspectorFrontendHost::supportsShowCertificate() const
+{
+#if PLATFORM(COCOA)
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool InspectorFrontendHost::showCertificate(const String& serializedCertificate)
+{
+    if (!m_client)
+        return false;
+
+    Vector<uint8_t> data;
+    if (!base64Decode(serializedCertificate, data))
+        return false;
+
+    WTF::Persistence::Decoder decoder(data.data(), data.size());
+    Optional<CertificateInfo> certificateInfo;
+    decoder >> certificateInfo;
+    if (!certificateInfo)
+        return false;
+
+    if (certificateInfo->isEmpty())
+        return false;
+
+    m_client->showCertificate(*certificateInfo);
+    return true;
+}
+
+bool InspectorFrontendHost::supportsDiagnosticLogging()
+{
+#if ENABLE(INSPECTOR_TELEMETRY)
+    return m_client && m_client->supportsDiagnosticLogging();
+#else
+    return false;
+#endif
+}
+
+#if ENABLE(INSPECTOR_TELEMETRY)
+bool InspectorFrontendHost::diagnosticLoggingAvailable()
+{
+    return m_client && m_client->diagnosticLoggingAvailable();
+}
+
+static Optional<DiagnosticLoggingClient::ValuePayload> valuePayloadFromJSONValue(const RefPtr<JSON::Value>& value)
+{
+    switch (value->type()) {
+    case JSON::Value::Type::Array:
+    case JSON::Value::Type::Null:
+    case JSON::Value::Type::Object:
+        ASSERT_NOT_REACHED();
+        return WTF::nullopt;
+
+    case JSON::Value::Type::Boolean:
+        bool boolValue;
+        value->asBoolean(boolValue);
+        return DiagnosticLoggingClient::ValuePayload(boolValue);
+
+    case JSON::Value::Type::Double:
+        double doubleValue;
+        value->asDouble(doubleValue);
+        return DiagnosticLoggingClient::ValuePayload(doubleValue);
+
+    case JSON::Value::Type::Integer:
+        long long intValue;
+        value->asInteger(intValue);
+        return DiagnosticLoggingClient::ValuePayload(intValue);
+
+    case JSON::Value::Type::String:
+        String stringValue;
+        value->asString(stringValue);
+        return DiagnosticLoggingClient::ValuePayload(stringValue);
+    }
+
+    ASSERT_NOT_REACHED();
+    return WTF::nullopt;
+}
+
+void InspectorFrontendHost::logDiagnosticEvent(const String& eventName, const String& payloadString)
+{
+    if (!supportsDiagnosticLogging())
+        return;
+
+    RefPtr<JSON::Value> payloadValue;
+    if (!JSON::Value::parseJSON(payloadString, payloadValue))
+        return;
+
+    RefPtr<JSON::Object> payloadObject;
+    if (!payloadValue->asObject(payloadObject))
+        return;
+
+    DiagnosticLoggingClient::ValueDictionary dictionary;
+    for (const auto& [key, value] : *payloadObject) {
+        if (auto valuePayload = valuePayloadFromJSONValue(value))
+            dictionary.set(key, WTFMove(valuePayload.value()));
+    }
+
+    m_client->logDiagnosticEvent(makeString("WebInspector."_s, eventName), dictionary);
+}
+#endif // ENABLE(INSPECTOR_TELEMETRY)
 
 } // namespace WebCore

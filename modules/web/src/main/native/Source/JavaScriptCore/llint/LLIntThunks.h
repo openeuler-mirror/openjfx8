@@ -26,10 +26,11 @@
 #pragma once
 
 #include "MacroAssemblerCodeRef.h"
+#include "VM.h"
+#include <wtf/Scope.h>
 
 namespace JSC {
 
-class VM;
 struct ProtoCallFrame;
 typedef int64_t EncodedJSValue;
 
@@ -40,18 +41,25 @@ extern "C" {
 
 inline EncodedJSValue vmEntryToWasm(void* code, VM* vm, ProtoCallFrame* frame)
 {
+    auto clobberizeValidator = makeScopeExit([&] {
+        vm->didEnterVM = true;
+    });
     code = retagCodePtr<WasmEntryPtrTag, JSEntryPtrTag>(code);
     return vmEntryToJavaScript(code, vm, frame);
 }
 
 namespace LLInt {
 
-MacroAssemblerCodeRef<JITThunkPtrTag> functionForCallEntryThunkGenerator(VM*);
-MacroAssemblerCodeRef<JITThunkPtrTag> functionForConstructEntryThunkGenerator(VM*);
-MacroAssemblerCodeRef<JITThunkPtrTag> functionForCallArityCheckThunkGenerator(VM*);
-MacroAssemblerCodeRef<JITThunkPtrTag> functionForConstructArityCheckThunkGenerator(VM*);
-MacroAssemblerCodeRef<JITThunkPtrTag> evalEntryThunkGenerator(VM*);
-MacroAssemblerCodeRef<JITThunkPtrTag> programEntryThunkGenerator(VM*);
-MacroAssemblerCodeRef<JITThunkPtrTag> moduleProgramEntryThunkGenerator(VM*);
+MacroAssemblerCodeRef<JITThunkPtrTag> functionForCallEntryThunk();
+MacroAssemblerCodeRef<JITThunkPtrTag> functionForConstructEntryThunk();
+MacroAssemblerCodeRef<JITThunkPtrTag> functionForCallArityCheckThunk();
+MacroAssemblerCodeRef<JITThunkPtrTag> functionForConstructArityCheckThunk();
+MacroAssemblerCodeRef<JITThunkPtrTag> evalEntryThunk();
+MacroAssemblerCodeRef<JITThunkPtrTag> programEntryThunk();
+MacroAssemblerCodeRef<JITThunkPtrTag> moduleProgramEntryThunk();
+
+#if ENABLE(WEBASSEMBLY)
+MacroAssemblerCodeRef<JITThunkPtrTag> wasmFunctionEntryThunk();
+#endif // ENABLE(WEBASSEMBLY)
 
 } } // namespace JSC::LLInt

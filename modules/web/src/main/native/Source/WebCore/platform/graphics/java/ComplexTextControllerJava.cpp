@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2018, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -27,8 +27,9 @@
 
 #include "ComplexTextController.h"
 #include "FloatRect.h"
+#include "FontCascade.h"
 
-#include <wtf/java/JavaEnv.h>
+#include "PlatformJavaClasses.h"
 
 namespace WebCore {
 
@@ -44,7 +45,7 @@ jclass PG_GetTextRun(JNIEnv* env)
 
 bool jIsLTR(jobject jRun)
 {
-    JNIEnv* env = WebCore_GetJavaEnv();
+    JNIEnv* env = WTF::GetJavaEnv();
     static jmethodID mID = env->GetMethodID(
         PG_GetTextRun(env),
         "isLeftToRight",
@@ -56,7 +57,7 @@ bool jIsLTR(jobject jRun)
 
 unsigned jGetGlyphCount(jobject jRun)
 {
-    JNIEnv* env = WebCore_GetJavaEnv();
+    JNIEnv* env = WTF::GetJavaEnv();
     static jmethodID mID = env->GetMethodID(
         PG_GetTextRun(env),
         "getGlyphCount",
@@ -68,7 +69,7 @@ unsigned jGetGlyphCount(jobject jRun)
 
 unsigned jGetStart(jobject jRun)
 {
-    JNIEnv* env = WebCore_GetJavaEnv();
+    JNIEnv* env = WTF::GetJavaEnv();
     static jmethodID mID = env->GetMethodID(
         PG_GetTextRun(env),
         "getStart",
@@ -80,7 +81,7 @@ unsigned jGetStart(jobject jRun)
 
 unsigned jGetEnd(jobject jRun)
 {
-    JNIEnv* env = WebCore_GetJavaEnv();
+    JNIEnv* env = WTF::GetJavaEnv();
     static jmethodID mID = env->GetMethodID(
         PG_GetTextRun(env),
         "getEnd",
@@ -92,7 +93,13 @@ unsigned jGetEnd(jobject jRun)
 
 unsigned jGetCharOffset(jobject jRun, unsigned glyphIndex)
 {
-    JNIEnv* env = WebCore_GetJavaEnv();
+    if (!jGetGlyphCount(jRun)) {
+        // Return same value as TextRun.getCharOffset() when there is
+        // no glyph information available.
+        return glyphIndex;
+    }
+
+    JNIEnv* env = WTF::GetJavaEnv();
     static jmethodID mID = env->GetMethodID(
         PG_GetTextRun(env),
         "getCharOffset",
@@ -104,7 +111,7 @@ unsigned jGetCharOffset(jobject jRun, unsigned glyphIndex)
 
 CGGlyph jGetGlyph(jobject jRun, unsigned glyphIndex)
 {
-    JNIEnv* env = WebCore_GetJavaEnv();
+    JNIEnv* env = WTF::GetJavaEnv();
     static jmethodID mID = env->GetMethodID(
         PG_GetTextRun(env),
         "getGlyph",
@@ -120,7 +127,7 @@ FloatRect jGetGlyphPosAndAdvance(jobject jRun, unsigned glyphIndex)
         return { };
     }
 
-    JNIEnv* env = WebCore_GetJavaEnv();
+    JNIEnv* env = WTF::GetJavaEnv();
     static jmethodID mID = env->GetMethodID(
         PG_GetTextRun(env),
         "getGlyphPosAndAdvance",
@@ -129,7 +136,7 @@ FloatRect jGetGlyphPosAndAdvance(jobject jRun, unsigned glyphIndex)
 
     JLocalRef<jfloatArray> jpos = static_cast<jfloatArray> (env->CallObjectMethod(
                                                               jRun, mID, glyphIndex));
-    CheckAndClearException(env);
+    WTF::CheckAndClearException(env);
 
     jfloat* pos = static_cast<float*>(env->GetPrimitiveArrayCritical(jpos, 0));
     FloatRect rect = { pos[0], pos[1], pos[2], pos[3] };
@@ -198,7 +205,7 @@ void ComplexTextController::collectComplexTextRunsForCharacters(const UChar* cha
         return;
     }
 
-    JNIEnv* env = WebCore_GetJavaEnv();
+    JNIEnv* env = WTF::GetJavaEnv();
     static jmethodID getTextRuns_mID = env->GetMethodID(
         PG_GetFontClass(env),
         "getTextRuns",
@@ -209,7 +216,7 @@ void ComplexTextController::collectComplexTextRunsForCharacters(const UChar* cha
                                                                   *jFont,
                                                                   getTextRuns_mID,
                                                                   jstring(String(characters, length).toJavaString(env))));
-    CheckAndClearException(env);
+    WTF::CheckAndClearException(env);
 
     if (!jRuns) {
         // Create a run of missing glyphs from the primary font.

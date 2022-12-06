@@ -29,10 +29,16 @@ import logging
 import string
 from string import Template
 
-from .cpp_generator import CppGenerator
-from .cpp_generator_templates import CppGeneratorTemplates as CppTemplates
-from .generator import Generator, ucfirst
-from .models import ObjectType, ArrayType
+try:
+    from .cpp_generator import CppGenerator
+    from .cpp_generator_templates import CppGeneratorTemplates as CppTemplates
+    from .generator import Generator, ucfirst
+    from .models import ObjectType, ArrayType
+except ValueError:
+    from cpp_generator import CppGenerator
+    from cpp_generator_templates import CppGeneratorTemplates as CppTemplates
+    from generator import Generator, ucfirst
+    from models import ObjectType, ArrayType
 
 log = logging.getLogger('global')
 
@@ -54,7 +60,7 @@ class CppBackendDispatcherImplementationGenerator(CppGenerator):
             secondary_includes.append('')
             secondary_includes.append('#if ENABLE(INSPECTOR_ALTERNATE_DISPATCHERS)')
             secondary_includes.append('#include "%sAlternateBackendDispatchers.h"' % self.protocol_name())
-            secondary_includes.append('#endif')
+            secondary_includes.append('#endif // ENABLE(INSPECTOR_ALTERNATE_DISPATCHERS)')
 
         header_args = {
             'primaryInclude': '"%sBackendDispatchers.h"' % self.protocol_name(),
@@ -87,7 +93,7 @@ class CppBackendDispatcherImplementationGenerator(CppGenerator):
             'domainName': domain.domain_name
         }
         destructor = '%(domainName)sBackendDispatcherHandler::~%(domainName)sBackendDispatcherHandler() { }' % destructor_args
-        return self.wrap_with_guard_for_domain(domain, destructor)
+        return self.wrap_with_guard_for_condition(domain.condition, destructor)
 
     def _generate_dispatcher_implementations_for_domain(self, domain):
         implementations = []
@@ -109,17 +115,29 @@ class CppBackendDispatcherImplementationGenerator(CppGenerator):
                 implementations.append(self._generate_async_dispatcher_class_for_domain(command, domain))
             implementations.append(self._generate_dispatcher_implementation_for_command(command, domain))
 
-        return self.wrap_with_guard_for_domain(domain, '\n\n'.join(implementations))
+        return self.wrap_with_guard_for_condition(domain.condition, '\n\n'.join(implementations))
 
     def _generate_small_dispatcher_switch_implementation_for_domain(self, domain):
         commands = self.commands_for_domain(domain)
 
         cases = []
-        cases.append('    if (method == "%s")' % commands[0].command_name)
-        cases.append('        %s(requestId, WTFMove(parameters));' % commands[0].command_name)
+
+        first_command_string = "\n".join([
+            '    if (method == "%s") {' % commands[0].command_name,
+            '        %s(requestId, WTFMove(parameters));' % commands[0].command_name,
+            '        return;',
+            '    }',
+        ])
+        cases.append(self.wrap_with_guard_for_condition(commands[0].condition, first_command_string))
+
         for command in commands[1:]:
-            cases.append('    else if (method == "%s")' % command.command_name)
-            cases.append('        %s(requestId, WTFMove(parameters));' % command.command_name)
+            additional_command_string = "\n".join([
+                '    if (method == "%s") {' % command.command_name,
+                '        %s(requestId, WTFMove(parameters));' % command.command_name,
+                '        return;',
+                '    }',
+            ])
+            cases.append(self.wrap_with_guard_for_condition(command.condition, additional_command_string))
 
         switch_args = {
             'domainName': domain.domain_name,
@@ -137,7 +155,7 @@ class CppBackendDispatcherImplementationGenerator(CppGenerator):
                 'domainName': domain.domain_name,
                 'commandName': command.command_name
             }
-            cases.append('            { "%(commandName)s", &%(domainName)sBackendDispatcher::%(commandName)s },' % args)
+            cases.append(self.wrap_with_guard_for_condition(command.condition, '            { "%(commandName)s", &%(domainName)sBackendDispatcher::%(commandName)s },' % args))
 
         switch_args = {
             'domainName': domain.domain_name,
@@ -163,7 +181,7 @@ class CppBackendDispatcherImplementationGenerator(CppGenerator):
 
             if parameter.is_optional:
                 if CppGenerator.should_use_wrapper_for_return_type(parameter.type):
-                    out_parameter_assignments.append('    if (%(parameterName)s.has_value())' % param_args)
+                    out_parameter_assignments.append('    if (%(parameterName)s.hasValue())' % param_args)
                     out_parameter_assignments.append('        jsonMessage->%(keyedSetMethod)s("%(parameterKey)s"_s, *%(parameterName)s);' % param_args)
                 else:
                     out_parameter_assignments.append('    if (%(parameterName)s)' % param_args)
@@ -179,7 +197,7 @@ class CppBackendDispatcherImplementationGenerator(CppGenerator):
             'formalParameters': ", ".join(formal_parameters),
             'outParameterAssignments': "\n".join(out_parameter_assignments)
         }
-        return Template(CppTemplates.BackendDispatcherImplementationAsyncCommand).substitute(None, **async_args)
+        return self.wrap_with_guard_for_condition(command.condition, Template(CppTemplates.BackendDispatcherImplementationAsyncCommand).substitute(None, **async_args))
 
     def _generate_dispatcher_implementation_for_command(self, command, domain):
         in_parameter_declarations = []
@@ -258,7 +276,7 @@ class CppBackendDispatcherImplementationGenerator(CppGenerator):
                 out_parameter_declarations.append('    %(parameterType)s out_%(parameterName)s;' % param_args)
                 if parameter.is_optional:
                     if CppGenerator.should_use_wrapper_for_return_type(parameter.type):
-                        out_parameter_assignments.append('        if (out_%(parameterName)s.has_value())' % param_args)
+                        out_parameter_assignments.append('        if (out_%(parameterName)s.hasValue())' % param_args)
                         out_parameter_assignments.append('            result->%(keyedSetMethod)s("%(parameterKey)s"_s, *out_%(parameterName)s);' % param_args)
                     else:
                         out_parameter_assignments.append('        if (out_%(parameterName)s)' % param_args)
@@ -298,7 +316,7 @@ class CppBackendDispatcherImplementationGenerator(CppGenerator):
             lines.append('        m_alternateDispatcher->%(commandName)s(%(alternateInvocationParameters)s);' % command_args)
             lines.append('        return;')
             lines.append('    }')
-            lines.append('#endif')
+            lines.append('#endif // ENABLE(INSPECTOR_ALTERNATE_DISPATCHERS)')
             lines.append('')
 
         if command.is_async:
@@ -328,4 +346,4 @@ class CppBackendDispatcherImplementationGenerator(CppGenerator):
             lines.append('        m_backendDispatcher->reportProtocolError(BackendDispatcher::ServerError, WTFMove(error));')
 
         lines.append('}')
-        return "\n".join(lines)
+        return self.wrap_with_guard_for_condition(command.condition, "\n".join(lines))

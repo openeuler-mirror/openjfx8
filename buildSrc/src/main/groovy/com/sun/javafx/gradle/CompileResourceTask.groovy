@@ -23,7 +23,7 @@
  * questions.
  */
 
-import org.gradle.api.tasks.Input
+ import org.gradle.api.tasks.Input
 
 class CompileResourceTask extends NativeCompileTask {
     @Input List<String> rcParams = new ArrayList<String>();

@@ -26,9 +26,12 @@
 #include "config.h"
 #include "SocketStreamHandleImpl.h"
 
+#if !USE(SOUP)
+
 #include "CookieRequestHeaderFieldProxy.h"
 #include "NetworkStorageSession.h"
 #include "SocketStreamHandleClient.h"
+#include "StorageSessionProvider.h"
 #include <wtf/Function.h>
 
 namespace WebCore {
@@ -76,15 +79,12 @@ static size_t removeTerminationCharacters(const uint8_t* data, size_t dataLength
     return dataLength - 2;
 }
 
-static std::optional<std::pair<Vector<uint8_t>, bool>> cookieDataForHandshake(const CookieRequestHeaderFieldProxy& headerFieldProxy)
+static Optional<std::pair<Vector<uint8_t>, bool>> cookieDataForHandshake(const NetworkStorageSession* networkStorageSession, const CookieRequestHeaderFieldProxy& headerFieldProxy)
 {
-    auto networkStorageSession = NetworkStorageSession::storageSession(headerFieldProxy.sessionID);
     if (!networkStorageSession)
-        return std::nullopt;
+        return WTF::nullopt;
 
-    String cookieDataString;
-    bool secureCookiesAccessed = false;
-    std::tie(cookieDataString, secureCookiesAccessed) = networkStorageSession->cookieRequestHeaderFieldValue(headerFieldProxy);
+    auto [cookieDataString, secureCookiesAccessed] = networkStorageSession->cookieRequestHeaderFieldValue(headerFieldProxy);
     if (cookieDataString.isEmpty())
         return std::pair<Vector<uint8_t>, bool> { { }, secureCookiesAccessed };
 
@@ -97,13 +97,13 @@ static std::optional<std::pair<Vector<uint8_t>, bool>> cookieDataForHandshake(co
     return std::pair<Vector<uint8_t>, bool> { data, secureCookiesAccessed };
 }
 
-void SocketStreamHandleImpl::platformSendHandshake(const uint8_t* data, size_t length, const std::optional<CookieRequestHeaderFieldProxy>& headerFieldProxy, Function<void(bool, bool)>&& completionHandler)
+void SocketStreamHandleImpl::platformSendHandshake(const uint8_t* data, size_t length, const Optional<CookieRequestHeaderFieldProxy>& headerFieldProxy, Function<void(bool, bool)>&& completionHandler)
 {
     Vector<uint8_t> cookieData;
     bool secureCookiesAccessed = false;
 
     if (headerFieldProxy) {
-        auto cookieDataFromNetworkSession = cookieDataForHandshake(headerFieldProxy.value());
+        auto cookieDataFromNetworkSession = cookieDataForHandshake(m_storageSessionProvider ? m_storageSessionProvider->storageSession() : nullptr, *headerFieldProxy);
         if (!cookieDataFromNetworkSession) {
             completionHandler(false, false);
             return;
@@ -187,3 +187,5 @@ size_t SocketStreamHandleImpl::bufferedAmount()
 }
 
 } // namespace WebCore
+
+#endif // !USE(SOUP)

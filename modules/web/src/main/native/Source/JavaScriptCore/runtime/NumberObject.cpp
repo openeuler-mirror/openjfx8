@@ -22,18 +22,16 @@
 #include "config.h"
 #include "NumberObject.h"
 
-#include "JSGlobalObject.h"
-#include "NumberPrototype.h"
 #include "JSCInlines.h"
 
 namespace JSC {
 
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(NumberObject);
 
-const ClassInfo NumberObject::s_info = { "Number", &JSWrapperObject::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NumberObject) };
+const ClassInfo NumberObject::s_info = { "Number", &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NumberObject) };
 
 NumberObject::NumberObject(VM& vm, Structure* structure)
-    : JSWrapperObject(vm, structure)
+    : Base(vm, structure)
 {
 }
 
@@ -44,10 +42,15 @@ void NumberObject::finishCreation(VM& vm)
     ASSERT(type() == NumberObjectType);
 }
 
-NumberObject* constructNumber(ExecState* exec, JSGlobalObject* globalObject, JSValue number)
+String NumberObject::toStringName(const JSObject*, JSGlobalObject*)
 {
-    NumberObject* object = NumberObject::create(exec->vm(), globalObject->numberObjectStructure());
-    object->setInternalValue(exec->vm(), number);
+    return "Number"_s;
+}
+
+NumberObject* constructNumber(JSGlobalObject* globalObject, JSValue number)
+{
+    NumberObject* object = NumberObject::create(globalObject->vm(), globalObject->numberObjectStructure());
+    object->setInternalValue(globalObject->vm(), number);
     return object;
 }
 

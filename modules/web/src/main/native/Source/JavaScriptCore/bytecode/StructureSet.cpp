@@ -26,7 +26,7 @@
 #include "config.h"
 #include "StructureSet.h"
 
-#include "TrackedReferences.h"
+#include "HeapInlines.h"
 #include <wtf/CommaPrinter.h>
 
 namespace JSC {
@@ -37,10 +37,10 @@ void StructureSet::markIfCheap(SlotVisitor& visitor) const
         structure->markIfCheap(visitor);
 }
 
-bool StructureSet::isStillAlive() const
+bool StructureSet::isStillAlive(VM& vm) const
 {
     for (Structure* structure : *this) {
-        if (!Heap::isMarked(structure))
+        if (!vm.heap.isMarked(structure))
             return false;
     }
     return true;

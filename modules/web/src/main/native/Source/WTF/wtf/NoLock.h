@@ -23,14 +23,14 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef NoLock_h
-#define NoLock_h
+#pragma once
 
 #include <wtf/Locker.h>
 
 namespace WTF {
 
 class NoLock {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     void lock() { }
     void unlock() { }
@@ -43,6 +43,3 @@ typedef Locker<NoLock> NoLockLocker;
 
 using WTF::NoLock;
 using WTF::NoLockLocker;
-
-#endif // NoLock_h
-

@@ -49,14 +49,14 @@ public:
 private:
     MockMediaSample(const MockSampleBox& box)
         : m_box(box)
-        , m_id(String::format("%d", box.trackID()))
+        , m_id(AtomString::number(box.trackID()))
     {
     }
 
     MediaTime presentationTime() const override { return m_box.presentationTimestamp(); }
     MediaTime decodeTime() const override { return m_box.decodeTimestamp(); }
     MediaTime duration() const override { return m_box.duration(); }
-    AtomicString trackID() const override { return m_id; }
+    AtomString trackID() const override { return m_id; }
     void setTrackID(const String& id) override { m_id = id; }
     size_t sizeInBytes() const override { return sizeof(m_box); }
     SampleFlags flags() const override;
@@ -72,7 +72,7 @@ private:
     unsigned generation() const { return m_box.generation(); }
 
     MockSampleBox m_box;
-    AtomicString m_id;
+    AtomString m_id;
 };
 
 MediaSample::SampleFlags MockMediaSample::flags() const
@@ -100,27 +100,27 @@ Ref<MediaSample> MockMediaSample::createNonDisplayingCopy() const
 {
     auto copy = MockMediaSample::create(m_box);
     copy->m_box.setFlag(MockSampleBox::IsNonDisplaying);
-    return WTFMove(copy);
+    return copy;
 }
 
 class MockMediaDescription final : public MediaDescription {
 public:
-    static RefPtr<MockMediaDescription> create(const MockTrackBox& box) { return adoptRef(new MockMediaDescription(box)); }
+    static Ref<MockMediaDescription> create(const MockTrackBox& box) { return adoptRef(*new MockMediaDescription(box)); }
     virtual ~MockMediaDescription() = default;
 
-    AtomicString codec() const override { return m_box.codec(); }
+    AtomString codec() const override { return m_box.codec(); }
     bool isVideo() const override { return m_box.kind() == MockTrackBox::Video; }
     bool isAudio() const override { return m_box.kind() == MockTrackBox::Audio; }
     bool isText() const override { return m_box.kind() == MockTrackBox::Text; }
 
-protected:
+private:
     MockMediaDescription(const MockTrackBox& box) : m_box(box) { }
     MockTrackBox m_box;
 };
 
-RefPtr<MockSourceBufferPrivate> MockSourceBufferPrivate::create(MockMediaSourcePrivate* parent)
+Ref<MockSourceBufferPrivate> MockSourceBufferPrivate::create(MockMediaSourcePrivate* parent)
 {
-    return adoptRef(new MockSourceBufferPrivate(parent));
+    return adoptRef(*new MockSourceBufferPrivate(parent));
 }
 
 MockSourceBufferPrivate::MockSourceBufferPrivate(MockMediaSourcePrivate* parent)
@@ -142,17 +142,17 @@ void MockSourceBufferPrivate::append(Vector<unsigned char>&& data)
     SourceBufferPrivateClient::AppendResult result = SourceBufferPrivateClient::AppendSucceeded;
 
     while (m_inputBuffer.size() && result == SourceBufferPrivateClient::AppendSucceeded) {
-        RefPtr<ArrayBuffer> buffer = ArrayBuffer::create(m_inputBuffer.data(), m_inputBuffer.size());
-        size_t boxLength = MockBox::peekLength(buffer.get());
+        auto buffer = ArrayBuffer::create(m_inputBuffer.data(), m_inputBuffer.size());
+        size_t boxLength = MockBox::peekLength(buffer.ptr());
         if (boxLength > buffer->byteLength())
             break;
 
-        String type = MockBox::peekType(buffer.get());
+        String type = MockBox::peekType(buffer.ptr());
         if (type == MockInitializationBox::type()) {
-            MockInitializationBox initBox = MockInitializationBox(buffer.get());
+            MockInitializationBox initBox = MockInitializationBox(buffer.ptr());
             didReceiveInitializationSegment(initBox);
         } else if (type == MockSampleBox::type()) {
-            MockSampleBox sampleBox = MockSampleBox(buffer.get());
+            MockSampleBox sampleBox = MockSampleBox(buffer.ptr());
             didReceiveSample(sampleBox);
         } else
             result = SourceBufferPrivateClient::ParsingFailed;
@@ -220,7 +220,7 @@ void MockSourceBufferPrivate::removedFromMediaSource()
 
 MediaPlayer::ReadyState MockSourceBufferPrivate::readyState() const
 {
-    return m_mediaSource ? m_mediaSource->player().readyState() : MediaPlayer::HaveNothing;
+    return m_mediaSource ? m_mediaSource->player().readyState() : MediaPlayer::ReadyState::HaveNothing;
 }
 
 void MockSourceBufferPrivate::setReadyState(MediaPlayer::ReadyState readyState)
@@ -235,12 +235,45 @@ void MockSourceBufferPrivate::setActive(bool isActive)
         m_mediaSource->sourceBufferPrivateDidChangeActiveState(this, isActive);
 }
 
-Vector<String> MockSourceBufferPrivate::enqueuedSamplesForTrackID(const AtomicString&)
+Vector<String> MockSourceBufferPrivate::enqueuedSamplesForTrackID(const AtomString&)
 {
     return m_enqueuedSamples;
 }
 
-void MockSourceBufferPrivate::enqueueSample(Ref<MediaSample>&& sample, const AtomicString&)
+MediaTime MockSourceBufferPrivate::minimumUpcomingPresentationTimeForTrackID(const AtomString&)
+{
+    return m_minimumUpcomingPresentationTime;
+}
+
+void MockSourceBufferPrivate::setMaximumQueueDepthForTrackID(const AtomString&, size_t maxQueueDepth)
+{
+    m_maxQueueDepth = maxQueueDepth;
+}
+
+bool MockSourceBufferPrivate::canSetMinimumUpcomingPresentationTime(const AtomString&) const
+{
+    return true;
+}
+
+void MockSourceBufferPrivate::setMinimumUpcomingPresentationTime(const AtomString&, const MediaTime& presentationTime)
+{
+    m_minimumUpcomingPresentationTime = presentationTime;
+}
+
+void MockSourceBufferPrivate::clearMinimumUpcomingPresentationTime(const AtomString&)
+{
+    m_minimumUpcomingPresentationTime = MediaTime::invalidTime();
+}
+
+bool MockSourceBufferPrivate::canSwitchToType(const ContentType& contentType)
+{
+    MediaEngineSupportParameters parameters;
+    parameters.isMediaSource = true;
+    parameters.type = contentType;
+    return MockMediaPlayerMediaSource::supportsType(parameters) != MediaPlayer::SupportsType::IsNotSupported;
+}
+
+void MockSourceBufferPrivate::enqueueSample(Ref<MediaSample>&& sample, const AtomString&)
 {
     if (!m_mediaSource)
         return;
@@ -281,11 +314,17 @@ MediaTime MockSourceBufferPrivate::fastSeekTimeForMediaTime(const MediaTime& tim
     return time;
 }
 
-void MockSourceBufferPrivate::seekToTime(const MediaTime& time)
+#if !RELEASE_LOG_DISABLED
+const Logger& MockSourceBufferPrivate::sourceBufferLogger() const
 {
-    if (m_client)
-        m_client->sourceBufferPrivateSeekToTime(time);
+    return m_mediaSource->mediaSourceLogger();
 }
+
+const void* MockSourceBufferPrivate::sourceBufferLogIdentifier()
+{
+    return m_mediaSource->mediaSourceLogIdentifier();
+}
+#endif
 
 }
 

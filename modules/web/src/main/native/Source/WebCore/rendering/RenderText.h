@@ -35,6 +35,10 @@ class Font;
 class InlineTextBox;
 struct GlyphOverflow;
 
+namespace LayoutIntegration {
+class LineLayout;
+}
+
 class RenderText : public RenderObject {
     WTF_MAKE_ISO_ALLOCATED(RenderText);
 public:
@@ -67,15 +71,16 @@ public:
 
     InlineTextBox* createInlineTextBox() { return m_lineBoxes.createAndAppendLineBox(*this); }
     void dirtyLineBoxes(bool fullLayout);
+    void deleteLineBoxes();
 
     void absoluteRects(Vector<IntRect>&, const LayoutPoint& accumulatedOffset) const final;
     Vector<IntRect> absoluteRectsForRange(unsigned startOffset = 0, unsigned endOffset = UINT_MAX, bool useSelectionHeight = false, bool* wasFixed = nullptr) const;
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     void collectSelectionRects(Vector<SelectionRect>&, unsigned startOffset = 0, unsigned endOffset = std::numeric_limits<unsigned>::max()) final;
 #endif
 
     void absoluteQuads(Vector<FloatQuad>&, bool* wasFixed) const final;
-    Vector<FloatQuad> absoluteQuadsForRange(unsigned startOffset = 0, unsigned endOffset = UINT_MAX, bool useSelectionHeight = false, bool* wasFixed = nullptr) const;
+    Vector<FloatQuad> absoluteQuadsForRange(unsigned startOffset = 0, unsigned endOffset = UINT_MAX, bool useSelectionHeight = false, bool ignoreEmptyTextSelections = false, bool* wasFixed = nullptr) const;
 
     Vector<FloatQuad> absoluteQuadsClippedToEllipsis() const;
 
@@ -164,10 +169,13 @@ public:
 #endif
 
     void ensureLineBoxes();
-    void deleteLineBoxesBeforeSimpleLineLayout();
     const SimpleLineLayout::Layout* simpleLineLayout() const;
+#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
+    const LayoutIntegration::LineLayout* layoutFormattingContextLineLayout() const;
+#endif
+    bool usesComplexLineLayoutPath() const;
 
-    StringView stringView(unsigned start = 0, std::optional<unsigned> stop = std::nullopt) const;
+    StringView stringView(unsigned start = 0, Optional<unsigned> stop = WTF::nullopt) const;
 
     LayoutUnit topOfFirstText() const;
 
@@ -200,7 +208,7 @@ private:
 
     VisiblePosition positionForPoint(const LayoutPoint&, const RenderFragmentContainer*) override;
 
-    void setSelectionState(SelectionState) final;
+    void setSelectionState(HighlightState) final;
     LayoutRect selectionRectForRepaint(const RenderLayerModelObject* repaintContainer, bool clipToVisibleContent = true) final;
     LayoutRect localCaretRect(InlineBox*, unsigned caretOffset, LayoutUnit* extraWidthToEndOfLine = nullptr) override;
     LayoutRect clippedOverflowRectForRepaint(const RenderLayerModelObject* repaintContainer) const final;
@@ -275,27 +283,38 @@ inline const RenderStyle& RenderText::firstLineStyle() const
 
 inline const RenderStyle* RenderText::getCachedPseudoStyle(PseudoId pseudoId, const RenderStyle* parentStyle) const
 {
-    return parent()->getCachedPseudoStyle(pseudoId, parentStyle);
+    // Pseudostyle is associated with an element, so ascend the tree until we find a non-anonymous ancestor.
+    if (auto* ancestor = firstNonAnonymousAncestor())
+        return ancestor->getCachedPseudoStyle(pseudoId, parentStyle);
+    return nullptr;
 }
 
 inline Color RenderText::selectionBackgroundColor() const
 {
-    return parent()->selectionBackgroundColor();
+    if (auto* ancestor = firstNonAnonymousAncestor())
+        return ancestor->selectionBackgroundColor();
+    return Color();
 }
 
 inline Color RenderText::selectionForegroundColor() const
 {
-    return parent()->selectionForegroundColor();
+    if (auto* ancestor = firstNonAnonymousAncestor())
+        return ancestor->selectionForegroundColor();
+    return Color();
 }
 
 inline Color RenderText::selectionEmphasisMarkColor() const
 {
-    return parent()->selectionEmphasisMarkColor();
+    if (auto* ancestor = firstNonAnonymousAncestor())
+        return ancestor->selectionEmphasisMarkColor();
+    return Color();
 }
 
 inline std::unique_ptr<RenderStyle> RenderText::selectionPseudoStyle() const
 {
-    return parent()->selectionPseudoStyle();
+    if (auto* ancestor = firstNonAnonymousAncestor())
+        return ancestor->selectionPseudoStyle();
+    return nullptr;
 }
 
 inline RenderText* Text::renderer() const

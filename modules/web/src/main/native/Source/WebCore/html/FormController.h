@@ -21,8 +21,8 @@
 
 #pragma once
 
-#include "RadioButtonGroups.h"
 #include <wtf/Forward.h>
+#include <wtf/HashMap.h>
 #include <wtf/ListHashSet.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
@@ -42,8 +42,6 @@ public:
     FormController();
     ~FormController();
 
-    RadioButtonGroups& radioButtonGroups() { return m_radioButtonGroups; }
-
     void registerFormElementWithState(HTMLFormControlElementWithState&);
     void unregisterFormElementWithState(HTMLFormControlElementWithState&);
 
@@ -55,18 +53,18 @@ public:
     void willDeleteForm(HTMLFormElement&);
     void restoreControlStateFor(HTMLFormControlElementWithState&);
     void restoreControlStateIn(HTMLFormElement&);
+    bool hasFormStateToRestore() const;
 
     WEBCORE_EXPORT static Vector<String> referencedFilePaths(const Vector<String>& stateVector);
 
 private:
     typedef ListHashSet<RefPtr<HTMLFormControlElementWithState>> FormElementListHashSet;
-    typedef HashMap<RefPtr<AtomicStringImpl>, std::unique_ptr<SavedFormState>> SavedFormStateMap;
+    typedef HashMap<RefPtr<AtomStringImpl>, std::unique_ptr<SavedFormState>> SavedFormStateMap;
 
     static std::unique_ptr<SavedFormStateMap> createSavedFormStateMap(const FormElementListHashSet&);
     FormControlState takeStateForFormElement(const HTMLFormControlElementWithState&);
     static void formStatesFromStateVector(const Vector<String>&, SavedFormStateMap&);
 
-    RadioButtonGroups m_radioButtonGroups;
     FormElementListHashSet m_formElementsWithState;
     SavedFormStateMap m_savedFormStateMap;
     std::unique_ptr<FormKeyGenerator> m_formKeyGenerator;

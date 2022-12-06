@@ -32,6 +32,9 @@
 #include "CSSAnimationControllerPrivate.h"
 #include "CSSPropertyAnimation.h"
 #include "CompositeAnimation.h"
+#if PLATFORM(IOS_FAMILY)
+#include "ContentChangeObserver.h"
+#endif
 #include "EventNames.h"
 #include "GeometryUtilities.h"
 #include "KeyframeAnimation.h"
@@ -43,14 +46,21 @@ namespace WebCore {
 ImplicitAnimation::ImplicitAnimation(const Animation& transition, CSSPropertyID animatingProperty, Element& element, CompositeAnimation& compositeAnimation, const RenderStyle& fromStyle)
     : AnimationBase(transition, element, compositeAnimation)
     , m_fromStyle(RenderStyle::clonePtr(fromStyle))
-    , m_transitionProperty(transition.property())
+    , m_transitionProperty(transition.property().id)
     , m_animatingProperty(animatingProperty)
 {
+#if PLATFORM(IOS_FAMILY)
+    element.document().contentChangeObserver().didAddTransition(element, transition);
+#endif
     ASSERT(animatingProperty != CSSPropertyInvalid);
 }
 
 ImplicitAnimation::~ImplicitAnimation()
 {
+#if PLATFORM(IOS_FAMILY)
+    if (auto* element = this->element())
+        element->document().contentChangeObserver().didRemoveTransition(*element, m_animatingProperty);
+#endif
     // // Make sure to tell the renderer that we are ending. This will make sure any accelerated animations are removed.
     if (!postActive())
         endAnimation();
@@ -61,12 +71,12 @@ bool ImplicitAnimation::shouldSendEventForListener(Document::ListenerType inList
     return element()->document().hasListenerType(inListenerType);
 }
 
-bool ImplicitAnimation::animate(CompositeAnimation& compositeAnimation, const RenderStyle& targetStyle, std::unique_ptr<RenderStyle>& animatedStyle, bool& didBlendStyle)
+OptionSet<AnimateChange> ImplicitAnimation::animate(CompositeAnimation& compositeAnimation, const RenderStyle& targetStyle, std::unique_ptr<RenderStyle>& animatedStyle)
 {
     // If we get this far and the animation is done, it means we are cleaning up a just finished animation.
     // So just return. Everything is already all cleaned up.
     if (postActive())
-        return false;
+        return { };
 
     AnimationState oldState = state();
 
@@ -86,8 +96,14 @@ bool ImplicitAnimation::animate(CompositeAnimation& compositeAnimation, const Re
     // Fire the start timeout if needed
     fireAnimationEventsIfNeeded();
 
-    didBlendStyle = true;
-    return state() != oldState;
+    OptionSet<AnimateChange> change(AnimateChange::StyleBlended);
+    if (state() != oldState)
+        change.add(AnimateChange::StateChange);
+
+    if ((isPausedState(oldState) || isRunningState(oldState)) != (isPausedState(state()) || isRunningState(state())))
+        change.add(AnimateChange::RunningStateChange);
+
+    return change;
 }
 
 void ImplicitAnimation::getAnimatedStyle(std::unique_ptr<RenderStyle>& animatedStyle)
@@ -131,30 +147,48 @@ bool ImplicitAnimation::computeExtentOfTransformAnimation(LayoutRect& bounds) co
     return true;
 }
 
+bool ImplicitAnimation::affectsAcceleratedProperty() const
+{
+    return CSSPropertyAnimation::animationOfPropertyIsAccelerated(m_animatingProperty);
+}
+
 bool ImplicitAnimation::startAnimation(double timeOffset)
 {
-    if (auto* renderer = compositedRenderer())
+    if (auto* renderer = this->renderer())
         return renderer->startTransition(timeOffset, m_animatingProperty, m_fromStyle.get(), m_toStyle.get());
     return false;
 }
 
 void ImplicitAnimation::pauseAnimation(double timeOffset)
 {
-    if (auto* renderer = compositedRenderer())
+    if (auto* renderer = this->renderer())
         renderer->transitionPaused(timeOffset, m_animatingProperty);
     // Restore the original (unanimated) style
     if (!paused())
         setNeedsStyleRecalc(element());
 }
 
+void ImplicitAnimation::clear()
+{
+#if PLATFORM(IOS_FAMILY)
+    if (auto* element = this->element())
+        element->document().contentChangeObserver().didRemoveTransition(*element, m_animatingProperty);
+#endif
+    AnimationBase::clear();
+}
+
 void ImplicitAnimation::endAnimation(bool)
 {
-    if (auto* renderer = compositedRenderer())
+    if (auto* renderer = this->renderer())
         renderer->transitionFinished(m_animatingProperty);
 }
 
 void ImplicitAnimation::onAnimationEnd(double elapsedTime)
 {
+#if PLATFORM(IOS_FAMILY)
+    if (auto* element = this->element())
+        element->document().contentChangeObserver().didFinishTransition(*element, m_animatingProperty);
+#endif
     // If we have a keyframe animation on this property, this transition is being overridden. The keyframe
     // animation keeps an unanimated style in case a transition starts while the keyframe animation is
     // running. But now that the transition has completed, we need to update this style with its new
@@ -167,7 +201,7 @@ void ImplicitAnimation::onAnimationEnd(double elapsedTime)
     endAnimation();
 }
 
-bool ImplicitAnimation::sendTransitionEvent(const AtomicString& eventType, double elapsedTime)
+bool ImplicitAnimation::sendTransitionEvent(const AtomString& eventType, double elapsedTime)
 {
     if (eventType == eventNames().transitionendEvent) {
         Document::ListenerType listenerType = Document::TRANSITIONEND_LISTENER;
@@ -178,7 +212,7 @@ bool ImplicitAnimation::sendTransitionEvent(const AtomicString& eventType, doubl
             // Dispatch the event
             auto element = makeRefPtr(this->element());
 
-            ASSERT(!element || element->document().pageCacheState() == Document::NotInPageCache);
+            ASSERT(!element || element->document().backForwardCacheState() == Document::NotInBackForwardCache);
             if (!element)
                 return false;
 
@@ -322,11 +356,15 @@ void ImplicitAnimation::checkForMatchingColorFilterFunctionLists()
     m_colorFilterFunctionListsMatch = filterOperationsMatch(&m_fromStyle->appleColorFilter(), m_toStyle->appleColorFilter());
 }
 
-std::optional<Seconds> ImplicitAnimation::timeToNextService()
+Optional<Seconds> ImplicitAnimation::timeToNextService()
 {
-    std::optional<Seconds> t = AnimationBase::timeToNextService();
+    Optional<Seconds> t = AnimationBase::timeToNextService();
     if (!t || t.value() != 0_s || preActive())
+#if COMPILER(MSVC) && _MSC_VER >= 1920
+        return WTFMove(t);
+#else
         return t;
+#endif
 
     // A return value of 0 means we need service. But if this is an accelerated animation we
     // only need service at the end of the transition.

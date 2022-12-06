@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2017 Yusuke Suzuki <utatane.tea@gmail.com>
- * Copyright (C) 2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,7 +26,6 @@
 
 #pragma once
 
-#include "JSCPoison.h"
 #include "JSGlobalObject.h"
 #include "JSObject.h"
 #include "ScriptFetchParameters.h"
@@ -38,10 +37,16 @@ class JSScriptFetchParameters final : public JSCell {
 public:
     using Base = JSCell;
 
-    static const unsigned StructureFlags = Base::StructureFlags | StructureIsImmortal;
-    static const bool needsDestruction = true;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | StructureIsImmortal;
+    static constexpr bool needsDestruction = true;
 
     DECLARE_EXPORT_INFO;
+
+    template<typename CellType, SubspaceAccess mode>
+    static IsoSubspace* subspaceFor(VM& vm)
+    {
+        return vm.scriptFetchParametersSpace<mode>();
+    }
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
@@ -74,7 +79,7 @@ private:
     {
     }
 
-    PoisonedRef<JSScriptFetchParametersPoison, ScriptFetchParameters> m_parameters;
+    Ref<ScriptFetchParameters> m_parameters;
 };
 
 } // namespace JSC

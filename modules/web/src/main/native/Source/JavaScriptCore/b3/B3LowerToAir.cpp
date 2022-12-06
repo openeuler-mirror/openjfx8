@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,20 +29,19 @@
 #if ENABLE(B3_JIT)
 
 #include "AirBlockInsertionSet.h"
-#include "AirCCallSpecial.h"
 #include "AirCode.h"
+#include "AirHelpers.h"
 #include "AirInsertionSet.h"
 #include "AirInstInlines.h"
 #include "AirPrintSpecial.h"
-#include "AirStackSlot.h"
 #include "B3ArgumentRegValue.h"
 #include "B3AtomicValue.h"
-#include "B3BasicBlockInlines.h"
 #include "B3BlockWorklist.h"
 #include "B3CCallValue.h"
 #include "B3CheckSpecial.h"
 #include "B3Commutativity.h"
 #include "B3Dominators.h"
+#include "B3ExtractValue.h"
 #include "B3FenceValue.h"
 #include "B3MemoryValueInlines.h"
 #include "B3PatchpointSpecial.h"
@@ -50,8 +49,8 @@
 #include "B3PhaseScope.h"
 #include "B3PhiChildren.h"
 #include "B3Procedure.h"
+#include "B3ProcedureInlines.h"
 #include "B3SlotBaseValue.h"
-#include "B3StackSlot.h"
 #include "B3UpsilonValue.h"
 #include "B3UseCounts.h"
 #include "B3ValueInlines.h"
@@ -60,25 +59,26 @@
 #include "B3WasmAddressValue.h"
 #include <wtf/IndexMap.h>
 #include <wtf/IndexSet.h>
-#include <wtf/ListDump.h>
 
-#if COMPILER(GCC) && ASSERT_DISABLED
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wreturn-type"
-#endif // COMPILER(GCC) && ASSERT_DISABLED
+#if !ASSERT_ENABLED
+IGNORE_RETURN_TYPE_WARNINGS_BEGIN
+#endif
 
 namespace JSC { namespace B3 {
 
 namespace {
 
 namespace B3LowerToAirInternal {
-static const bool verbose = false;
+static constexpr bool verbose = false;
 }
 
 using Arg = Air::Arg;
 using Inst = Air::Inst;
 using Code = Air::Code;
 using Tmp = Air::Tmp;
+
+using Air::moveForType;
+using Air::relaxedMoveForType;
 
 // FIXME: We wouldn't need this if Air supported Width modifiers in Air::Kind.
 // https://bugs.webkit.org/show_bug.cgi?id=169247
@@ -116,12 +116,36 @@ public:
         for (B3::BasicBlock* block : m_procedure)
             m_blockToBlock[block] = m_code.addBlock(block->frequency());
 
+        auto ensureTupleTmps = [&] (Value* tupleValue, auto& hashTable) {
+            hashTable.ensure(tupleValue, [&] {
+                const auto tuple = m_procedure.tupleForType(tupleValue->type());
+                Vector<Tmp> tmps(tuple.size());
+
+                for (unsigned i = 0; i < tuple.size(); ++i)
+                    tmps[i] = tmpForType(tuple[i]);
+                return tmps;
+            });
+        };
+
         for (Value* value : m_procedure.values()) {
             switch (value->opcode()) {
             case Phi: {
+                if (value->type().isTuple()) {
+                    ensureTupleTmps(value, m_tuplePhiToTmps);
+                    ensureTupleTmps(value, m_tupleValueToTmps);
+                    break;
+                }
+
                 m_phiToTmp[value] = m_code.newTmp(value->resultBank());
                 if (B3LowerToAirInternal::verbose)
                     dataLog("Phi tmp for ", *value, ": ", m_phiToTmp[value], "\n");
+                break;
+            }
+            case Get:
+            case Patchpoint:
+            case BottomTuple: {
+                if (value->type().isTuple())
+                    ensureTupleTmps(value, m_tupleValueToTmps);
                 break;
             }
             default:
@@ -131,8 +155,12 @@ public:
 
         for (B3::StackSlot* stack : m_procedure.stackSlots())
             m_stackToStack.add(stack, m_code.addStackSlot(stack));
-        for (Variable* variable : m_procedure.variables())
-            m_variableToTmp.add(variable, m_code.newTmp(variable->bank()));
+        for (Variable* variable : m_procedure.variables()) {
+            auto addResult = m_variableToTmps.add(variable, Vector<Tmp, 1>(m_procedure.resultCount(variable->type())));
+            ASSERT(addResult.isNewEntry);
+            for (unsigned i = 0; i < m_procedure.resultCount(variable->type()); ++i)
+                addResult.iterator->value[i] = tmpForType(m_procedure.typeAtOffset(variable->type(), i));
+        }
 
         // Figure out which blocks are not rare.
         m_fastWorklist.push(m_procedure[0]);
@@ -398,6 +426,30 @@ private:
         return ArgPromise::tmp(value);
     }
 
+    Tmp tmpForType(Type type)
+    {
+        return m_code.newTmp(bankForType(type));
+    }
+
+    const Vector<Tmp>& tmpsForTuple(Value* tupleValue)
+    {
+        ASSERT(tupleValue->type().isTuple());
+
+        switch (tupleValue->opcode()) {
+        case Phi:
+        case Patchpoint:
+        case BottomTuple: {
+            return m_tupleValueToTmps.find(tupleValue)->value;
+        }
+        case Get:
+        case Set:
+            return m_variableToTmps.find(tupleValue->as<VariableValue>()->variable())->value;
+        default:
+            break;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
     bool canBeInternal(Value* value)
     {
         // If one of the internal things has already been computed, then we don't want to cause
@@ -449,12 +501,12 @@ private:
     }
 
     template<typename Int, typename = Value::IsLegalOffset<Int>>
-    std::optional<unsigned> scaleForShl(Value* shl, Int offset, std::optional<Width> width = std::nullopt)
+    Optional<unsigned> scaleForShl(Value* shl, Int offset, Optional<Width> width = WTF::nullopt)
     {
         if (shl->opcode() != Shl)
-            return std::nullopt;
+            return WTF::nullopt;
         if (!shl->child(1)->hasInt32())
-            return std::nullopt;
+            return WTF::nullopt;
         unsigned logScale = shl->child(1)->asInt32();
         if (shl->type() == Int32)
             logScale &= 31;
@@ -464,10 +516,10 @@ private:
         // to signed since that's what all of our APIs want.
         int64_t bigScale = static_cast<uint64_t>(1) << static_cast<uint64_t>(logScale);
         if (!isRepresentableAs<int32_t>(bigScale))
-            return std::nullopt;
+            return WTF::nullopt;
         unsigned scale = static_cast<int32_t>(bigScale);
         if (!Arg::isValidIndexForm(scale, offset, width))
-            return std::nullopt;
+            return WTF::nullopt;
         return scale;
     }
 
@@ -481,7 +533,7 @@ private:
             return Arg::addr(tmp(address), offset);
         };
 
-        static const unsigned lotsOfUses = 10; // This is arbitrary and we should tune it eventually.
+        static constexpr unsigned lotsOfUses = 10; // This is arbitrary and we should tune it eventually.
 
         // Only match if the address value isn't used in some large number of places.
         if (m_useCounts.numUses(address) > lotsOfUses)
@@ -493,7 +545,7 @@ private:
             Value* right = address->child(1);
 
             auto tryIndex = [&] (Value* index, Value* base) -> Arg {
-                std::optional<unsigned> scale = scaleForShl(index, offset, width);
+                Optional<unsigned> scale = scaleForShl(index, offset, width);
                 if (!scale)
                     return Arg();
                 if (m_locked.contains(index->child(0)) || m_locked.contains(base))
@@ -658,12 +710,27 @@ private:
         return tmp(value);
     }
 
+    template<typename Functor>
+    void forEachImmOrTmp(Value* value, const Functor& func)
+    {
+        ASSERT(value->type() != Void);
+        if (!value->type().isTuple()) {
+            func(immOrTmp(value), value->type(), 0);
+            return;
+        }
+
+        const Vector<Type>& tuple = m_procedure.tupleForType(value->type());
+        const auto& tmps = tmpsForTuple(value);
+        for (unsigned i = 0; i < tuple.size(); ++i)
+            func(tmps[i], tuple[i], i);
+    }
+
     // By convention, we use Oops to mean "I don't know".
     Air::Opcode tryOpcodeForType(
         Air::Opcode opcode32, Air::Opcode opcode64, Air::Opcode opcodeDouble, Air::Opcode opcodeFloat, Type type)
     {
         Air::Opcode opcode;
-        switch (type) {
+        switch (type.kind()) {
         case Int32:
             opcode = opcode32;
             break;
@@ -1108,60 +1175,6 @@ private:
         append(createStore(kind, memory->child(0), dest));
     }
 
-    Air::Opcode moveForType(Type type)
-    {
-        using namespace Air;
-        switch (type) {
-        case Int32:
-            return Move32;
-        case Int64:
-            RELEASE_ASSERT(is64Bit());
-            return Move;
-        case Float:
-            return MoveFloat;
-        case Double:
-            return MoveDouble;
-        case Void:
-            break;
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-        return Air::Oops;
-    }
-
-    Air::Opcode relaxedMoveForType(Type type)
-    {
-        using namespace Air;
-        switch (type) {
-        case Int32:
-        case Int64:
-            // For Int32, we could return Move or Move32. It's a trade-off.
-            //
-            // Move32: Using Move32 guarantees that we use the narrower move, but in cases where the
-            //     register allocator can't prove that the variables involved are 32-bit, this will
-            //     disable coalescing.
-            //
-            // Move: Using Move guarantees that the register allocator can coalesce normally, but in
-            //     cases where it can't prove that the variables are 32-bit and it doesn't coalesce,
-            //     this will force us to use a full 64-bit Move instead of the slightly cheaper
-            //     32-bit Move32.
-            //
-            // Coalescing is a lot more profitable than turning Move into Move32. So, it's better to
-            // use Move here because in cases where the register allocator cannot prove that
-            // everything is 32-bit, we still get coalescing.
-            return Move;
-        case Float:
-            // MoveFloat is always coalescable and we never convert MoveDouble to MoveFloat, so we
-            // should use MoveFloat when we know that the temporaries involved are 32-bit.
-            return MoveFloat;
-        case Double:
-            return MoveDouble;
-        case Void:
-            break;
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-        return Air::Oops;
-    }
-
 #if ENABLE(MASM_PROBE)
     template<typename... Arguments>
     void print(Arguments&&... arguments)
@@ -1174,7 +1187,7 @@ private:
     void print(Value* origin, Arguments&&... arguments)
     {
         auto printList = Printer::makePrintRecordList(arguments...);
-        auto printSpecial = static_cast<Air::PrintSpecial*>(m_code.addSpecial(std::make_unique<Air::PrintSpecial>(printList)));
+        auto printSpecial = static_cast<Air::PrintSpecial*>(m_code.addSpecial(makeUnique<Air::PrintSpecial>(printList)));
         Inst inst(Air::Patch, origin, Arg::special(printSpecial));
         Printer::appendAirArgs(inst, std::forward<Arguments>(arguments)...);
         append(WTFMove(inst));
@@ -1241,7 +1254,7 @@ private:
     {
         if (!field) {
             field = static_cast<T*>(
-                m_code.addSpecial(std::make_unique<T>(std::forward<Arguments>(arguments)...)));
+                m_code.addSpecial(makeUnique<T>(std::forward<Arguments>(arguments)...)));
         }
         return field;
     }
@@ -1271,10 +1284,14 @@ private:
                 else if (value.value()->hasDouble() && canBeInternal(value.value())) {
                     commitInternal(value.value());
                     arg = Arg::bigImm(bitwise_cast<int64_t>(value.value()->asDouble()));
+                } else if (value.value()->hasFloat() && canBeInternal(value.value())) {
+                    commitInternal(value.value());
+                    arg = Arg::bigImm(static_cast<uint64_t>(bitwise_cast<uint32_t>(value.value()->asFloat())));
                 } else
                     arg = tmp(value.value());
                 break;
             case ValueRep::SomeRegister:
+            case ValueRep::SomeLateRegister:
                 arg = tmp(value.value());
                 break;
             case ValueRep::SomeRegisterWithClobber: {
@@ -1439,7 +1456,7 @@ private:
         // we do need at least one iteration of it for Check.
         for (;;) {
             bool shouldInvert =
-                (value->opcode() == BitXor && value->child(1)->hasInt() && (value->child(1)->asInt() & 1) && value->child(0)->returnsBool())
+                (value->opcode() == BitXor && value->child(1)->hasInt() && (value->child(1)->asInt() == 1) && value->child(0)->returnsBool())
                 || (value->opcode() == Equal && value->child(1)->isInt(0));
             if (!shouldInvert)
                 break;
@@ -1461,7 +1478,7 @@ private:
             Value* left = value->child(0);
             Value* right = value->child(1);
 
-            if (isInt(value->child(0)->type())) {
+            if (value->child(0)->type().isInt()) {
                 Arg rightImm = imm(right);
 
                 auto tryCompare = [&] (
@@ -1573,28 +1590,28 @@ private:
             case NotEqual:
                 return createRelCond(MacroAssembler::NotEqual, MacroAssembler::DoubleNotEqualOrUnordered);
             case Equal:
-                return createRelCond(MacroAssembler::Equal, MacroAssembler::DoubleEqual);
+                return createRelCond(MacroAssembler::Equal, MacroAssembler::DoubleEqualAndOrdered);
             case LessThan:
-                return createRelCond(MacroAssembler::LessThan, MacroAssembler::DoubleLessThan);
+                return createRelCond(MacroAssembler::LessThan, MacroAssembler::DoubleLessThanAndOrdered);
             case GreaterThan:
-                return createRelCond(MacroAssembler::GreaterThan, MacroAssembler::DoubleGreaterThan);
+                return createRelCond(MacroAssembler::GreaterThan, MacroAssembler::DoubleGreaterThanAndOrdered);
             case LessEqual:
-                return createRelCond(MacroAssembler::LessThanOrEqual, MacroAssembler::DoubleLessThanOrEqual);
+                return createRelCond(MacroAssembler::LessThanOrEqual, MacroAssembler::DoubleLessThanOrEqualAndOrdered);
             case GreaterEqual:
-                return createRelCond(MacroAssembler::GreaterThanOrEqual, MacroAssembler::DoubleGreaterThanOrEqual);
+                return createRelCond(MacroAssembler::GreaterThanOrEqual, MacroAssembler::DoubleGreaterThanOrEqualAndOrdered);
             case EqualOrUnordered:
                 // The integer condition is never used in this case.
                 return createRelCond(MacroAssembler::Equal, MacroAssembler::DoubleEqualOrUnordered);
             case Above:
                 // We use a bogus double condition because these integer comparisons won't got down that
                 // path anyway.
-                return createRelCond(MacroAssembler::Above, MacroAssembler::DoubleEqual);
+                return createRelCond(MacroAssembler::Above, MacroAssembler::DoubleEqualAndOrdered);
             case Below:
-                return createRelCond(MacroAssembler::Below, MacroAssembler::DoubleEqual);
+                return createRelCond(MacroAssembler::Below, MacroAssembler::DoubleEqualAndOrdered);
             case AboveEqual:
-                return createRelCond(MacroAssembler::AboveOrEqual, MacroAssembler::DoubleEqual);
+                return createRelCond(MacroAssembler::AboveOrEqual, MacroAssembler::DoubleEqualAndOrdered);
             case BelowEqual:
-                return createRelCond(MacroAssembler::BelowOrEqual, MacroAssembler::DoubleEqual);
+                return createRelCond(MacroAssembler::BelowOrEqual, MacroAssembler::DoubleEqualAndOrdered);
             case BitAnd: {
                 Value* left = value->child(0);
                 Value* right = value->child(1);
@@ -2089,7 +2106,7 @@ private:
         }
 
         auto tryShl = [&] (Value* shl, Value* other) -> bool {
-            std::optional<unsigned> scale = scaleForShl(shl, offset);
+            Optional<unsigned> scale = scaleForShl(shl, offset);
             if (!scale)
                 return false;
             if (!canBeInternal(shl))
@@ -2125,7 +2142,7 @@ private:
         using namespace Air;
         Air::Opcode convertToDoubleWord;
         Air::Opcode div;
-        switch (m_value->type()) {
+        switch (m_value->type().kind()) {
         case Int32:
             convertToDoubleWord = X86ConvertToDoubleWord32;
             div = X86Div32;
@@ -2269,7 +2286,7 @@ private:
             failBlock = newBlock();
             failure = failBlock;
         }
-        Air::BasicBlock* strongFailBlock;
+        Air::BasicBlock* strongFailBlock = nullptr;
         if (isStrong && hasFence)
             strongFailBlock = newBlock();
         Air::FrequentedBlock comparisonFail = failure;
@@ -2449,7 +2466,7 @@ private:
                 if (isX86())
                     kind.effects = true;
                 else {
-                    switch (memory->type()) {
+                    switch (memory->type().kind()) {
                     case Int32:
                         kind = LoadAcq32;
                         break;
@@ -2602,6 +2619,27 @@ private:
         }
 
         case Mul: {
+            if (m_value->type() == Int64
+                && isValidForm(MultiplySignExtend32, Arg::Tmp, Arg::Tmp, Arg::Tmp)
+                && m_value->child(0)->opcode() == SExt32
+                && !m_locked.contains(m_value->child(0))) {
+                Value* opLeft = m_value->child(0);
+                Value* left = opLeft->child(0);
+                Value* opRight = m_value->child(1);
+                Value* right = nullptr;
+
+                if (opRight->opcode() == SExt32 && !m_locked.contains(opRight->child(0))) {
+                    right = opRight->child(0);
+                } else if (m_value->child(1)->isRepresentableAs<int32_t>() && !m_locked.contains(m_value->child(1))) {
+                    // We just use the 64-bit const int as a 32 bit const int directly
+                    right = opRight;
+                }
+
+                if (right) {
+                    append(MultiplySignExtend32, tmp(left), tmp(right), tmp(m_value));
+                    return;
+                }
+            }
             appendBinOp<Mul32, Mul64, MulDouble, MulFloat, Commutative>(
                 m_value->child(0), m_value->child(1));
             return;
@@ -2610,23 +2648,23 @@ private:
         case Div: {
             if (m_value->isChill())
                 RELEASE_ASSERT(isARM64());
-            if (isInt(m_value->type()) && isX86()) {
+            if (m_value->type().isInt() && isX86()) {
                 appendX86Div(Div);
                 return;
             }
-            ASSERT(!isX86() || isFloat(m_value->type()));
+            ASSERT(!isX86() || m_value->type().isFloat());
 
             appendBinOp<Div32, Div64, DivDouble, DivFloat>(m_value->child(0), m_value->child(1));
             return;
         }
 
         case UDiv: {
-            if (isInt(m_value->type()) && isX86()) {
+            if (m_value->type().isInt() && isX86()) {
                 appendX86UDiv(UDiv);
                 return;
             }
 
-            ASSERT(!isX86() && !isFloat(m_value->type()));
+            ASSERT(!isX86() && !m_value->type().isFloat());
 
             appendBinOp<UDiv32, UDiv64, Air::Oops, Air::Oops>(m_value->child(0), m_value->child(1));
             return;
@@ -2657,7 +2695,7 @@ private:
                 return;
             }
 
-            if (m_value->child(1)->isInt(0xffffffff)) {
+            if (m_value->child(1)->isInt64(0xffffffff) || m_value->child(1)->isInt32(0xffffffff)) {
                 appendUnOp<Move32, Move32>(m_value->child(0));
                 return;
             }
@@ -2939,6 +2977,27 @@ private:
             return;
         }
 
+        case BottomTuple: {
+            forEachImmOrTmp(m_value, [&] (Arg tmp, Type type, unsigned) {
+                switch (type.kind()) {
+                case Void:
+                case Tuple:
+                    RELEASE_ASSERT_NOT_REACHED();
+                    break;
+                case Int32:
+                case Int64:
+                    ASSERT(Arg::isValidImmForm(0));
+                    append(Move, imm(static_cast<int64_t>(0)), tmp.tmp());
+                    break;
+                case Float:
+                case Double:
+                    append(MoveZeroToDouble, tmp.tmp());
+                    break;
+                }
+            });
+            return;
+        }
+
         case FramePointer: {
             ASSERT(tmp(m_value) == Tmp(GPRInfo::callFrameRegister));
             return;
@@ -2989,7 +3048,7 @@ private:
 
         case Select: {
             MoveConditionallyConfig config;
-            if (isInt(m_value->type())) {
+            if (m_value->type().isInt()) {
                 config.moveConditionally32 = MoveConditionally32;
                 config.moveConditionally64 = MoveConditionally64;
                 config.moveConditionallyTest32 = MoveConditionallyTest32;
@@ -3054,39 +3113,45 @@ private:
             Inst inst(Patch, patchpointValue, Arg::special(m_patchpointSpecial));
 
             Vector<Inst> after;
-            if (patchpointValue->type() != Void) {
-                switch (patchpointValue->resultConstraint.kind()) {
+            auto generateResultOperand = [&] (Type type, ValueRep rep, Tmp tmp) {
+                switch (rep.kind()) {
                 case ValueRep::WarmAny:
                 case ValueRep::ColdAny:
                 case ValueRep::LateColdAny:
                 case ValueRep::SomeRegister:
                 case ValueRep::SomeEarlyRegister:
-                    inst.args.append(tmp(patchpointValue));
-                    break;
+                case ValueRep::SomeLateRegister:
+                    inst.args.append(tmp);
+                    return;
                 case ValueRep::Register: {
-                    Tmp reg = Tmp(patchpointValue->resultConstraint.reg());
+                    Tmp reg = Tmp(rep.reg());
                     inst.args.append(reg);
-                    after.append(Inst(
-                        relaxedMoveForType(patchpointValue->type()), m_value, reg, tmp(patchpointValue)));
-                    break;
+                    after.append(Inst(relaxedMoveForType(type), m_value, reg, tmp));
+                    return;
                 }
                 case ValueRep::StackArgument: {
-                    Arg arg = Arg::callArg(patchpointValue->resultConstraint.offsetFromSP());
+                    Arg arg = Arg::callArg(rep.offsetFromSP());
                     inst.args.append(arg);
-                    after.append(Inst(
-                        moveForType(patchpointValue->type()), m_value, arg, tmp(patchpointValue)));
-                    break;
+                    after.append(Inst(moveForType(type), m_value, arg, tmp));
+                    return;
                 }
                 default:
                     RELEASE_ASSERT_NOT_REACHED();
-                    break;
+                    return;
                 }
+            };
+
+            if (patchpointValue->type() != Void) {
+                forEachImmOrTmp(patchpointValue, [&] (Arg arg, Type type, unsigned index) {
+                    generateResultOperand(type, patchpointValue->resultConstraints[index], arg.tmp());
+                });
             }
 
             fillStackmap(inst, patchpointValue, 0);
-
-            if (patchpointValue->resultConstraint.isReg())
-                patchpointValue->lateClobbered().clear(patchpointValue->resultConstraint.reg());
+            for (auto& constraint : patchpointValue->resultConstraints) {
+                if (constraint.isReg())
+                    patchpointValue->lateClobbered().clear(constraint.reg());
+            }
 
             for (unsigned i = patchpointValue->numGPScratchRegisters; i--;)
                 inst.args.append(m_code.newTmp(GP));
@@ -3095,6 +3160,15 @@ private:
 
             m_insts.last().append(WTFMove(inst));
             m_insts.last().appendVector(after);
+            return;
+        }
+
+        case Extract: {
+            Value* tupleValue = m_value->child(0);
+            unsigned index = m_value->as<ExtractValue>()->index();
+
+            const auto& tmps = tmpsForTuple(tupleValue);
+            append(relaxedMoveForType(m_value->type()), tmps[index], tmp(m_value));
             return;
         }
 
@@ -3270,9 +3344,18 @@ private:
 
         case Upsilon: {
             Value* value = m_value->child(0);
-            append(
-                relaxedMoveForType(value->type()), immOrTmp(value),
-                m_phiToTmp[m_value->as<UpsilonValue>()->phi()]);
+            Value* phi = m_value->as<UpsilonValue>()->phi();
+            if (value->type().isNumeric()) {
+                append(relaxedMoveForType(value->type()), immOrTmp(value), m_phiToTmp[phi]);
+                return;
+            }
+
+            const Vector<Type>& tuple = m_procedure.tupleForType(value->type());
+            const auto& valueTmps = tmpsForTuple(value);
+            const auto& phiTmps = m_tuplePhiToTmps.find(phi)->value;
+            ASSERT(valueTmps.size() == phiTmps.size());
+            for (unsigned i = 0; i < valueTmps.size(); ++i)
+                append(relaxedMoveForType(tuple[i]), valueTmps[i], phiTmps[i]);
             return;
         }
 
@@ -3282,29 +3365,123 @@ private:
             // Upsilon(@x, ^a)
             // @a => this should get the value of the Phi before the Upsilon, i.e. not @x.
 
-            append(relaxedMoveForType(m_value->type()), m_phiToTmp[m_value], tmp(m_value));
+            if (m_value->type().isNumeric()) {
+                append(relaxedMoveForType(m_value->type()), m_phiToTmp[m_value], tmp(m_value));
+                return;
+            }
+
+            const Vector<Type>& tuple = m_procedure.tupleForType(m_value->type());
+            const auto& valueTmps = tmpsForTuple(m_value);
+            const auto& phiTmps = m_tuplePhiToTmps.find(m_value)->value;
+            ASSERT(valueTmps.size() == phiTmps.size());
+            for (unsigned i = 0; i < valueTmps.size(); ++i)
+                append(relaxedMoveForType(tuple[i]), phiTmps[i], valueTmps[i]);
             return;
         }
 
         case Set: {
             Value* value = m_value->child(0);
-            append(
-                relaxedMoveForType(value->type()), immOrTmp(value),
-                m_variableToTmp.get(m_value->as<VariableValue>()->variable()));
+            const Vector<Tmp>& variableTmps = m_variableToTmps.get(m_value->as<VariableValue>()->variable());
+            forEachImmOrTmp(value, [&] (Arg immOrTmp, Type type, unsigned index) {
+                append(relaxedMoveForType(type), immOrTmp, variableTmps[index]);
+            });
             return;
         }
 
         case Get: {
-            append(
-                relaxedMoveForType(m_value->type()),
-                m_variableToTmp.get(m_value->as<VariableValue>()->variable()), tmp(m_value));
+            // Snapshot the value of the Get. It may change under us because you could do:
+            // a = Get(var)
+            // Set(@x, var)
+            // @a => this should get the value of the Get before the Set, i.e. not @x.
+
+            const Vector<Tmp>& variableTmps = m_variableToTmps.get(m_value->as<VariableValue>()->variable());
+            forEachImmOrTmp(m_value, [&] (Arg tmp, Type type, unsigned index) {
+                append(relaxedMoveForType(type), variableTmps[index], tmp.tmp());
+            });
             return;
         }
 
         case Branch: {
             if (canBeInternal(m_value->child(0))) {
                 Value* branchChild = m_value->child(0);
+
                 switch (branchChild->opcode()) {
+                case BitAnd: {
+                    Value* andValue = branchChild->child(0);
+                    Value* andMask = branchChild->child(1);
+                    Air::Opcode opcode = opcodeForType(BranchTestBit32, BranchTestBit64, andValue->type());
+
+                    Value* testValue = nullptr;
+                    Value* bitOffset = nullptr;
+                    Value* internalNode = nullptr;
+                    Value* negationNode = nullptr;
+                    bool inverted = false;
+
+                    // if (~(val >> x)&1)
+                    if (andMask->isInt(1)
+                        && andValue->opcode() == BitXor && (andValue->child(1)->isInt32(-1) || andValue->child(1)->isInt64(-1l))
+                        && (andValue->child(0)->opcode() == SShr || andValue->child(0)->opcode() == ZShr)) {
+
+                        negationNode = andValue;
+                        testValue = andValue->child(0)->child(0);
+                        bitOffset = andValue->child(0)->child(1);
+                        internalNode = andValue->child(0);
+                        inverted = !inverted;
+                    }
+
+                    // Turn if ((val >> x)&1) -> Bt val x
+                    if (andMask->isInt(1) && (andValue->opcode() == SShr || andValue->opcode() == ZShr)) {
+                        testValue = andValue->child(0);
+                        bitOffset = andValue->child(1);
+                        internalNode = andValue;
+                    }
+
+                    // Turn if (val & (1<<x)) -> Bt val x
+                    if ((andMask->opcode() == Shl) && andMask->child(0)->isInt(1)) {
+                        testValue = andValue;
+                        bitOffset = andMask->child(1);
+                        internalNode = andMask;
+                    }
+
+                    // if (~val & (1<<x)) or if ((~val >> x)&1)
+                    if (!negationNode && testValue && testValue->opcode() == BitXor && (testValue->child(1)->isInt32(-1) || testValue->child(1)->isInt64(-1l))) {
+                        negationNode = testValue;
+                        testValue = testValue->child(0);
+                        inverted = !inverted;
+                    }
+
+                    if (testValue && bitOffset) {
+                        for (auto& basePromise : Vector<ArgPromise>::from(loadPromise(testValue), tmpPromise(testValue))) {
+                            bool hasLoad = basePromise.kind() != Arg::Tmp;
+                            bool canMakeInternal = (hasLoad ? canBeInternal(testValue) : !m_locked.contains(testValue))
+                                && (!negationNode || canBeInternal(negationNode))
+                                && (!internalNode || canBeInternal(internalNode));
+
+                            if (basePromise && canMakeInternal) {
+                                if (bitOffset->hasInt() && isValidForm(opcode, Arg::ResCond, basePromise.kind(), Arg::Imm)) {
+                                    commitInternal(branchChild);
+                                    commitInternal(internalNode);
+                                    if (hasLoad)
+                                        commitInternal(testValue);
+                                    commitInternal(negationNode);
+                                    append(basePromise.inst(opcode, m_value, Arg::resCond(MacroAssembler::NonZero).inverted(inverted), basePromise.consume(*this), Arg::imm(bitOffset->asInt())));
+                                    return;
+                                }
+
+                                if (!m_locked.contains(bitOffset) && isValidForm(opcode, Arg::ResCond, basePromise.kind(), Arg::Tmp)) {
+                                    commitInternal(branchChild);
+                                    commitInternal(internalNode);
+                                    if (hasLoad)
+                                        commitInternal(testValue);
+                                    commitInternal(negationNode);
+                                    append(basePromise.inst(opcode, m_value, Arg::resCond(MacroAssembler::NonZero).inverted(inverted), basePromise.consume(*this), tmp(bitOffset)));
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
                 case AtomicWeakCAS:
                     commitInternal(branchChild);
                     appendCAS(branchChild, false);
@@ -3365,10 +3542,11 @@ private:
             Value* value = m_value->child(0);
             Tmp returnValueGPR = Tmp(GPRInfo::returnValueGPR);
             Tmp returnValueFPR = Tmp(FPRInfo::returnValueFPR);
-            switch (value->type()) {
+            switch (value->type().kind()) {
             case Void:
-                // It's impossible for a void value to be used as a child. If we did want to have a
-                // void return, we'd introduce a different opcode, like ReturnVoid.
+            case Tuple:
+                // It's impossible for a void value to be used as a child. We use RetVoid
+                // for void returns.
                 RELEASE_ASSERT_NOT_REACHED();
                 break;
             case Int32:
@@ -3486,9 +3664,11 @@ private:
     IndexSet<Value*> m_locked; // These are values that will have no Tmp in Air.
     IndexMap<Value*, Tmp> m_valueToTmp; // These are values that must have a Tmp in Air. We say that a Value* with a non-null Tmp is "pinned".
     IndexMap<Value*, Tmp> m_phiToTmp; // Each Phi gets its own Tmp.
+    HashMap<Value*, Vector<Tmp>> m_tupleValueToTmps; // This is the same as m_valueToTmp for Values that are Tuples.
+    HashMap<Value*, Vector<Tmp>> m_tuplePhiToTmps; // This is the same as m_phiToTmp for Phis that are Tuples.
     IndexMap<B3::BasicBlock*, Air::BasicBlock*> m_blockToBlock;
     HashMap<B3::StackSlot*, Air::StackSlot*> m_stackToStack;
-    HashMap<Variable*, Tmp> m_variableToTmp;
+    HashMap<Variable*, Vector<Tmp>> m_variableToTmps;
 
     UseCounts m_useCounts;
     PhiChildren m_phiChildren;
@@ -3527,8 +3707,8 @@ void lowerToAir(Procedure& procedure)
 
 } } // namespace JSC::B3
 
-#if COMPILER(GCC) && ASSERT_DISABLED
-#pragma GCC diagnostic pop
-#endif // COMPILER(GCC) && ASSERT_DISABLED
+#if !ASSERT_ENABLED
+IGNORE_RETURN_TYPE_WARNINGS_END
+#endif
 
 #endif // ENABLE(B3_JIT)

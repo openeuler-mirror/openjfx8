@@ -46,8 +46,8 @@ ALWAYS_INLINE bool isLLIntPC(void* pc)
     return llintStart <= pcAsInt && pcAsInt <= llintEnd;
 }
 
-#if ENABLE(JIT)
-static const GPRReg LLIntPC = GPRInfo::regT4;
+#if !ENABLE(C_LOOP)
+static constexpr GPRReg LLIntPC = GPRInfo::regT4;
 #endif
 
 } } // namespace JSC::LLInt

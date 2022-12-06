@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2019 Apple Inc. All rights reserved.
  * Copyright (C) 2008 Cameron Zwarich <cwzwarich@uwaterloo.ca>
  *
  * Redistribution and use in source and binary forms, with or without
@@ -39,26 +39,25 @@ public:
     typedef GlobalCodeBlock Base;
     DECLARE_INFO;
 
-    template<typename>
+    template<typename, SubspaceAccess>
     static IsoSubspace* subspaceFor(VM& vm)
     {
-        return &vm.programCodeBlockSpace.space;
+        return &vm.codeBlockSpace.space;
     }
 
-    static ProgramCodeBlock* create(VM* vm, CopyParsedBlockTag, ProgramCodeBlock& other)
+    static ProgramCodeBlock* create(VM& vm, CopyParsedBlockTag, ProgramCodeBlock& other)
     {
-        ProgramCodeBlock* instance = new (NotNull, allocateCell<ProgramCodeBlock>(vm->heap))
-            ProgramCodeBlock(vm, vm->programCodeBlockStructure.get(), CopyParsedBlock, other);
-        instance->finishCreation(*vm, CopyParsedBlock, other);
+        ProgramCodeBlock* instance = new (NotNull, allocateCell<ProgramCodeBlock>(vm.heap))
+            ProgramCodeBlock(vm, vm.programCodeBlockStructure.get(), CopyParsedBlock, other);
+        instance->finishCreation(vm, CopyParsedBlock, other);
         return instance;
     }
 
-    static ProgramCodeBlock* create(VM* vm, ProgramExecutable* ownerExecutable, UnlinkedProgramCodeBlock* unlinkedCodeBlock,
-        JSScope* scope, RefPtr<SourceProvider>&& sourceProvider, unsigned firstLineColumnOffset)
+    static ProgramCodeBlock* create(VM& vm, ProgramExecutable* ownerExecutable, UnlinkedProgramCodeBlock* unlinkedCodeBlock, JSScope* scope)
     {
-        ProgramCodeBlock* instance = new (NotNull, allocateCell<ProgramCodeBlock>(vm->heap))
-            ProgramCodeBlock(vm, vm->programCodeBlockStructure.get(), ownerExecutable, unlinkedCodeBlock, scope, WTFMove(sourceProvider), firstLineColumnOffset);
-        if (!instance->finishCreation(*vm, ownerExecutable, unlinkedCodeBlock, scope))
+        ProgramCodeBlock* instance = new (NotNull, allocateCell<ProgramCodeBlock>(vm.heap))
+            ProgramCodeBlock(vm, vm.programCodeBlockStructure.get(), ownerExecutable, unlinkedCodeBlock, scope);
+        if (!instance->finishCreation(vm, ownerExecutable, unlinkedCodeBlock, scope))
             return nullptr;
         return instance;
     }
@@ -69,18 +68,16 @@ public:
     }
 
 private:
-    ProgramCodeBlock(VM* vm, Structure* structure, CopyParsedBlockTag, ProgramCodeBlock& other)
+    ProgramCodeBlock(VM& vm, Structure* structure, CopyParsedBlockTag, ProgramCodeBlock& other)
         : GlobalCodeBlock(vm, structure, CopyParsedBlock, other)
     {
     }
 
-    ProgramCodeBlock(VM* vm, Structure* structure, ProgramExecutable* ownerExecutable, UnlinkedProgramCodeBlock* unlinkedCodeBlock,
-        JSScope* scope, RefPtr<SourceProvider>&& sourceProvider, unsigned firstLineColumnOffset)
-        : GlobalCodeBlock(vm, structure, ownerExecutable, unlinkedCodeBlock, scope, WTFMove(sourceProvider), 0, firstLineColumnOffset)
+    ProgramCodeBlock(VM& vm, Structure* structure, ProgramExecutable* ownerExecutable, UnlinkedProgramCodeBlock* unlinkedCodeBlock, JSScope* scope)
+        : GlobalCodeBlock(vm, structure, ownerExecutable, unlinkedCodeBlock, scope)
     {
     }
-
-    static void destroy(JSCell*);
 };
+static_assert(sizeof(ProgramCodeBlock) == sizeof(CodeBlock), "Subclasses of CodeBlock should be the same size to share IsoSubspace");
 
 } // namespace JSC

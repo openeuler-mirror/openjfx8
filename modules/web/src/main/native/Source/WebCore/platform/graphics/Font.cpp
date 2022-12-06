@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005, 2008, 2010, 2015 Apple Inc. All rights reserved.
+ * Copyright (C) 2005-2020 Apple Inc. All rights reserved.
  * Copyright (C) 2006 Alexey Proskuryakov
  *
  * Redistribution and use in source and binary forms, with or without
@@ -33,19 +33,19 @@
 #if PLATFORM(COCOA)
 #include <pal/spi/cocoa/CoreTextSPI.h>
 #endif
+#include "CachedFont.h"
+#include "CharacterProperties.h"
 #include "FontCache.h"
 #include "FontCascade.h"
+#include "FontCustomPlatformData.h"
 #include "OpenTypeMathData.h"
+#include "SharedBuffer.h"
 #include <wtf/MathExtras.h>
 #include <wtf/NeverDestroyed.h>
-#include <wtf/text/AtomicStringHash.h>
+#include <wtf/text/AtomStringHash.h>
 
 #if ENABLE(OPENTYPE_VERTICAL)
 #include "OpenTypeVerticalData.h"
-#endif
-
-#if USE(DIRECT2D)
-#include <dwrite.h>
 #endif
 
 namespace WebCore {
@@ -54,6 +54,8 @@ unsigned GlyphPage::s_count = 0;
 
 const float smallCapsFontSizeMultiplier = 0.7f;
 const float emphasisMarkFontSizeMultiplier = 0.5f;
+
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(Font);
 
 Font::Font(const FontPlatformData& platformData, Origin origin, Interstitial interstitial, Visibility visibility, OrientationFallback orientationFallback)
     : m_platformData(platformData)
@@ -65,7 +67,8 @@ Font::Font(const FontPlatformData& platformData, Origin origin, Interstitial int
     , m_isBrokenIdeographFallback(false)
     , m_hasVerticalGlyphs(false)
     , m_isUsedInSystemFallbackCache(false)
-#if PLATFORM(IOS)
+    , m_allowsAntialiasing(true)
+#if PLATFORM(IOS_FAMILY)
     , m_shouldNotBeUsedForArabic(false)
 #endif
 {
@@ -102,33 +105,43 @@ void Font::initCharWidths()
 
 void Font::platformGlyphInit()
 {
-    auto* glyphPageZero = glyphPage(0);
+#if USE(FREETYPE)
+    auto* glyphPageZeroWidthSpace = glyphPage(GlyphPage::pageNumberForCodePoint(zeroWidthSpace));
+    UChar32 zeroWidthSpaceCharacter = zeroWidthSpace;
+#else
+    // Ask for the glyph for 0 to avoid paging in ZERO WIDTH SPACE. Control characters, including 0,
+    // are mapped to the ZERO WIDTH SPACE glyph for non FreeType based ports.
+    auto* glyphPageZeroWidthSpace = glyphPage(0);
+    UChar32 zeroWidthSpaceCharacter = 0;
+#endif
     auto* glyphPageCharacterZero = glyphPage(GlyphPage::pageNumberForCodePoint('0'));
     auto* glyphPageSpace = glyphPage(GlyphPage::pageNumberForCodePoint(space));
 
-    // Ask for the glyph for 0 to avoid paging in ZERO WIDTH SPACE. Control characters, including 0,
-    // are mapped to the ZERO WIDTH SPACE glyph.
-    if (glyphPageZero)
-        m_zeroWidthSpaceGlyph = glyphPageZero->glyphDataForCharacter(0).glyph;
+    if (glyphPageZeroWidthSpace)
+        m_zeroWidthSpaceGlyph = glyphPageZeroWidthSpace->glyphDataForCharacter(zeroWidthSpaceCharacter).glyph;
 
     // Nasty hack to determine if we should round or ceil space widths.
     // If the font is monospace or fake monospace we ceil to ensure that
     // every character and the space are the same width. Otherwise we round.
     if (glyphPageSpace)
         m_spaceGlyph = glyphPageSpace->glyphDataForCharacter(space).glyph;
-    float width = widthForGlyph(m_spaceGlyph);
-    m_spaceWidth = width;
     if (glyphPageCharacterZero)
         m_zeroGlyph = glyphPageCharacterZero->glyphDataForCharacter('0').glyph;
-    m_fontMetrics.setZeroWidth(widthForGlyph(m_zeroGlyph));
-    determinePitch();
-    m_adjustedSpaceWidth = m_treatAsFixedPitch ? ceilf(width) : roundf(width);
 
     // Force the glyph for ZERO WIDTH SPACE to have zero width, unless it is shared with SPACE.
     // Helvetica is an example of a non-zero width ZERO WIDTH SPACE glyph.
     // See <http://bugs.webkit.org/show_bug.cgi?id=13178> and Font::isZeroWidthSpaceGlyph()
     if (m_zeroWidthSpaceGlyph == m_spaceGlyph)
         m_zeroWidthSpaceGlyph = 0;
+
+    float width = widthForGlyph(m_spaceGlyph);
+    m_spaceWidth = width;
+    m_fontMetrics.setZeroWidth(widthForGlyph(m_zeroGlyph));
+    auto amountToAdjustLineGap = std::min(m_fontMetrics.floatLineGap(), 0.0f);
+    m_fontMetrics.setLineGap(m_fontMetrics.floatLineGap() - amountToAdjustLineGap);
+    m_fontMetrics.setLineSpacing(m_fontMetrics.floatLineSpacing() - amountToAdjustLineGap);
+    determinePitch();
+    m_adjustedSpaceWidth = m_treatAsFixedPitch ? ceilf(width) : roundf(width);
 }
 
 Font::~Font()
@@ -148,7 +161,7 @@ static bool fillGlyphPage(GlyphPage& pageToFill, UChar* buffer, unsigned bufferL
     return hasGlyphs;
 }
 
-static std::optional<size_t> codePointSupportIndex(UChar32 codePoint)
+static Optional<size_t> codePointSupportIndex(UChar32 codePoint)
 {
     // FIXME: Consider reordering these so the most common ones are at the front.
     // Doing this could cause the BitVector to fit inside inline storage and therefore
@@ -157,7 +170,7 @@ static std::optional<size_t> codePointSupportIndex(UChar32 codePoint)
         return codePoint;
     if (codePoint >= 0x7F && codePoint < 0xA0)
         return codePoint - 0x7F + 0x20;
-    std::optional<size_t> result;
+    Optional<size_t> result;
     switch (codePoint) {
     case softHyphen:
         result = 0x41;
@@ -220,7 +233,7 @@ static std::optional<size_t> codePointSupportIndex(UChar32 codePoint)
         result = 0x54;
         break;
     default:
-        result = std::nullopt;
+        result = WTF::nullopt;
     }
 
 #ifndef NDEBUG
@@ -263,9 +276,52 @@ static std::optional<size_t> codePointSupportIndex(UChar32 codePoint)
     return result;
 }
 
+#if !USE(FREETYPE)
+static void overrideControlCharacters(Vector<UChar>& buffer, unsigned start, unsigned end)
+{
+    auto overwriteCodePoints = [&](unsigned minimum, unsigned maximum, UChar newCodePoint) {
+        unsigned begin = std::max(start, minimum);
+        unsigned complete = std::min(end, maximum);
+        for (unsigned i = begin; i < complete; ++i) {
+            ASSERT(codePointSupportIndex(i));
+            buffer[i - start] = newCodePoint;
+        }
+    };
+
+    auto overwriteCodePoint = [&](UChar codePoint, UChar newCodePoint) {
+        ASSERT(codePointSupportIndex(codePoint));
+        if (codePoint >= start && codePoint < end)
+            buffer[codePoint - start] = newCodePoint;
+    };
+
+    // Code points 0x0 - 0x20 and 0x7F - 0xA0 are control character and shouldn't render. Map them to ZERO WIDTH SPACE.
+    overwriteCodePoints(0x0, 0x20, zeroWidthSpace);
+    overwriteCodePoints(0x7F, 0xA0, zeroWidthSpace);
+    overwriteCodePoint(softHyphen, zeroWidthSpace);
+    overwriteCodePoint('\n', space);
+    overwriteCodePoint('\t', space);
+    overwriteCodePoint(noBreakSpace, space);
+    overwriteCodePoint(leftToRightMark, zeroWidthSpace);
+    overwriteCodePoint(rightToLeftMark, zeroWidthSpace);
+    overwriteCodePoint(leftToRightEmbed, zeroWidthSpace);
+    overwriteCodePoint(rightToLeftEmbed, zeroWidthSpace);
+    overwriteCodePoint(leftToRightOverride, zeroWidthSpace);
+    overwriteCodePoint(rightToLeftOverride, zeroWidthSpace);
+    overwriteCodePoint(leftToRightIsolate, zeroWidthSpace);
+    overwriteCodePoint(rightToLeftIsolate, zeroWidthSpace);
+    overwriteCodePoint(zeroWidthNonJoiner, zeroWidthSpace);
+    overwriteCodePoint(zeroWidthJoiner, zeroWidthSpace);
+    overwriteCodePoint(popDirectionalFormatting, zeroWidthSpace);
+    overwriteCodePoint(popDirectionalIsolate, zeroWidthSpace);
+    overwriteCodePoint(firstStrongIsolate, zeroWidthSpace);
+    overwriteCodePoint(objectReplacementCharacter, zeroWidthSpace);
+    overwriteCodePoint(zeroWidthNoBreakSpace, zeroWidthSpace);
+}
+#endif
+
 static RefPtr<GlyphPage> createAndFillGlyphPage(unsigned pageNumber, const Font& font)
 {
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     // FIXME: Times New Roman contains Arabic glyphs, but Core Text doesn't know how to shape them. See <rdar://problem/9823975>.
     // Once we have the fix for <rdar://problem/9823975> then remove this code together with Font::shouldNotBeUsedForArabic()
     // in <rdar://problem/12096835>.
@@ -276,7 +332,6 @@ static RefPtr<GlyphPage> createAndFillGlyphPage(unsigned pageNumber, const Font&
     unsigned glyphPageSize = GlyphPage::sizeForPageNumber(pageNumber);
 
     unsigned start = GlyphPage::startingCodePointInPageNumber(pageNumber);
-    unsigned end = start + glyphPageSize;
     Vector<UChar> buffer(glyphPageSize * 2 + 2);
     unsigned bufferLength;
     // Fill in a buffer with the entire "page" of characters that we want to look up glyphs for.
@@ -285,44 +340,9 @@ static RefPtr<GlyphPage> createAndFillGlyphPage(unsigned pageNumber, const Font&
         for (unsigned i = 0; i < bufferLength; i++)
             buffer[i] = start + i;
 
-        // Code points 0x0 - 0x20 and 0x7F - 0xA0 are control character and shouldn't render. Map them to ZERO WIDTH SPACE.
-        auto overwriteCodePoints = [&](unsigned minimum, unsigned maximum, UChar newCodePoint) {
-            unsigned begin = std::max(start, minimum);
-            unsigned complete = std::min(end, maximum);
-            for (unsigned i = begin; i < complete; ++i) {
-                ASSERT(codePointSupportIndex(i));
-                buffer[i - start] = newCodePoint;
-            }
-        };
-
-        auto overwriteCodePoint = [&](UChar codePoint, UChar newCodePoint) {
-            ASSERT(codePointSupportIndex(codePoint));
-            if (codePoint >= start && codePoint < end)
-                buffer[codePoint - start] = newCodePoint;
-        };
-
-        overwriteCodePoints(0x0, 0x20, zeroWidthSpace);
-        overwriteCodePoints(0x7F, 0xA0, zeroWidthSpace);
-        overwriteCodePoint(softHyphen, zeroWidthSpace);
-        overwriteCodePoint('\n', space);
-        overwriteCodePoint('\t', space);
-        overwriteCodePoint(noBreakSpace, space);
-        overwriteCodePoint(narrowNoBreakSpace, zeroWidthSpace);
-        overwriteCodePoint(leftToRightMark, zeroWidthSpace);
-        overwriteCodePoint(rightToLeftMark, zeroWidthSpace);
-        overwriteCodePoint(leftToRightEmbed, zeroWidthSpace);
-        overwriteCodePoint(rightToLeftEmbed, zeroWidthSpace);
-        overwriteCodePoint(leftToRightOverride, zeroWidthSpace);
-        overwriteCodePoint(rightToLeftOverride, zeroWidthSpace);
-        overwriteCodePoint(leftToRightIsolate, zeroWidthSpace);
-        overwriteCodePoint(rightToLeftIsolate, zeroWidthSpace);
-        overwriteCodePoint(zeroWidthNonJoiner, zeroWidthSpace);
-        overwriteCodePoint(zeroWidthJoiner, zeroWidthSpace);
-        overwriteCodePoint(popDirectionalFormatting, zeroWidthSpace);
-        overwriteCodePoint(popDirectionalIsolate, zeroWidthSpace);
-        overwriteCodePoint(firstStrongIsolate, zeroWidthSpace);
-        overwriteCodePoint(objectReplacementCharacter, zeroWidthSpace);
-        overwriteCodePoint(zeroWidthNoBreakSpace, zeroWidthSpace);
+#if !USE(FREETYPE)
+        overrideControlCharacters(buffer, start, start + glyphPageSize);
+#endif
     } else {
         bufferLength = glyphPageSize * 2;
         for (unsigned i = 0; i < glyphPageSize; i++) {
@@ -343,7 +363,7 @@ static RefPtr<GlyphPage> createAndFillGlyphPage(unsigned pageNumber, const Font&
     if (!haveGlyphs)
         return nullptr;
 
-    return WTFMove(glyphPage);
+    return glyphPage;
 }
 
 const GlyphPage* Font::glyphPage(unsigned pageNumber) const
@@ -379,7 +399,7 @@ GlyphData Font::glyphDataForCharacter(UChar32 character) const
 auto Font::ensureDerivedFontData() const -> DerivedFonts&
 {
     if (!m_derivedFontData)
-        m_derivedFontData = std::make_unique<DerivedFonts>();
+        m_derivedFontData = makeUnique<DerivedFonts>();
     return *m_derivedFontData;
 }
 
@@ -454,6 +474,16 @@ const Font& Font::brokenIdeographFont() const
     return *derivedFontData.brokenIdeographFont;
 }
 
+#if !PLATFORM(COCOA)
+
+bool Font::isProbablyOnlyUsedToRenderIcons() const
+{
+    // FIXME: Not implemented yet.
+    return false;
+}
+
+#endif
+
 #if !LOG_DISABLED
 String Font::description() const
 {
@@ -481,20 +511,11 @@ RefPtr<Font> Font::createScaledFont(const FontDescription& fontDescription, floa
     return platformCreateScaledFont(fontDescription, scaleFactor);
 }
 
-bool Font::applyTransforms(GlyphBufferGlyph* glyphs, GlyphBufferAdvance* advances, size_t glyphCount, bool enableKerning, bool requiresShaping) const
+#if !PLATFORM(COCOA)
+void Font::applyTransforms(GlyphBuffer&, unsigned, unsigned, bool, bool, const AtomString&, StringView, TextDirection) const
 {
-#if PLATFORM(COCOA)
-    CTFontTransformOptions options = (enableKerning ? kCTFontTransformApplyPositioning : 0) | (requiresShaping ? kCTFontTransformApplyShaping : 0);
-    return CTFontTransformGlyphs(m_platformData.ctFont(), glyphs, reinterpret_cast<CGSize*>(advances), glyphCount, options);
-#else
-    UNUSED_PARAM(glyphs);
-    UNUSED_PARAM(advances);
-    UNUSED_PARAM(glyphCount);
-    UNUSED_PARAM(enableKerning);
-    UNUSED_PARAM(requiresShaping);
-    return false;
-#endif
 }
+#endif
 
 class CharacterFallbackMapKey {
 public:
@@ -502,10 +523,10 @@ public:
     {
     }
 
-    CharacterFallbackMapKey(const AtomicString& locale, UChar32 character, bool isForPlatformFont)
+    CharacterFallbackMapKey(const AtomString& locale, UChar32 character, IsForPlatformFont isForPlatformFont)
         : locale(locale)
         , character(character)
-        , isForPlatformFont(isForPlatformFont)
+        , isForPlatformFont(isForPlatformFont == IsForPlatformFont::Yes)
     {
     }
 
@@ -526,7 +547,7 @@ public:
 private:
     friend struct CharacterFallbackMapKeyHash;
 
-    AtomicString locale;
+    AtomString locale;
     UChar32 character { 0 };
     bool isForPlatformFont { false };
 };
@@ -560,16 +581,16 @@ static SystemFallbackCache& systemFallbackCache()
     return map.get();
 }
 
-RefPtr<Font> Font::systemFallbackFontForCharacter(UChar32 character, const FontDescription& description, bool isForPlatformFont) const
+RefPtr<Font> Font::systemFallbackFontForCharacter(UChar32 character, const FontDescription& description, IsForPlatformFont isForPlatformFont) const
 {
     auto fontAddResult = systemFallbackCache().add(this, CharacterFallbackMap());
 
     if (!character) {
         UChar codeUnit = 0;
-        return FontCache::singleton().systemFallbackForCharacters(description, this, isForPlatformFont, &codeUnit, 1);
+        return FontCache::singleton().systemFallbackForCharacters(description, this, isForPlatformFont, FontCache::PreferColoredFont::No, &codeUnit, 1);
     }
 
-    auto key = CharacterFallbackMapKey(description.locale(), character, isForPlatformFont);
+    auto key = CharacterFallbackMapKey(description.computedLocale(), character, isForPlatformFont);
     auto characterAddResult = fontAddResult.iterator->value.add(WTFMove(key), nullptr);
 
     Font*& fallbackFont = characterAddResult.iterator->value;
@@ -586,7 +607,7 @@ RefPtr<Font> Font::systemFallbackFontForCharacter(UChar32 character, const FontD
             codeUnitsLength = 2;
         }
 
-        fallbackFont = FontCache::singleton().systemFallbackForCharacters(description, this, isForPlatformFont, codeUnits, codeUnitsLength).get();
+        fallbackFont = FontCache::singleton().systemFallbackForCharacters(description, this, isForPlatformFont, FontCache::PreferColoredFont::No, codeUnits, codeUnitsLength).get();
         if (fallbackFont)
             fallbackFont->m_isUsedInSystemFallbackCache = true;
     }
@@ -612,7 +633,7 @@ void Font::removeFromSystemFallbackCache()
     }
 }
 
-#if !PLATFORM(COCOA)
+#if !PLATFORM(COCOA) && !USE(FREETYPE)
 bool Font::variantCapsSupportsCharacterForSynthesis(FontVariantCaps fontVariantCaps, UChar32) const
 {
     switch (fontVariantCaps) {
@@ -627,9 +648,9 @@ bool Font::variantCapsSupportsCharacterForSynthesis(FontVariantCaps fontVariantC
     }
 }
 
-bool Font::platformSupportsCodePoint(UChar32 character) const
+bool Font::platformSupportsCodePoint(UChar32 character, Optional<UChar32> variation) const
 {
-    return glyphForCharacter(character);
+    return variation ? false : glyphForCharacter(character);
 }
 #endif
 
@@ -657,10 +678,51 @@ bool Font::canRenderCombiningCharacterSequence(const UChar* characters, size_t l
 {
     ASSERT(isMainThread());
 
-    for (UChar32 codePoint : StringView(characters, length).codePoints()) {
+    auto codePoints = StringView(characters, length).codePoints();
+    auto it = codePoints.begin();
+    auto end = codePoints.end();
+    while (it != end) {
+        auto codePoint = *it;
+        ++it;
+
+        if (it != end && isVariationSelector(*it)) {
+            if (!platformSupportsCodePoint(codePoint, *it)) {
+                // Try the characters individually.
+                if (!supportsCodePoint(codePoint) || !supportsCodePoint(*it))
+                    return false;
+            }
+            ++it;
+            continue;
+        }
+
         if (!supportsCodePoint(codePoint))
             return false;
     }
     return true;
 }
+
+// Don't store the result of this! The hash map is free to rehash at any point, leaving this reference dangling.
+const Path& Font::pathForGlyph(Glyph glyph) const
+{
+    if (const auto& path = m_glyphPathMap.existingMetricsForGlyph(glyph))
+        return *path;
+    auto path = platformPathForGlyph(glyph);
+    m_glyphPathMap.setMetricsForGlyph(glyph, path);
+    return *m_glyphPathMap.existingMetricsForGlyph(glyph);
+}
+
+void Font::setFontFaceData(RefPtr<SharedBuffer>&& fontFaceData)
+{
+    m_fontFaceData = WTFMove(fontFaceData);
+}
+
+FontHandle::FontHandle(Ref<SharedBuffer>&& fontFaceData, Font::Origin origin, float fontSize, bool syntheticBold, bool syntheticItalic)
+{
+    bool wrapping;
+    auto customFontData = CachedFont::createCustomFontData(fontFaceData.get(), { }, wrapping);
+    FontDescription description;
+    description.setComputedSize(fontSize);
+    font = Font::create(CachedFont::platformDataFromCustomData(*customFontData, description, syntheticBold, syntheticItalic, { }, { }), origin);
+}
+
 } // namespace WebCore

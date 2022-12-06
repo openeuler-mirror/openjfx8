@@ -20,8 +20,7 @@
     Boston, MA 02110-1301, USA.
 */
 
-#ifndef Length_h
-#define Length_h
+#pragma once
 
 #include "AnimationUtilities.h"
 #include <memory>
@@ -177,12 +176,12 @@ inline Length::Length(const Length& other)
     if (other.isCalculated())
         other.ref();
 
-    memcpy(this, &other, sizeof(Length));
+    memcpy(static_cast<void*>(this), static_cast<void*>(const_cast<Length*>(&other)), sizeof(Length));
 }
 
 inline Length::Length(Length&& other)
 {
-    memcpy(this, &other, sizeof(Length));
+    memcpy(static_cast<void*>(this), static_cast<void*>(&other), sizeof(Length));
     other.m_type = Auto;
 }
 
@@ -424,5 +423,3 @@ Length convertTo100PercentMinusLength(const Length&);
 WTF::TextStream& operator<<(WTF::TextStream&, Length);
 
 } // namespace WebCore
-
-#endif // Length_h

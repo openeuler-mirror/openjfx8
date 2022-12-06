@@ -24,8 +24,9 @@
  */
 
 #include "config.h"
-#include "CPUTime.h"
+#include <wtf/CPUTime.h>
 
+#include <wtf/Optional.h>
 #include <zircon/syscalls.h>
 
 namespace WTF {
@@ -35,19 +36,22 @@ static Seconds timeToSeconds(zx_time_t t)
     return Seconds(t / static_cast<double>(ZX_SEC(1)));
 }
 
-std::optional<CPUTime> CPUTime::get()
+Optional<CPUTime> CPUTime::get()
 {
     // Fuchsia issue ZX-2318 tracks being able to get the monotonic and thread
     // times atomically and being able to separate ZX_CLOCK_THREAD into user and
     // kernel time.
-    zx_time_t thread = zx_clock_get(ZX_CLOCK_THREAD);
+    zx_time_t thread = 0;
+    zx_clock_get(ZX_CLOCK_THREAD, &thread);
 
     return CPUTime { MonotonicTime::now(), timeToSeconds(thread), Seconds() };
 }
 
 Seconds CPUTime::forCurrentThread()
 {
-    return timeToSeconds(zx_clock_get(ZX_CLOCK_THREAD));
+    zx_time_t thread = 0;
+    zx_clock_get(ZX_CLOCK_THREAD, &thread)
+    return timeToSeconds(thread);
 }
 
 }

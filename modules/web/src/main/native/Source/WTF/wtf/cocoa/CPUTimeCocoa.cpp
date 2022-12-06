@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,10 +33,11 @@
 #import <mach/task_info.h>
 #import <mach/thread_info.h>
 #import <sys/time.h>
+#import <wtf/Optional.h>
 
 namespace WTF {
 
-static const int64_t microsecondsPerSecond = 1000000;
+static constexpr int64_t microsecondsPerSecond = 1000000;
 
 static int64_t timeValueToMicroseconds(const time_value_t& value)
 {
@@ -46,14 +47,14 @@ static int64_t timeValueToMicroseconds(const time_value_t& value)
     return result;
 }
 
-std::optional<CPUTime> CPUTime::get()
+Optional<CPUTime> CPUTime::get()
 {
     // Account for current threads.
     task_thread_times_info threadInfoData;
     mach_msg_type_number_t threadInfoCount = TASK_THREAD_TIMES_INFO_COUNT;
     kern_return_t result = task_info(mach_task_self(), TASK_THREAD_TIMES_INFO, reinterpret_cast<task_info_t>(&threadInfoData), &threadInfoCount);
     if (result != KERN_SUCCESS)
-        return std::nullopt;
+        return WTF::nullopt;
 
     int64_t userTime = timeValueToMicroseconds(threadInfoData.user_time);
     int64_t systemTime = timeValueToMicroseconds(threadInfoData.system_time);
@@ -63,7 +64,7 @@ std::optional<CPUTime> CPUTime::get()
     mach_msg_type_number_t taskInfoCount = TASK_BASIC_INFO_COUNT;
     result = task_info(mach_task_self(), TASK_BASIC_INFO, reinterpret_cast<task_info_t>(&taskInfoData), &taskInfoCount);
     if (result != KERN_SUCCESS)
-        return std::nullopt;
+        return WTF::nullopt;
 
     userTime += timeValueToMicroseconds(taskInfoData.user_time);
     systemTime += timeValueToMicroseconds(taskInfoData.system_time);

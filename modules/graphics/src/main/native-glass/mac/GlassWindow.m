@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2017, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -474,6 +474,10 @@ static jlong _createWindowCommonDo(JNIEnv *env, jobject jWindow, jlong jOwnerPtr
         {
             styleMask = styleMask|NSTitledWindowMask;
         }
+
+        bool isUtility = (jStyleMask & com_sun_glass_ui_Window_UTILITY) != 0;
+        bool isPopup = (jStyleMask & com_sun_glass_ui_Window_POPUP) != 0;
+
         // only nontransparent windows get decorations
         if ((jStyleMask&com_sun_glass_ui_Window_TRANSPARENT) == 0)
         {
@@ -494,13 +498,13 @@ static jlong _createWindowCommonDo(JNIEnv *env, jobject jWindow, jlong jOwnerPtr
                 styleMask = styleMask|NSTexturedBackgroundWindowMask;
             }
 
-            if ((jStyleMask&com_sun_glass_ui_Window_UTILITY) != 0)
+            if (isUtility)
             {
                 styleMask = styleMask | NSUtilityWindowMask | NSNonactivatingPanelMask;
             }
         }
 
-        if ((jStyleMask&com_sun_glass_ui_Window_POPUP) != 0)
+        if (isPopup)
         {
             // can receive keyboard input without activating the owning application
             styleMask = styleMask|NSNonactivatingPanelMask;
@@ -523,6 +527,9 @@ static jlong _createWindowCommonDo(JNIEnv *env, jobject jWindow, jlong jOwnerPtr
         if ((jStyleMask & com_sun_glass_ui_Window_UTILITY) != 0) {
             [[window->nsWindow standardWindowButton:NSWindowMiniaturizeButton] setHidden:YES];
             [[window->nsWindow standardWindowButton:NSWindowZoomButton] setHidden:YES];
+            if (!jOwnerPtr) {
+                [window->nsWindow setLevel:NSNormalWindowLevel];
+            }
         }
 
         if (jIsChild == JNI_FALSE)
@@ -548,9 +555,9 @@ static jlong _createWindowCommonDo(JNIEnv *env, jobject jWindow, jlong jOwnerPtr
         /* 10.7 full screen window support */
         if ([NSWindow instancesRespondToSelector:@selector(toggleFullScreen:)]) {
             NSWindowCollectionBehavior behavior = [window->nsWindow collectionBehavior];
-            if (window->isDecorated && !window->owner)
+            if (!isPopup && !isUtility && !window->owner)
             {
-                // Only titled ownerless windows should have the Full Screen Toggle control
+                // Only ownerless windows should have the Full Screen Toggle control
                 behavior |= (1 << 7) /* NSWindowCollectionBehaviorFullScreenPrimary */;
             }
             else
@@ -1378,6 +1385,16 @@ JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_mac_MacWindow__1minimize
     {
         GlassWindow *window = getGlassWindow(env, jPtr);
 
+        NSUInteger styleMask = [window->nsWindow styleMask];
+        BOOL isMiniaturizable = (styleMask & NSMiniaturizableWindowMask) != 0;
+
+        // if the window does not have NSMiniaturizableWindowMask set
+        // we need to temporarily set it to allow the window to
+        // be programmatically minimized or restored.
+        if (!isMiniaturizable) {
+            [window->nsWindow setStyleMask: styleMask | NSMiniaturizableWindowMask];
+        }
+
         if (jMiniaturize == JNI_TRUE)
         {
             [window->nsWindow miniaturize:nil];
@@ -1386,6 +1403,12 @@ JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_mac_MacWindow__1minimize
         {
             [window->nsWindow deminiaturize:nil];
         }
+
+        // Restore the state of NSMiniaturizableWindowMask
+        if (!isMiniaturizable) {
+            [window->nsWindow setStyleMask: styleMask];
+        }
+
     }
     GLASS_POOL_EXIT;
     GLASS_CHECK_EXCEPTION(env);

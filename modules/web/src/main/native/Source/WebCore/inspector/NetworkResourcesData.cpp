@@ -41,8 +41,8 @@ namespace WebCore {
 
 using namespace Inspector;
 
-static const size_t maximumResourcesContentSize = 100 * 1000 * 1000; // 100MB
-static const size_t maximumSingleResourceContentSize = 10 * 1000 * 1000; // 10MB
+static const size_t maximumResourcesContentSize = 200 * 1000 * 1000; // 200MB
+static const size_t maximumSingleResourceContentSize = 50 * 1000 * 1000; // 50MB
 
 NetworkResourcesData::ResourceData::ResourceData(const String& requestId, const String& loaderId)
     : m_requestId(requestId)
@@ -58,11 +58,6 @@ void NetworkResourcesData::ResourceData::setContent(const String& content, bool 
     m_base64Encoded = base64Encoded;
 }
 
-static size_t contentSizeInBytes(const String& content)
-{
-    return content.isNull() ? 0 : content.impl()->sizeInBytes();
-}
-
 unsigned NetworkResourcesData::ResourceData::removeContent()
 {
     unsigned result = 0;
@@ -74,7 +69,7 @@ unsigned NetworkResourcesData::ResourceData::removeContent()
 
     if (hasContent()) {
         ASSERT(!hasData());
-        result = contentSizeInBytes(m_content);
+        result = m_content.sizeInBytes();
         m_content = String();
     }
     return result;
@@ -100,7 +95,7 @@ void NetworkResourcesData::ResourceData::appendData(const char* data, size_t dat
         m_dataBuffer->append(data, dataLength);
 }
 
-size_t NetworkResourcesData::ResourceData::decodeDataToContent()
+unsigned NetworkResourcesData::ResourceData::decodeDataToContent()
 {
     ASSERT(!hasContent());
 
@@ -116,9 +111,7 @@ size_t NetworkResourcesData::ResourceData::decodeDataToContent()
 
     m_dataBuffer = nullptr;
 
-    size_t decodedLength = contentSizeInBytes(m_content);
-    ASSERT(decodedLength >= dataLength);
-    return decodedLength - dataLength;
+    return m_content.sizeInBytes() - dataLength;
 }
 
 NetworkResourcesData::NetworkResourcesData()
@@ -136,7 +129,7 @@ void NetworkResourcesData::resourceCreated(const String& requestId, const String
 {
     ensureNoDataForRequestId(requestId);
 
-    auto resourceData = std::make_unique<ResourceData>(requestId, loaderId);
+    auto resourceData = makeUnique<ResourceData>(requestId, loaderId);
     resourceData->setType(type);
     m_requestIdToResourceDataMap.set(requestId, WTFMove(resourceData));
 }
@@ -145,7 +138,7 @@ void NetworkResourcesData::resourceCreated(const String& requestId, const String
 {
     ensureNoDataForRequestId(requestId);
 
-    auto resourceData = std::make_unique<ResourceData>(requestId, loaderId);
+    auto resourceData = makeUnique<ResourceData>(requestId, loaderId);
     resourceData->setCachedResource(&cachedResource);
     m_requestIdToResourceDataMap.set(requestId, WTFMove(resourceData));
 }
@@ -157,13 +150,16 @@ void NetworkResourcesData::responseReceived(const String& requestId, const Strin
         return;
 
     resourceData->setFrameId(frameId);
-    resourceData->setURL(response.url());
+    resourceData->setURL(response.url().string());
     resourceData->setHTTPStatusCode(response.httpStatusCode());
     resourceData->setType(type);
     resourceData->setForceBufferData(forceBufferData);
 
     if (InspectorNetworkAgent::shouldTreatAsText(response.mimeType()))
         resourceData->setDecoder(InspectorNetworkAgent::createTextDecoder(response.mimeType(), response.textEncodingName()));
+
+    if (auto& certificateInfo = response.certificateInfo())
+        resourceData->setCertificateInfo(certificateInfo);
 }
 
 void NetworkResourcesData::setResourceType(const String& requestId, InspectorPageAgent::ResourceType type)
@@ -184,11 +180,14 @@ InspectorPageAgent::ResourceType NetworkResourcesData::resourceType(const String
 
 void NetworkResourcesData::setResourceContent(const String& requestId, const String& content, bool base64Encoded)
 {
+    if (content.isNull())
+        return;
+
     ResourceData* resourceData = resourceDataForRequestId(requestId);
     if (!resourceData)
         return;
 
-    size_t dataLength = contentSizeInBytes(content);
+    size_t dataLength = content.sizeInBytes();
     if (dataLength > m_maximumSingleResourceContentSize)
         return;
     if (resourceData->isContentEvicted())
@@ -252,7 +251,7 @@ void NetworkResourcesData::maybeDecodeDataToContent(const String& requestId)
         return;
 
     m_contentSize += resourceData->decodeDataToContent();
-    size_t dataLength = contentSizeInBytes(resourceData->content());
+    size_t dataLength = resourceData->content().sizeInBytes();
     if (dataLength > m_maximumSingleResourceContentSize)
         m_contentSize -= resourceData->evictContent();
 }
@@ -293,7 +292,7 @@ Vector<String> NetworkResourcesData::removeCachedResource(CachedResource* cached
     return result;
 }
 
-void NetworkResourcesData::clear(std::optional<String> preservedLoaderId)
+void NetworkResourcesData::clear(Optional<String> preservedLoaderId)
 {
     m_requestIdsDeque.clear();
     m_contentSize = 0;

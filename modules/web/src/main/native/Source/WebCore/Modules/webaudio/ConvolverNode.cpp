@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2010, Google Inc. All rights reserved.
- * Copyright (C) 2016, Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2020, Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,6 +33,7 @@
 #include "AudioNodeInput.h"
 #include "AudioNodeOutput.h"
 #include "Reverb.h"
+#include <wtf/IsoMallocInlines.h>
 
 // Note about empirical tuning:
 // The maximum FFT size affects reverb performance and accuracy.
@@ -44,18 +45,37 @@ const size_t MaxFFTSize = 32768;
 
 namespace WebCore {
 
-ConvolverNode::ConvolverNode(AudioContext& context, float sampleRate)
-    : AudioNode(context, sampleRate)
+WTF_MAKE_ISO_ALLOCATED_IMPL(ConvolverNode);
+
+ExceptionOr<Ref<ConvolverNode>> ConvolverNode::create(BaseAudioContext& context, ConvolverOptions&& options)
 {
-    addInput(std::make_unique<AudioNodeInput>(this));
-    addOutput(std::make_unique<AudioNodeOutput>(this, 2));
+    if (context.isStopped())
+        return Exception { InvalidStateError };
 
-    // Node-specific default mixing rules.
-    m_channelCount = 2;
-    m_channelCountMode = ClampedMax;
-    m_channelInterpretation = AudioBus::Speakers;
+    context.lazyInitialize();
 
+    auto node = adoptRef(*new ConvolverNode(context));
+
+    auto result = node->handleAudioNodeOptions(options, { 2, ChannelCountMode::ClampedMax, ChannelInterpretation::Speakers });
+    if (result.hasException())
+        return result.releaseException();
+
+    result = node->setBuffer(WTFMove(options.buffer));
+    if (result.hasException())
+        return result.releaseException();
+
+    node->setNormalize(!options.disableNormalization);
+
+    return node;
+}
+
+ConvolverNode::ConvolverNode(BaseAudioContext& context)
+    : AudioNode(context)
+{
     setNodeType(NodeTypeConvolver);
+
+    addInput(makeUnique<AudioNodeInput>(this));
+    addOutput(makeUnique<AudioNodeOutput>(this, 2));
 
     initialize();
 }
@@ -91,7 +111,7 @@ void ConvolverNode::process(size_t framesToProcess)
 
 void ConvolverNode::reset()
 {
-    std::lock_guard<Lock> lock(m_processMutex);
+    auto locker = holdLock(m_processMutex);
     if (m_reverb)
         m_reverb->reset();
 }
@@ -113,7 +133,7 @@ void ConvolverNode::uninitialize()
     AudioNode::uninitialize();
 }
 
-ExceptionOr<void> ConvolverNode::setBuffer(AudioBuffer* buffer)
+ExceptionOr<void> ConvolverNode::setBuffer(RefPtr<AudioBuffer>&& buffer)
 {
     ASSERT(isMainThread());
 
@@ -143,13 +163,13 @@ ExceptionOr<void> ConvolverNode::setBuffer(AudioBuffer* buffer)
 
     // Create the reverb with the given impulse response.
     bool useBackgroundThreads = !context().isOfflineContext();
-    auto reverb = std::make_unique<Reverb>(bufferBus.get(), AudioNode::ProcessingSizeInFrames, MaxFFTSize, 2, useBackgroundThreads, m_normalize);
+    auto reverb = makeUnique<Reverb>(bufferBus.get(), AudioNode::ProcessingSizeInFrames, MaxFFTSize, 2, useBackgroundThreads, m_normalize);
 
     {
         // Synchronize with process().
-        std::lock_guard<Lock> lock(m_processMutex);
+        auto locker = holdLock(m_processMutex);
         m_reverb = WTFMove(reverb);
-        m_buffer = buffer;
+        m_buffer = WTFMove(buffer);
     }
 
     return { };
@@ -169,6 +189,20 @@ double ConvolverNode::tailTime() const
 double ConvolverNode::latencyTime() const
 {
     return m_reverb ? m_reverb->latencyFrames() / static_cast<double>(sampleRate()) : 0;
+}
+
+ExceptionOr<void> ConvolverNode::setChannelCount(unsigned count)
+{
+    if (count > 2)
+        return Exception { NotSupportedError, "ConvolverNode's channel count cannot be greater than 2"_s };
+    return AudioNode::setChannelCount(count);
+}
+
+ExceptionOr<void> ConvolverNode::setChannelCountMode(ChannelCountMode mode)
+{
+    if (mode == ChannelCountMode::Max)
+        return Exception { NotSupportedError, "ConvolverNode's channel count mode cannot be 'max'"_s };
+    return AudioNode::setChannelCountMode(mode);
 }
 
 } // namespace WebCore

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,29 +30,27 @@
 
 #include "ExecutableAllocator.h"
 #include "MachineContext.h"
+#include "WasmCallee.h"
+#include "WasmCalleeRegistry.h"
+#include "WasmCapabilities.h"
 #include "WasmExceptionType.h"
 #include "WasmMemory.h"
 #include "WasmThunks.h"
-
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
-#include <wtf/NeverDestroyed.h>
 #include <wtf/threads/Signals.h>
 
 namespace JSC { namespace Wasm {
 
 namespace {
 namespace WasmFaultSignalHandlerInternal {
-static const bool verbose = false;
+static constexpr bool verbose = false;
 }
 }
-
-static Lock codeLocationsLock;
-static LazyNeverDestroyed<HashSet<std::tuple<void*, void*>>> codeLocations; // (start, end)
-
-#if ENABLE(WEBASSEMBLY_FAST_MEMORY)
 
 static bool fastHandlerInstalled { false };
+
+#if ENABLE(WEBASSEMBLY_FAST_MEMORY)
 
 static SignalAction trapHandler(Signal, SigInfo& sigInfo, PlatformRegisters& context)
 {
@@ -75,11 +73,10 @@ static SignalAction trapHandler(Signal, SigInfo& sigInfo, PlatformRegisters& con
         }
         if (faultedInActiveFastMemory) {
             dataLogLnIf(WasmFaultSignalHandlerInternal::verbose, "found active fast memory for faulting address");
-            LockHolder locker(codeLocationsLock);
-            for (auto range : codeLocations.get()) {
-                void* start;
-                void* end;
-                std::tie(start, end) = range;
+            auto& calleeRegistry = CalleeRegistry::singleton();
+            auto locker = holdLock(calleeRegistry.getLock());
+            for (auto* callee : calleeRegistry.allCallees(locker)) {
+                auto [start, end] = callee->range();
                 dataLogLnIf(WasmFaultSignalHandlerInternal::verbose, "function start: ", RawPointer(start), " end: ", RawPointer(end));
                 if (start <= faultingInstruction && faultingInstruction < end) {
                     dataLogLnIf(WasmFaultSignalHandlerInternal::verbose, "found match");
@@ -100,22 +97,6 @@ static SignalAction trapHandler(Signal, SigInfo& sigInfo, PlatformRegisters& con
 
 #endif // ENABLE(WEBASSEMBLY_FAST_MEMORY)
 
-void registerCode(void* start, void* end)
-{
-    if (!fastMemoryEnabled())
-        return;
-    LockHolder locker(codeLocationsLock);
-    codeLocations->add(std::make_tuple(start, end));
-}
-
-void unregisterCode(void* start, void* end)
-{
-    if (!fastMemoryEnabled())
-        return;
-    LockHolder locker(codeLocationsLock);
-    codeLocations->remove(std::make_tuple(start, end));
-}
-
 bool fastMemoryEnabled()
 {
     return fastHandlerInstalled;
@@ -123,20 +104,38 @@ bool fastMemoryEnabled()
 
 void enableFastMemory()
 {
+#if ENABLE(WEBASSEMBLY_FAST_MEMORY)
     static std::once_flag once;
     std::call_once(once, [] {
+        if (!Wasm::isSupported())
+            return;
+
         if (!Options::useWebAssemblyFastMemory())
             return;
 
+        activateSignalHandlersFor(Signal::AccessFault);
+
+        fastHandlerInstalled = true;
+    });
+#endif
+}
+
+void prepareFastMemory()
+{
 #if ENABLE(WEBASSEMBLY_FAST_MEMORY)
-        installSignalHandler(Signal::BadAccess, [] (Signal signal, SigInfo& sigInfo, PlatformRegisters& ucontext) {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        if (!Wasm::isSupported())
+            return;
+
+        if (!Options::useWebAssemblyFastMemory())
+            return;
+
+        addSignalHandler(Signal::AccessFault, [] (Signal signal, SigInfo& sigInfo, PlatformRegisters& ucontext) {
             return trapHandler(signal, sigInfo, ucontext);
         });
-
-        codeLocations.construct();
-        fastHandlerInstalled = true;
-#endif // ENABLE(WEBASSEMBLY_FAST_MEMORY)
     });
+#endif // ENABLE(WEBASSEMBLY_FAST_MEMORY)
 }
 
 } } // namespace JSC::Wasm

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,7 +28,7 @@
 
 #include "CodeBlock.h"
 #include "DebuggerPrimitives.h"
-#include "JSCInlines.h"
+#include "JSCellInlines.h"
 #include <wtf/text/StringBuilder.h>
 
 namespace JSC {
@@ -38,10 +38,10 @@ StackFrame::StackFrame(VM& vm, JSCell* owner, JSCell* callee)
 {
 }
 
-StackFrame::StackFrame(VM& vm, JSCell* owner, JSCell* callee, CodeBlock* codeBlock, unsigned bytecodeOffset)
+StackFrame::StackFrame(VM& vm, JSCell* owner, JSCell* callee, CodeBlock* codeBlock, BytecodeIndex bytecodeIndex)
     : m_callee(vm, owner, callee)
     , m_codeBlock(vm, owner, codeBlock)
-    , m_bytecodeOffset(bytecodeOffset)
+    , m_bytecodeIndex(bytecodeIndex)
 {
 }
 
@@ -55,7 +55,7 @@ intptr_t StackFrame::sourceID() const
 {
     if (!m_codeBlock)
         return noSourceID;
-    return m_codeBlock->ownerScriptExecutable()->sourceID();
+    return m_codeBlock->ownerExecutable()->sourceID();
 }
 
 String StackFrame::sourceURL() const
@@ -67,7 +67,7 @@ String StackFrame::sourceURL() const
         return "[native code]"_s;
     }
 
-    String sourceURL = m_codeBlock->ownerScriptExecutable()->sourceURL();
+    String sourceURL = m_codeBlock->ownerExecutable()->sourceURL();
     if (!sourceURL.isNull())
         return sourceURL;
     return emptyString();
@@ -111,11 +111,11 @@ void StackFrame::computeLineAndColumn(unsigned& line, unsigned& column) const
     int divot = 0;
     int unusedStartOffset = 0;
     int unusedEndOffset = 0;
-    m_codeBlock->expressionRangeForBytecodeOffset(m_bytecodeOffset, divot, unusedStartOffset, unusedEndOffset, line, column);
+    m_codeBlock->expressionRangeForBytecodeIndex(m_bytecodeIndex, divot, unusedStartOffset, unusedEndOffset, line, column);
 
-    ScriptExecutable* executable = m_codeBlock->ownerScriptExecutable();
-    if (executable->hasOverrideLineNumber())
-        line = executable->overrideLineNumber();
+    ScriptExecutable* executable = m_codeBlock->ownerExecutable();
+    if (Optional<int> overrideLineNumber = executable->overrideLineNumber(m_codeBlock->vm()))
+        line = overrideLineNumber.value();
 }
 
 String StackFrame::toString(VM& vm) const

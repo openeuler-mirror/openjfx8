@@ -26,8 +26,7 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef WTF_Collator_h
-#define WTF_Collator_h
+#pragma once
 
 #include <unicode/uconfig.h>
 #include <wtf/Noncopyable.h>
@@ -42,6 +41,7 @@ class StringView;
 #if UCONFIG_NO_COLLATION
 
 class Collator {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     explicit Collator(const char* = nullptr, bool = false) { }
 
@@ -52,6 +52,7 @@ public:
 #else
 
 class Collator {
+    WTF_MAKE_FAST_ALLOCATED;
     WTF_MAKE_NONCOPYABLE(Collator);
 public:
     // The value nullptr is a special one meaning the system default locale.
@@ -75,5 +76,3 @@ WTF_EXPORT_PRIVATE UCharIterator createIterator(StringView);
 }
 
 using WTF::Collator;
-
-#endif

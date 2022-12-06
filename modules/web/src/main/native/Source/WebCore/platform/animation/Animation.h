@@ -29,10 +29,6 @@
 #include "StyleScope.h"
 #include "TimingFunction.h"
 
-#if ENABLE(CSS_ANIMATIONS_LEVEL_2)
-#include "AnimationTrigger.h"
-#endif
-
 namespace WebCore {
 
 class Animation : public RefCounted<Animation> {
@@ -51,9 +47,6 @@ public:
     bool isPlayStateSet() const { return m_playStateSet; }
     bool isPropertySet() const { return m_propertySet; }
     bool isTimingFunctionSet() const { return m_timingFunctionSet; }
-#if ENABLE(CSS_ANIMATIONS_LEVEL_2)
-    bool isTriggerSet() const { return m_triggerSet; }
-#endif
 
     // Flags this to be the special "none" animation (animation-name: none)
     bool isNoneAnimation() const { return m_isNone; }
@@ -64,10 +57,6 @@ public:
 
     bool isEmpty() const
     {
-#if ENABLE(CSS_ANIMATIONS_LEVEL_2)
-        if (m_triggerSet)
-            return false;
-#endif
         return !m_directionSet && !m_durationSet && !m_fillModeSet
             && !m_nameSet && !m_playStateSet && !m_iterationCountSet
             && !m_delaySet && !m_timingFunctionSet && !m_propertySet;
@@ -87,9 +76,6 @@ public:
     void clearPlayState() { m_playStateSet = false; }
     void clearProperty() { m_propertySet = false; }
     void clearTimingFunction() { m_timingFunctionSet = false; }
-#if ENABLE(CSS_ANIMATIONS_LEVEL_2)
-    void clearTrigger() { m_triggerSet = false; }
-#endif
 
     void clearAll()
     {
@@ -102,18 +88,20 @@ public:
         clearPlayState();
         clearProperty();
         clearTimingFunction();
-#if ENABLE(CSS_ANIMATIONS_LEVEL_2)
-        clearTrigger();
-#endif
     }
 
     double delay() const { return m_delay; }
 
-    enum AnimationMode {
-        AnimateAll,
-        AnimateNone,
-        AnimateSingleProperty,
-        AnimateUnknownProperty
+    enum class TransitionMode : uint8_t {
+        All,
+        None,
+        SingleProperty,
+        UnknownProperty
+    };
+
+    struct TransitionProperty {
+        TransitionMode mode;
+        CSSPropertyID id;
     };
 
     enum AnimationDirection {
@@ -129,23 +117,21 @@ public:
     AnimationFillMode fillMode() const { return static_cast<AnimationFillMode>(m_fillMode); }
 
     double duration() const { return m_duration; }
+    double playbackRate() const { return m_playbackRate; }
 
     enum { IterationCountInfinite = -1 };
     double iterationCount() const { return m_iterationCount; }
     const String& name() const { return m_name; }
     Style::ScopeOrdinal nameStyleScopeOrdinal() const { return m_nameStyleScopeOrdinal; }
     AnimationPlayState playState() const { return static_cast<AnimationPlayState>(m_playState); }
-    CSSPropertyID property() const { return m_property; }
+    TransitionProperty property() const { return m_property; }
     const String& unknownProperty() const { return m_unknownProperty; }
     TimingFunction* timingFunction() const { return m_timingFunction.get(); }
-    AnimationMode animationMode() const { return static_cast<AnimationMode>(m_mode); }
-#if ENABLE(CSS_ANIMATIONS_LEVEL_2)
-    AnimationTrigger* trigger() const { return m_trigger.get(); }
-#endif
 
     void setDelay(double c) { m_delay = c; m_delaySet = true; }
     void setDirection(AnimationDirection d) { m_direction = d; m_directionSet = true; }
     void setDuration(double d) { ASSERT(d >= 0); m_duration = d; m_durationSet = true; }
+    void setPlaybackRate(double d) { m_playbackRate = d; }
     void setFillMode(AnimationFillMode f) { m_fillMode = static_cast<unsigned>(f); m_fillModeSet = true; }
     void setIterationCount(double c) { m_iterationCount = c; m_iterationCountSet = true; }
     void setName(const String& name, Style::ScopeOrdinal scope = Style::ScopeOrdinal::Element)
@@ -155,13 +141,9 @@ public:
         m_nameSet = true;
     }
     void setPlayState(AnimationPlayState d) { m_playState = static_cast<unsigned>(d); m_playStateSet = true; }
-    void setProperty(CSSPropertyID t) { m_property = t; m_propertySet = true; }
+    void setProperty(TransitionProperty t) { m_property = t; m_propertySet = true; }
     void setUnknownProperty(const String& property) { m_unknownProperty = property; }
     void setTimingFunction(RefPtr<TimingFunction>&& function) { m_timingFunction = WTFMove(function); m_timingFunctionSet = true; }
-    void setAnimationMode(AnimationMode mode) { m_mode = static_cast<unsigned>(mode); }
-#if ENABLE(CSS_ANIMATIONS_LEVEL_2)
-    void setTrigger(RefPtr<AnimationTrigger>&& trigger) { m_trigger = WTFMove(trigger); m_triggerSet = true; }
-#endif
 
     void setIsNoneAnimation(bool n) { m_isNone = n; }
 
@@ -182,21 +164,18 @@ private:
     Animation(const Animation& o);
 
     // Packs with m_refCount from the base class.
-    CSSPropertyID m_property { CSSPropertyInvalid };
+    TransitionProperty m_property { TransitionMode::All, CSSPropertyInvalid };
 
     String m_name;
     String m_unknownProperty;
     double m_iterationCount;
     double m_delay;
     double m_duration;
+    double m_playbackRate { 1 };
     RefPtr<TimingFunction> m_timingFunction;
-#if ENABLE(CSS_ANIMATIONS_LEVEL_2)
-    RefPtr<AnimationTrigger> m_trigger;
-#endif
 
     Style::ScopeOrdinal m_nameStyleScopeOrdinal { Style::ScopeOrdinal::Element };
 
-    unsigned m_mode : 2; // AnimationMode
     unsigned m_direction : 2; // AnimationDirection
     unsigned m_fillMode : 2; // AnimationFillMode
     unsigned m_playState : 2; // AnimationPlayState
@@ -210,9 +189,6 @@ private:
     bool m_playStateSet : 1;
     bool m_propertySet : 1;
     bool m_timingFunctionSet : 1;
-#if ENABLE(CSS_ANIMATIONS_LEVEL_2)
-    bool m_triggerSet : 1;
-#endif
 
     bool m_isNone : 1;
 
@@ -224,11 +200,13 @@ public:
     static double initialIterationCount() { return 1.0; }
     static const String& initialName();
     static AnimationPlayState initialPlayState() { return AnimationPlayState::Playing; }
-    static CSSPropertyID initialProperty() { return CSSPropertyInvalid; }
+    static TransitionProperty initialProperty() { return { TransitionMode::All, CSSPropertyInvalid }; }
     static Ref<TimingFunction> initialTimingFunction() { return CubicBezierTimingFunction::create(); }
-#if ENABLE(CSS_ANIMATIONS_LEVEL_2)
-    static Ref<AnimationTrigger> initialTrigger() { return AutoAnimationTrigger::create(); }
-#endif
 };
+
+WTF::TextStream& operator<<(WTF::TextStream&, AnimationPlayState);
+WTF::TextStream& operator<<(WTF::TextStream&, Animation::TransitionProperty);
+WTF::TextStream& operator<<(WTF::TextStream&, Animation::AnimationDirection);
+WTF::TextStream& operator<<(WTF::TextStream&, const Animation&);
 
 } // namespace WebCore

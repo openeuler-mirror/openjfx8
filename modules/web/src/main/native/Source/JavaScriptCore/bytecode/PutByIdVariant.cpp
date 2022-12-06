@@ -27,8 +27,7 @@
 #include "PutByIdVariant.h"
 
 #include "CallLinkStatus.h"
-#include "JSCInlines.h"
-#include <wtf/ListDump.h>
+#include "HeapInlines.h"
 
 namespace JSC {
 
@@ -45,29 +44,26 @@ PutByIdVariant& PutByIdVariant::operator=(const PutByIdVariant& other)
     m_newStructure = other.m_newStructure;
     m_conditionSet = other.m_conditionSet;
     m_offset = other.m_offset;
-    m_requiredType = other.m_requiredType;
     if (other.m_callLinkStatus)
-        m_callLinkStatus = std::make_unique<CallLinkStatus>(*other.m_callLinkStatus);
+        m_callLinkStatus = makeUnique<CallLinkStatus>(*other.m_callLinkStatus);
     else
         m_callLinkStatus = nullptr;
     return *this;
 }
 
 PutByIdVariant PutByIdVariant::replace(
-    const StructureSet& structure, PropertyOffset offset, const InferredType::Descriptor& requiredType)
+    const StructureSet& structure, PropertyOffset offset)
 {
     PutByIdVariant result;
     result.m_kind = Replace;
     result.m_oldStructure = structure;
     result.m_offset = offset;
-    result.m_requiredType = requiredType;
     return result;
 }
 
 PutByIdVariant PutByIdVariant::transition(
     const StructureSet& oldStructure, Structure* newStructure,
-    const ObjectPropertyConditionSet& conditionSet, PropertyOffset offset,
-    const InferredType::Descriptor& requiredType)
+    const ObjectPropertyConditionSet& conditionSet, PropertyOffset offset)
 {
     PutByIdVariant result;
     result.m_kind = Transition;
@@ -75,7 +71,6 @@ PutByIdVariant PutByIdVariant::transition(
     result.m_newStructure = newStructure;
     result.m_conditionSet = conditionSet;
     result.m_offset = offset;
-    result.m_requiredType = requiredType;
     return result;
 }
 
@@ -90,7 +85,6 @@ PutByIdVariant PutByIdVariant::setter(
     result.m_conditionSet = conditionSet;
     result.m_offset = offset;
     result.m_callLinkStatus = WTFMove(callLinkStatus);
-    result.m_requiredType = InferredType::Top;
     return result;
 }
 
@@ -157,9 +151,6 @@ bool PutByIdVariant::makesCalls() const
 bool PutByIdVariant::attemptToMerge(const PutByIdVariant& other)
 {
     if (m_offset != other.m_offset)
-        return false;
-
-    if (m_requiredType != other.m_requiredType)
         return false;
 
     switch (m_kind) {
@@ -278,22 +269,22 @@ void PutByIdVariant::markIfCheap(SlotVisitor& visitor)
         m_newStructure->markIfCheap(visitor);
 }
 
-bool PutByIdVariant::finalize()
+bool PutByIdVariant::finalize(VM& vm)
 {
-    if (!m_oldStructure.isStillAlive())
+    if (!m_oldStructure.isStillAlive(vm))
         return false;
-    if (m_newStructure && !Heap::isMarked(m_newStructure))
+    if (m_newStructure && !vm.heap.isMarked(m_newStructure))
         return false;
-    if (!m_conditionSet.areStillLive())
+    if (!m_conditionSet.areStillLive(vm))
         return false;
-    if (m_callLinkStatus && !m_callLinkStatus->finalize())
+    if (m_callLinkStatus && !m_callLinkStatus->finalize(vm))
         return false;
     return true;
 }
 
 void PutByIdVariant::dump(PrintStream& out) const
 {
-    dumpInContext(out, 0);
+    dumpInContext(out, nullptr);
 }
 
 void PutByIdVariant::dumpInContext(PrintStream& out, DumpContext* context) const
@@ -305,16 +296,14 @@ void PutByIdVariant::dumpInContext(PrintStream& out, DumpContext* context) const
 
     case Replace:
         out.print(
-            "<Replace: ", inContext(structure(), context), ", offset = ", offset(), ", ",
-            inContext(requiredType(), context), ">");
+            "<Replace: ", inContext(structure(), context), ", offset = ", offset(), ", ", ">");
         return;
 
     case Transition:
         out.print(
             "<Transition: ", inContext(oldStructure(), context), " to ",
             pointerDumpInContext(newStructure(), context), ", [",
-            inContext(m_conditionSet, context), "], offset = ", offset(), ", ",
-            inContext(requiredType(), context), ">");
+            inContext(m_conditionSet, context), "], offset = ", offset(), ", ", ">");
         return;
 
     case Setter:

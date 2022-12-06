@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2020 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,70 +25,38 @@
 
 #pragma once
 
+#include "ECMAMode.h"
 #include "StructureIDTable.h"
 
 namespace JSC {
 
-enum PutByIdFlags : int32_t {
-    PutByIdNone = 0,
+class PutByIdFlags {
+public:
+    constexpr static PutByIdFlags create(ECMAMode ecmaMode)
+    {
+        return PutByIdFlags(false, ecmaMode);
+    }
 
-    // This flag indicates that the put_by_id is direct. That means that we store the property without
-    // checking if the prototype chain has a setter.
-    PutByIdIsDirect = 0x1,
-    PutByIdPersistentFlagsMask = 0x1,
+    // A direct put_by_id means that we store the property without checking if the
+    // prototype chain has a setter.
+    constexpr static PutByIdFlags createDirect(ECMAMode ecmaMode)
+    {
+        return PutByIdFlags(true, ecmaMode);
+    }
 
-    // NOTE: The values below must be in sync with what is in LowLevelInterpreter.asm.
+    bool isDirect() const { return m_isDirect; }
+    ECMAMode ecmaMode() const { return m_ecmaMode; }
 
-    // Determining the required inferred type involves first checking the primary type mask, and then
-    // using that to figure out the meaning of the secondary mask:
-    // switch (flags & PutByIdPrimaryTypeMask) {
-    // case PutByIdPrimaryTypeSecondary:
-    //     switch (flags & PutByIdSecondaryTypeMask) {
-    //     ...
-    //     }
-    //     break;
-    // case PutByIdPrimaryTypeObjectWithStructure:
-    // case PutByIdPrimaryTypeObjectWithStructureOrOther:
-    //     StructureID structureID = decodeStructureID(flags);
-    //     break;
-    // }
-    PutByIdPrimaryTypeMask = 0x6,
-    PutByIdPrimaryTypeSecondary = 0x0, // Need to check the secondary type mask for the type.
-    PutByIdPrimaryTypeObjectWithStructure = 0x2, // Secondary type has structure ID.
-    PutByIdPrimaryTypeObjectWithStructureOrOther = 0x4, // Secondary type has structure ID.
+private:
+    constexpr PutByIdFlags(bool isDirect, ECMAMode ecmaMode)
+        : m_isDirect(isDirect)
+        , m_ecmaMode(ecmaMode)
+    {
+    }
 
-    PutByIdSecondaryTypeMask = -0x8,
-    PutByIdSecondaryTypeBottom = 0x0,
-    PutByIdSecondaryTypeBoolean = 0x8,
-    PutByIdSecondaryTypeOther = 0x10,
-    PutByIdSecondaryTypeInt32 = 0x18,
-    PutByIdSecondaryTypeNumber = 0x20,
-    PutByIdSecondaryTypeString = 0x28,
-    PutByIdSecondaryTypeSymbol = 0x30,
-    PutByIdSecondaryTypeObject = 0x38,
-    PutByIdSecondaryTypeObjectOrOther = 0x40,
-    PutByIdSecondaryTypeTop = 0x48
+    bool m_isDirect;
+    ECMAMode m_ecmaMode;
 };
-
-inline PutByIdFlags encodeStructureID(StructureID id)
-{
-#if USE(JSVALUE64)
-    return static_cast<PutByIdFlags>(static_cast<PutByIdFlags>(id) << 3);
-#else
-    PutByIdFlags result = bitwise_cast<PutByIdFlags>(id);
-    ASSERT(!(result & ~PutByIdSecondaryTypeMask));
-    return result;
-#endif
-}
-
-inline StructureID decodeStructureID(PutByIdFlags flags)
-{
-#if USE(JSVALUE64)
-    return static_cast<StructureID>(flags >> 3);
-#else
-    return bitwise_cast<StructureID>(flags & PutByIdSecondaryTypeMask);
-#endif
-}
 
 } // namespace JSC
 

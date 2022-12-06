@@ -29,6 +29,7 @@
 #include "AccessibilityMenuList.h"
 #include "CSSFontSelector.h"
 #include "Chrome.h"
+#include "ColorBlending.h"
 #include "Frame.h"
 #include "FrameView.h"
 #include "HTMLNames.h"
@@ -48,7 +49,7 @@
 #include <math.h>
 #include <wtf/IsoMallocInlines.h>
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
 #include "LocalizedStrings.h"
 #endif
 
@@ -58,7 +59,7 @@ using namespace HTMLNames;
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(RenderMenuList);
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
 static size_t selectedOptionCount(const RenderMenuList& renderMenuList)
 {
     const Vector<HTMLElement*>& listItems = renderMenuList.selectElement().listItems();
@@ -77,7 +78,7 @@ RenderMenuList::RenderMenuList(HTMLSelectElement& element, RenderStyle&& style)
     : RenderFlexibleBox(element, WTFMove(style))
     , m_needsOptionsWidthUpdate(true)
     , m_optionsWidth(0)
-#if !PLATFORM(IOS)
+#if !PLATFORM(IOS_FAMILY)
     , m_popupIsVisible(false)
 #endif
 {
@@ -90,7 +91,7 @@ RenderMenuList::~RenderMenuList()
 
 void RenderMenuList::willBeDestroyed()
 {
-#if !PLATFORM(IOS)
+#if !PLATFORM(IOS_FAMILY)
     if (m_popup)
         m_popup->disconnectClient();
     m_popup = nullptr;
@@ -130,7 +131,7 @@ void RenderMenuList::adjustInnerStyle()
         innerStyle.setTextAlign(TextAlignMode::Left);
         TextDirection direction = (m_buttonText && m_buttonText->text().defaultWritingDirection() == U_RIGHT_TO_LEFT) ? TextDirection::RTL : TextDirection::LTR;
         innerStyle.setDirection(direction);
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     } else if (document().page()->chrome().selectItemAlignmentFollowsMenuWritingDirection()) {
         innerStyle.setTextAlign(style().direction() == TextDirection::LTR ? TextAlignMode::Left : TextAlignMode::Right);
         TextDirection direction;
@@ -157,7 +158,7 @@ void RenderMenuList::adjustInnerStyle()
         innerStyle.setDirection(m_optionStyle->direction());
         innerStyle.setUnicodeBidi(m_optionStyle->unicodeBidi());
     }
-#endif // !PLATFORM(IOS)
+#endif // !PLATFORM(IOS_FAMILY)
 }
 
 HTMLSelectElement& RenderMenuList::selectElement() const
@@ -232,7 +233,7 @@ void RenderMenuList::updateFromElement()
         m_needsOptionsWidthUpdate = false;
     }
 
-#if !PLATFORM(IOS)
+#if !PLATFORM(IOS_FAMILY)
     if (m_popupIsVisible)
         m_popup->updateFromElement();
     else
@@ -256,7 +257,7 @@ void RenderMenuList::setTextFromOption(int optionIndex)
         }
     }
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     if (multiple()) {
         size_t count = selectedOptionCount(*this);
         if (count != 1)
@@ -270,7 +271,7 @@ void RenderMenuList::setTextFromOption(int optionIndex)
 
 void RenderMenuList::setText(const String& s)
 {
-    String textToUse = s.isEmpty() ? String("\n"_s) : s;
+    String textToUse = s.isEmpty() ? "\n"_str : s;
 
     if (m_buttonText)
         m_buttonText->setText(textToUse.impl(), true);
@@ -344,7 +345,7 @@ void RenderMenuList::computePreferredLogicalWidths()
     setPreferredLogicalWidthsDirty(false);
 }
 
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
 NO_RETURN_DUE_TO_ASSERT
 void RenderMenuList::showPopup()
 {
@@ -372,7 +373,7 @@ void RenderMenuList::showPopup()
 
 void RenderMenuList::hidePopup()
 {
-#if !PLATFORM(IOS)
+#if !PLATFORM(IOS_FAMILY)
     if (m_popup)
         m_popup->hide();
 #endif
@@ -420,8 +421,9 @@ void RenderMenuList::didUpdateActiveOption(int optionIndex)
     if (listIndex < 0 || listIndex >= static_cast<int>(selectElement().listItems().size()))
         return;
 
-    if (auto* menuList = downcast<AccessibilityMenuList>(axCache->get(this)))
-        menuList->didUpdateActiveOption(optionIndex);
+    auto* axObject = axCache->get(this);
+    if (is<AccessibilityMenuList>(axObject))
+        downcast<AccessibilityMenuList>(*axObject).didUpdateActiveOption(optionIndex);
 }
 
 String RenderMenuList::itemText(unsigned listIndex) const
@@ -531,14 +533,14 @@ void RenderMenuList::getItemBackgroundColor(unsigned listIndex, Color& itemBackg
     }
 
     // Otherwise, the item's background is overlayed on top of the menu background.
-    backgroundColor = style().visitedDependentColorWithColorFilter(CSSPropertyBackgroundColor).blend(backgroundColor);
+    backgroundColor = blendSourceOver(style().visitedDependentColorWithColorFilter(CSSPropertyBackgroundColor), backgroundColor);
     if (backgroundColor.isOpaque()) {
         itemBackgroundColor = backgroundColor;
         return;
     }
 
     // If the menu background is not opaque, then add an opaque white background behind.
-    itemBackgroundColor = Color(Color::white).blend(backgroundColor);
+    itemBackgroundColor = blendSourceOver(Color::white, backgroundColor);
 }
 
 PopupMenuStyle RenderMenuList::menuStyle() const
@@ -611,7 +613,8 @@ int RenderMenuList::selectedIndex() const
 
 void RenderMenuList::popupDidHide()
 {
-#if !PLATFORM(IOS)
+#if !PLATFORM(IOS_FAMILY)
+    // PopupMenuMac::show in WebKitLegacy can call this callback even when popup had already been dismissed.
     m_popupIsVisible = false;
 #endif
 }

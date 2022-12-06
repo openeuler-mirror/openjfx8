@@ -26,6 +26,7 @@
 #include "RenderCounter.h"
 #include "RenderStyle.h"
 #include "ShadowData.h"
+#include "StyleCustomPropertyData.h"
 #include "StyleFilterData.h"
 #include "StyleTransformData.h"
 #include "StyleImage.h"
@@ -33,8 +34,11 @@
 #include "StyleScrollSnapPoints.h"
 #include <wtf/PointerComparison.h>
 #include <wtf/RefPtr.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
+
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(StyleRareNonInheritedData);
 
 StyleRareNonInheritedData::StyleRareNonInheritedData()
     : opacity(RenderStyle::initialOpacity())
@@ -62,27 +66,28 @@ StyleRareNonInheritedData::StyleRareNonInheritedData()
 #endif
     , willChange(RenderStyle::initialWillChange())
     , mask(FillLayerType::Mask)
+    , maskBoxImage(NinePieceImage::Type::Mask)
     , objectPosition(RenderStyle::initialObjectPosition())
     , shapeOutside(RenderStyle::initialShapeOutside())
     , shapeMargin(RenderStyle::initialShapeMargin())
     , shapeImageThreshold(RenderStyle::initialShapeImageThreshold())
+    , order(RenderStyle::initialOrder())
     , clipPath(RenderStyle::initialClipPath())
     , visitedLinkBackgroundColor(RenderStyle::initialBackgroundColor())
-    , order(RenderStyle::initialOrder())
     , alignContent(RenderStyle::initialContentAlignment())
     , alignItems(RenderStyle::initialDefaultAlignment())
     , alignSelf(RenderStyle::initialSelfAlignment())
     , justifyContent(RenderStyle::initialContentAlignment())
     , justifyItems(RenderStyle::initialJustifyItems())
     , justifySelf(RenderStyle::initialSelfAlignment())
-#if ENABLE(TOUCH_EVENTS)
-    , touchAction(static_cast<unsigned>(RenderStyle::initialTouchAction()))
-#endif
+    , customProperties(StyleCustomPropertyData::create())
+    , touchActions(RenderStyle::initialTouchActions())
     , pageSizeType(PAGE_SIZE_AUTO)
     , transformStyle3D(static_cast<unsigned>(RenderStyle::initialTransformStyle3D()))
     , backfaceVisibility(static_cast<unsigned>(RenderStyle::initialBackfaceVisibility()))
     , userDrag(static_cast<unsigned>(RenderStyle::initialUserDrag()))
     , textOverflow(static_cast<unsigned>(RenderStyle::initialTextOverflow()))
+    , useSmoothScrolling(static_cast<unsigned>(RenderStyle::initialUseSmoothScrolling()))
     , marginBeforeCollapse(static_cast<unsigned>(MarginCollapse::Collapse))
     , marginAfterCollapse(static_cast<unsigned>(MarginCollapse::Collapse))
     , appearance(static_cast<unsigned>(RenderStyle::initialAppearance()))
@@ -108,7 +113,6 @@ StyleRareNonInheritedData::StyleRareNonInheritedData()
     , columnGap(RenderStyle::initialColumnGap())
     , rowGap(RenderStyle::initialRowGap())
 {
-    maskBoxImage.setMaskDefaults();
 }
 
 inline StyleRareNonInheritedData::StyleRareNonInheritedData(const StyleRareNonInheritedData& o)
@@ -137,13 +141,13 @@ inline StyleRareNonInheritedData::StyleRareNonInheritedData(const StyleRareNonIn
     , scrollSnapArea(o.scrollSnapArea)
 #endif
     , content(o.content ? o.content->clone() : nullptr)
-    , counterDirectives(o.counterDirectives ? std::make_unique<CounterDirectiveMap>(*o.counterDirectives) : nullptr)
+    , counterDirectives(o.counterDirectives ? makeUnique<CounterDirectiveMap>(*o.counterDirectives) : nullptr)
     , altText(o.altText)
-    , boxShadow(o.boxShadow ? std::make_unique<ShadowData>(*o.boxShadow) : nullptr)
+    , boxShadow(o.boxShadow ? makeUnique<ShadowData>(*o.boxShadow) : nullptr)
     , willChange(o.willChange)
     , boxReflect(o.boxReflect)
-    , animations(o.animations ? std::make_unique<AnimationList>(*o.animations) : nullptr)
-    , transitions(o.transitions ? std::make_unique<AnimationList>(*o.transitions) : nullptr)
+    , animations(o.animations ? o.animations->copy() : o.animations)
+    , transitions(o.transitions ? o.transitions->copy() : o.transitions)
     , mask(o.mask)
     , maskBoxImage(o.maskBoxImage)
     , pageSize(o.pageSize)
@@ -151,6 +155,7 @@ inline StyleRareNonInheritedData::StyleRareNonInheritedData(const StyleRareNonIn
     , shapeOutside(o.shapeOutside)
     , shapeMargin(o.shapeMargin)
     , shapeImageThreshold(o.shapeImageThreshold)
+    , order(o.order)
     , clipPath(o.clipPath)
     , textDecorationColor(o.textDecorationColor)
     , visitedLinkTextDecorationColor(o.visitedLinkTextDecorationColor)
@@ -160,21 +165,21 @@ inline StyleRareNonInheritedData::StyleRareNonInheritedData(const StyleRareNonIn
     , visitedLinkBorderRightColor(o.visitedLinkBorderRightColor)
     , visitedLinkBorderTopColor(o.visitedLinkBorderTopColor)
     , visitedLinkBorderBottomColor(o.visitedLinkBorderBottomColor)
-    , order(o.order)
     , alignContent(o.alignContent)
     , alignItems(o.alignItems)
     , alignSelf(o.alignSelf)
     , justifyContent(o.justifyContent)
     , justifyItems(o.justifyItems)
     , justifySelf(o.justifySelf)
-#if ENABLE(TOUCH_EVENTS)
-    , touchAction(o.touchAction)
-#endif
+    , customProperties(o.customProperties)
+    , customPaintWatchedProperties(o.customPaintWatchedProperties ? makeUnique<HashSet<String>>(*o.customPaintWatchedProperties) : nullptr)
+    , touchActions(o.touchActions)
     , pageSizeType(o.pageSizeType)
     , transformStyle3D(o.transformStyle3D)
     , backfaceVisibility(o.backfaceVisibility)
     , userDrag(o.userDrag)
     , textOverflow(o.textOverflow)
+    , useSmoothScrolling(o.useSmoothScrolling)
     , marginBeforeCollapse(o.marginBeforeCollapse)
     , marginAfterCollapse(o.marginAfterCollapse)
     , appearance(o.appearance)
@@ -219,9 +224,6 @@ bool StyleRareNonInheritedData::operator==(const StyleRareNonInheritedData& o) c
         && perspectiveOriginY == o.perspectiveOriginY
         && lineClamp == o.lineClamp
         && initialLetter == o.initialLetter
-#if ENABLE(DASHBOARD_SUPPORT)
-        && dashboardRegions == o.dashboardRegions
-#endif
         && deprecatedFlexibleBox == o.deprecatedFlexibleBox
         && flexibleBox == o.flexibleBox
         && marquee == o.marquee
@@ -252,6 +254,7 @@ bool StyleRareNonInheritedData::operator==(const StyleRareNonInheritedData& o) c
         && arePointingToEqualData(shapeOutside, o.shapeOutside)
         && shapeMargin == o.shapeMargin
         && shapeImageThreshold == o.shapeImageThreshold
+        && order == o.order
         && arePointingToEqualData(clipPath, o.clipPath)
         && textDecorationColor == o.textDecorationColor
         && visitedLinkTextDecorationColor == o.visitedLinkTextDecorationColor
@@ -261,27 +264,28 @@ bool StyleRareNonInheritedData::operator==(const StyleRareNonInheritedData& o) c
         && visitedLinkBorderRightColor == o.visitedLinkBorderRightColor
         && visitedLinkBorderTopColor == o.visitedLinkBorderTopColor
         && visitedLinkBorderBottomColor == o.visitedLinkBorderBottomColor
-        && order == o.order
         && alignContent == o.alignContent
         && alignItems == o.alignItems
         && alignSelf == o.alignSelf
         && justifyContent == o.justifyContent
         && justifyItems == o.justifyItems
         && justifySelf == o.justifySelf
+        && customProperties == o.customProperties
+        && ((customPaintWatchedProperties && o.customPaintWatchedProperties && *customPaintWatchedProperties == *o.customPaintWatchedProperties)
+            || (!customPaintWatchedProperties && !o.customPaintWatchedProperties))
         && pageSizeType == o.pageSizeType
         && transformStyle3D == o.transformStyle3D
         && backfaceVisibility == o.backfaceVisibility
         && userDrag == o.userDrag
         && textOverflow == o.textOverflow
+        && useSmoothScrolling == o.useSmoothScrolling
         && marginBeforeCollapse == o.marginBeforeCollapse
         && marginAfterCollapse == o.marginAfterCollapse
         && appearance == o.appearance
         && borderFit == o.borderFit
         && textCombine == o.textCombine
         && textDecorationStyle == o.textDecorationStyle
-#if ENABLE(TOUCH_EVENTS)
-        && touchAction == o.touchAction
-#endif
+        && touchActions == o.touchActions
 #if ENABLE(CSS_COMPOSITING)
         && effectiveBlendMode == o.effectiveBlendMode
         && isolation == o.isolation

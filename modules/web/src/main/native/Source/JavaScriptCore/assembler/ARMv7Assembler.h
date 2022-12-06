@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2009-2019 Apple Inc. All rights reserved.
  * Copyright (C) 2010 University of Szeged
  *
  * Redistribution and use in source and binary forms, with or without
@@ -30,6 +30,7 @@
 
 #include "AssemblerBuffer.h"
 #include "AssemblerCommon.h"
+#include "RegisterInfo.h"
 #include <limits.h>
 #include <wtf/Assertions.h>
 #include <wtf/Vector.h>
@@ -37,139 +38,56 @@
 
 namespace JSC {
 
-namespace ARMRegisters {
+namespace RegisterNames {
 
     typedef enum : int8_t {
-        r0,
-        r1,
-        r2,
-        r3,
-        r4,
-        r5,
-        r6,
-        r7,
-        r8,
-        r9,
-        r10,
-        r11,
-        r12,
-        r13,
-        r14,
-        r15,
+#define REGISTER_ID(id, name, r, cs) id,
+        FOR_EACH_GP_REGISTER(REGISTER_ID)
+#undef REGISTER_ID
 
-        fp = r7,   // frame pointer
-        sb = r9,   // static base
-        sl = r10,  // stack limit
-        ip = r12,
-        sp = r13,
-        lr = r14,
-        pc = r15,
+#define REGISTER_ALIAS(id, name, alias) id = alias,
+        FOR_EACH_REGISTER_ALIAS(REGISTER_ALIAS)
+#undef REGISTER_ALIAS
         InvalidGPRReg = -1,
     } RegisterID;
 
     typedef enum : int8_t {
-        apsr,
-        fpscr
+#define REGISTER_ID(id, name) id,
+        FOR_EACH_SP_REGISTER(REGISTER_ID)
+#undef REGISTER_ID
     } SPRegisterID;
 
     typedef enum : int8_t {
-        s0,
-        s1,
-        s2,
-        s3,
-        s4,
-        s5,
-        s6,
-        s7,
-        s8,
-        s9,
-        s10,
-        s11,
-        s12,
-        s13,
-        s14,
-        s15,
-        s16,
-        s17,
-        s18,
-        s19,
-        s20,
-        s21,
-        s22,
-        s23,
-        s24,
-        s25,
-        s26,
-        s27,
-        s28,
-        s29,
-        s30,
-        s31,
+#define REGISTER_ID(id, name, r, cs) id,
+        FOR_EACH_FP_SINGLE_REGISTER(REGISTER_ID)
+#undef REGISTER_ID
     } FPSingleRegisterID;
 
     typedef enum : int8_t {
-        d0,
-        d1,
-        d2,
-        d3,
-        d4,
-        d5,
-        d6,
-        d7,
-        d8,
-        d9,
-        d10,
-        d11,
-        d12,
-        d13,
-        d14,
-        d15,
-#if CPU(ARM_NEON) || CPU(ARM_VFP_V3_D32)
-        d16,
-        d17,
-        d18,
-        d19,
-        d20,
-        d21,
-        d22,
-        d23,
-        d24,
-        d25,
-        d26,
-        d27,
-        d28,
-        d29,
-        d30,
-        d31,
-#endif // CPU(ARM_NEON) || CPU(ARM_VFP_V3_D32)
+#define REGISTER_ID(id, name, r, cs) id,
+        FOR_EACH_FP_DOUBLE_REGISTER(REGISTER_ID)
+#undef REGISTER_ID
         InvalidFPRReg = -1,
     } FPDoubleRegisterID;
 
 #if CPU(ARM_NEON)
     typedef enum : int8_t {
-        q0,
-        q1,
-        q2,
-        q3,
-        q4,
-        q5,
-        q6,
-        q7,
-        q8,
-        q9,
-        q10,
-        q11,
-        q12,
-        q13,
-        q14,
-        q15,
+#define REGISTER_ID(id, name, r, cs) id,
+        FOR_EACH_FP_QUAD_REGISTER(REGISTER_ID)
+#undef REGISTER_ID
     } FPQuadRegisterID;
 #endif // CPU(ARM_NEON)
 
     inline FPSingleRegisterID asSingle(FPDoubleRegisterID reg)
     {
-        ASSERT(reg < d16);
+        ASSERT(reg <= d15);
         return (FPSingleRegisterID)(reg << 1);
+    }
+
+    inline FPSingleRegisterID asSingleUpper(FPDoubleRegisterID reg)
+    {
+        ASSERT(reg <= d15);
+        return (FPSingleRegisterID)((reg << 1) + 1);
     }
 
     inline FPDoubleRegisterID asDouble(FPSingleRegisterID reg)
@@ -185,9 +103,9 @@ class ARMThumbImmediate {
     friend class ARMv7Assembler;
 
     typedef uint8_t ThumbImmediateType;
-    static const ThumbImmediateType TypeInvalid = 0;
-    static const ThumbImmediateType TypeEncoded = 1;
-    static const ThumbImmediateType TypeUInt16 = 2;
+    static constexpr ThumbImmediateType TypeInvalid = 0;
+    static constexpr ThumbImmediateType TypeEncoded = 1;
+    static constexpr ThumbImmediateType TypeUInt16 = 2;
 
     typedef union {
         int16_t asInt;
@@ -449,10 +367,9 @@ public:
     {
         ASSERT(id >= firstRegister() && id <= lastRegister());
         static const char* const nameForRegister[numberOfRegisters()] = {
-            "r0", "r1", "r2", "r3",
-            "r4", "r5", "r6", "fp",
-            "r8", "r9", "r10", "r11",
-            "ip", "sp", "lr", "pc"
+#define REGISTER_NAME(id, name, r, cs) name,
+        FOR_EACH_GP_REGISTER(REGISTER_NAME)
+#undef REGISTER_NAME
         };
         return nameForRegister[id];
     }
@@ -461,7 +378,9 @@ public:
     {
         ASSERT(id >= firstSPRegister() && id <= lastSPRegister());
         static const char* const nameForRegister[numberOfSPRegisters()] = {
-            "apsr", "fpscr"
+#define REGISTER_NAME(id, name) name,
+        FOR_EACH_SP_REGISTER(REGISTER_NAME)
+#undef REGISTER_NAME
         };
         return nameForRegister[id];
     }
@@ -470,16 +389,9 @@ public:
     {
         ASSERT(id >= firstFPRegister() && id <= lastFPRegister());
         static const char* const nameForRegister[numberOfFPRegisters()] = {
-            "d0", "d1", "d2", "d3",
-            "d4", "d5", "d6", "d7",
-            "d8", "d9", "d10", "d11",
-            "d12", "d13", "d14", "d15",
-#if CPU(ARM_NEON) || CPU(ARM_VFP_V3_D32)
-            "d16", "d17", "d18", "d19",
-            "d20", "d21", "d22", "d23",
-            "d24", "d25", "d26", "d27",
-            "d28", "d29", "d30", "d31"
-#endif // CPU(ARM_NEON) || CPU(ARM_VFP_V3_D32)
+#define REGISTER_NAME(id, name, r, cs) name,
+        FOR_EACH_FP_DOUBLE_REGISTER(REGISTER_NAME)
+#undef REGISTER_NAME
         };
         return nameForRegister[id];
     }
@@ -683,6 +595,8 @@ private:
         OP_VSQRT_T1     = 0xEEB0,
         OP_VCVTSD_T1    = 0xEEB0,
         OP_VCVTDS_T1    = 0xEEB0,
+        OP_VAND_T1      = 0xEF00,
+        OP_VORR_T1      = 0xEF20,
         OP_B_T3a        = 0xF000,
         OP_B_T4a        = 0xF000,
         OP_AND_imm_T1   = 0xF000,
@@ -741,6 +655,8 @@ private:
     } OpcodeID1;
 
     typedef enum {
+        OP_VAND_T1b      = 0x0010,
+        OP_VORR_T1b      = 0x0010,
         OP_VADD_T2b      = 0x0A00,
         OP_VDIVb         = 0x0A00,
         OP_FLDSb         = 0x0A00,
@@ -1117,9 +1033,13 @@ public:
         ASSERT(rn != ARMRegisters::pc); // LDR (literal)
         ASSERT(imm.isUInt12());
 
-        if (!((rt | rn) & 8) && imm.isUInt7())
+        if (!((rt | rn) & 8) && imm.isUInt7() && !(imm.getUInt7() % 4)) {
+            // We can only use Encoding T1 when imm is a multiple of 4.
+            // For details see A8.8.63 on ARM Architecture Reference
+            // Manual ARMv7-A and ARMv7-R edition available on
+            // https://static.docs.arm.com/ddi0406/cd/DDI0406C_d_armv7ar_arm.pdf
             m_formatter.oneWordOp5Imm5Reg3Reg3(OP_LDR_imm_T1, imm.getUInt7() >> 2, rn, rt);
-        else if ((rn == ARMRegisters::sp) && !(rt & 8) && imm.isUInt10())
+        } else if ((rn == ARMRegisters::sp) && !(rt & 8) && imm.isUInt10())
             m_formatter.oneWordOp5Reg3Imm8(OP_LDR_imm_T2, rt, static_cast<uint8_t>(imm.getUInt10() >> 2));
         else
             m_formatter.twoWordOp12Reg4Reg4Imm12(OP_LDR_imm_T3, rn, rt, imm.getUInt12());
@@ -1907,6 +1827,16 @@ public:
     }
 #endif
 
+    void vand(FPDoubleRegisterID rd, FPDoubleRegisterID rn, FPDoubleRegisterID rm)
+    {
+        m_formatter.vfpOp(OP_VAND_T1, OP_VAND_T1b, true, rn, rd, rm);
+    }
+
+    void vorr(FPDoubleRegisterID rd, FPDoubleRegisterID rn, FPDoubleRegisterID rm)
+    {
+        m_formatter.vfpOp(OP_VORR_T1, OP_VORR_T1b, true, rn, rd, rm);
+    }
+
     void vadd(FPDoubleRegisterID rd, FPDoubleRegisterID rn, FPDoubleRegisterID rm)
     {
         m_formatter.vfpOp(OP_VADD_T2, OP_VADD_T2b, true, rn, rd, rm);
@@ -2057,7 +1987,10 @@ public:
         return OP_NOP_T2a | (OP_NOP_T2b << 16);
     }
 
-    static void fillNops(void* base, size_t size, bool isCopyingToExecutableMemory)
+    using CopyFunction = void*(&)(void*, const void*, size_t);
+
+    template <CopyFunction copy>
+    ALWAYS_INLINE static void fillNops(void* base, size_t size)
     {
         RELEASE_ASSERT(!(size % sizeof(int16_t)));
 
@@ -2065,10 +1998,7 @@ public:
         const size_t num32s = size / sizeof(int32_t);
         for (size_t i = 0; i < num32s; i++) {
             const int32_t insn = nopPseudo32();
-            if (isCopyingToExecutableMemory)
-                performJITMemcpy(ptr, &insn, sizeof(int32_t));
-            else
-                memcpy(ptr, &insn, sizeof(int32_t));
+            copy(ptr, &insn, sizeof(int32_t));
             ptr += sizeof(int32_t);
         }
 
@@ -2077,10 +2007,7 @@ public:
         ASSERT(num16s * sizeof(int16_t) + num32s * sizeof(int32_t) == size);
         if (num16s) {
             const int16_t insn = nopPseudo16();
-            if (isCopyingToExecutableMemory)
-                performJITMemcpy(ptr, &insn, sizeof(int16_t));
-            else
-                memcpy(ptr, &insn, sizeof(int16_t));
+            copy(ptr, &insn, sizeof(int16_t));
         }
     }
 
@@ -2216,30 +2143,31 @@ public:
         return m_jumpsToLink;
     }
 
+    template<CopyFunction copy>
     static void ALWAYS_INLINE link(LinkRecord& record, uint8_t* from, const uint8_t* fromInstruction8, uint8_t* to)
     {
         const uint16_t* fromInstruction = reinterpret_cast_ptr<const uint16_t*>(fromInstruction8);
         switch (record.linkType()) {
         case LinkJumpT1:
-            linkJumpT1(record.condition(), reinterpret_cast_ptr<uint16_t*>(from), fromInstruction, to);
+            linkJumpT1<copy>(record.condition(), reinterpret_cast_ptr<uint16_t*>(from), fromInstruction, to);
             break;
         case LinkJumpT2:
-            linkJumpT2(reinterpret_cast_ptr<uint16_t*>(from), fromInstruction, to);
+            linkJumpT2<copy>(reinterpret_cast_ptr<uint16_t*>(from), fromInstruction, to);
             break;
         case LinkJumpT3:
-            linkJumpT3(record.condition(), reinterpret_cast_ptr<uint16_t*>(from), fromInstruction, to);
+            linkJumpT3<copy>(record.condition(), reinterpret_cast_ptr<uint16_t*>(from), fromInstruction, to);
             break;
         case LinkJumpT4:
-            linkJumpT4(reinterpret_cast_ptr<uint16_t*>(from), fromInstruction, to);
+            linkJumpT4<copy>(reinterpret_cast_ptr<uint16_t*>(from), fromInstruction, to);
             break;
         case LinkConditionalJumpT4:
-            linkConditionalJumpT4(record.condition(), reinterpret_cast_ptr<uint16_t*>(from), fromInstruction, to);
+            linkConditionalJumpT4<copy>(record.condition(), reinterpret_cast_ptr<uint16_t*>(from), fromInstruction, to);
             break;
         case LinkConditionalBX:
-            linkConditionalBX(record.condition(), reinterpret_cast_ptr<uint16_t*>(from), fromInstruction, to);
+            linkConditionalBX<copy>(record.condition(), reinterpret_cast_ptr<uint16_t*>(from), fromInstruction, to);
             break;
         case LinkBX:
-            linkBX(reinterpret_cast_ptr<uint16_t*>(from), fromInstruction, to);
+            linkBX<copy>(reinterpret_cast_ptr<uint16_t*>(from), fromInstruction, to);
             break;
         default:
             RELEASE_ASSERT_NOT_REACHED();
@@ -2247,7 +2175,6 @@ public:
         }
     }
 
-    void* unlinkedCode() { return m_formatter.data(); }
     size_t codeSize() const { return m_formatter.codeSize(); }
 
     static unsigned getCallReturnOffset(AssemblerLabel call)
@@ -2467,7 +2394,7 @@ public:
 
     static void cacheFlush(void* code, size_t size)
     {
-#if OS(IOS)
+#if OS(DARWIN)
         sys_cache_control(kCacheFunctionPrepareForExecution, code, size);
 #elif OS(LINUX)
         size_t page = pageSize();
@@ -2691,6 +2618,7 @@ private:
         return ((relative << 7) >> 7) == relative;
     }
 
+    template<CopyFunction copy = performJITMemcpy>
     static void linkJumpT1(Condition cond, uint16_t* writeTarget, const uint16_t* instruction, void* target)
     {
         // FIMXE: this should be up in the MacroAssembler layer. :-(
@@ -2707,9 +2635,10 @@ private:
         // All branch offsets should be an even distance.
         ASSERT(!(relative & 1));
         uint16_t newInstruction = OP_B_T1 | ((cond & 0xf) << 8) | ((relative & 0x1fe) >> 1);
-        performJITMemcpy(writeTarget - 1, &newInstruction, sizeof(uint16_t));
+        copy(writeTarget - 1, &newInstruction, sizeof(uint16_t));
     }
 
+    template<CopyFunction copy = performJITMemcpy>
     static void linkJumpT2(uint16_t* writeTarget, const uint16_t* instruction, void* target)
     {
         // FIMXE: this should be up in the MacroAssembler layer. :-(
@@ -2726,9 +2655,10 @@ private:
         // All branch offsets should be an even distance.
         ASSERT(!(relative & 1));
         uint16_t newInstruction = OP_B_T2 | ((relative & 0xffe) >> 1);
-        performJITMemcpy(writeTarget - 1, &newInstruction, sizeof(uint16_t));
+        copy(writeTarget - 1, &newInstruction, sizeof(uint16_t));
     }
 
+    template<CopyFunction copy = performJITMemcpy>
     static void linkJumpT3(Condition cond, uint16_t* writeTarget, const uint16_t* instruction, void* target)
     {
         // FIMXE: this should be up in the MacroAssembler layer. :-(
@@ -2743,9 +2673,10 @@ private:
         uint16_t instructions[2];
         instructions[0] = OP_B_T3a | ((relative & 0x100000) >> 10) | ((cond & 0xf) << 6) | ((relative & 0x3f000) >> 12);
         instructions[1] = OP_B_T3b | ((relative & 0x80000) >> 8) | ((relative & 0x40000) >> 5) | ((relative & 0xffe) >> 1);
-        performJITMemcpy(writeTarget - 2, instructions, 2 * sizeof(uint16_t));
+        copy(writeTarget - 2, instructions, 2 * sizeof(uint16_t));
     }
 
+    template<CopyFunction copy = performJITMemcpy>
     static void linkJumpT4(uint16_t* writeTarget, const uint16_t* instruction, void* target)
     {
         // FIMXE: this should be up in the MacroAssembler layer. :-(
@@ -2763,9 +2694,10 @@ private:
         uint16_t instructions[2];
         instructions[0] = OP_B_T4a | ((relative & 0x1000000) >> 14) | ((relative & 0x3ff000) >> 12);
         instructions[1] = OP_B_T4b | ((relative & 0x800000) >> 10) | ((relative & 0x400000) >> 11) | ((relative & 0xffe) >> 1);
-        performJITMemcpy(writeTarget - 2, instructions, 2 * sizeof(uint16_t));
+        copy(writeTarget - 2, instructions, 2 * sizeof(uint16_t));
     }
 
+    template<CopyFunction copy = performJITMemcpy>
     static void linkConditionalJumpT4(Condition cond, uint16_t* writeTarget, const uint16_t* instruction, void* target)
     {
         // FIMXE: this should be up in the MacroAssembler layer. :-(
@@ -2773,10 +2705,11 @@ private:
         ASSERT(!(reinterpret_cast<intptr_t>(target) & 1));
 
         uint16_t newInstruction = ifThenElse(cond) | OP_IT;
-        performJITMemcpy(writeTarget - 3, &newInstruction, sizeof(uint16_t));
-        linkJumpT4(writeTarget, instruction, target);
+        copy(writeTarget - 3, &newInstruction, sizeof(uint16_t));
+        linkJumpT4<copy>(writeTarget, instruction, target);
     }
 
+    template<CopyFunction copy = performJITMemcpy>
     static void linkBX(uint16_t* writeTarget, const uint16_t* instruction, void* target)
     {
         // FIMXE: this should be up in the MacroAssembler layer. :-(
@@ -2794,9 +2727,10 @@ private:
         instructions[3] = twoWordOp5i6Imm4Reg4EncodedImmSecond(JUMP_TEMPORARY_REGISTER, hi16);
         instructions[4] = OP_BX | (JUMP_TEMPORARY_REGISTER << 3);
 
-        performJITMemcpy(writeTarget - 5, instructions, 5 * sizeof(uint16_t));
+        copy(writeTarget - 5, instructions, 5 * sizeof(uint16_t));
     }
 
+    template<CopyFunction copy = performJITMemcpy>
     static void linkConditionalBX(Condition cond, uint16_t* writeTarget, const uint16_t* instruction, void* target)
     {
         // FIMXE: this should be up in the MacroAssembler layer. :-(
@@ -2805,7 +2739,7 @@ private:
 
         linkBX(writeTarget, instruction, target);
         uint16_t newInstruction = ifThenElse(cond, true, true) | OP_IT;
-        performJITMemcpy(writeTarget - 6, &newInstruction, sizeof(uint16_t));
+        copy(writeTarget - 6, &newInstruction, sizeof(uint16_t));
     }
 
     static void linkJumpAbsolute(uint16_t* writeTarget, const uint16_t* instruction, void* target)

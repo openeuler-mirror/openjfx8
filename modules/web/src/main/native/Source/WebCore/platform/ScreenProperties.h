@@ -25,10 +25,10 @@
 
 #pragma once
 
-#if PLATFORM(MAC)
-
 #include "FloatRect.h"
 #include "PlatformScreen.h"
+#include <wtf/EnumTraits.h>
+#include <wtf/HashMap.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/text/WTFString.h>
 
@@ -44,18 +44,21 @@ struct ScreenData {
     int screenDepthPerComponent { 0 };
     bool screenSupportsExtendedColor { false };
     bool screenHasInvertedColors { false };
+    bool screenSupportsHighDynamicRange { false };
+#if PLATFORM(MAC)
     bool screenIsMonochrome { false };
     uint32_t displayMask { 0 };
     IORegistryGPUID gpuID { 0 };
+    DynamicRangeMode preferredDynamicRangeMode { DynamicRangeMode::Standard };
+#endif
 
-    enum EncodedColorSpaceDataType {
-        Null,
-        ColorSpaceName,
-        ColorSpaceData,
-    };
+#if PLATFORM(MAC) || PLATFORM(IOS_FAMILY)
+    float scaleFactor { 1 };
+#endif
 
+    enum class ColorSpaceType : uint8_t { None, Name, Data };
     template<class Encoder> void encode(Encoder&) const;
-    template<class Decoder> static std::optional<ScreenData> decode(Decoder&);
+    template<class Decoder> static Optional<ScreenData> decode(Decoder&);
 };
 
 typedef HashMap<PlatformDisplayID, ScreenData> ScreenDataMap;
@@ -65,7 +68,7 @@ struct ScreenProperties {
     ScreenDataMap screenDataMap;
 
     template<class Encoder> void encode(Encoder&) const;
-    template<class Decoder> static std::optional<ScreenProperties> decode(Decoder&);
+    template<class Decoder> static Optional<ScreenProperties> decode(Decoder&);
 };
 
 template<class Encoder>
@@ -76,17 +79,17 @@ void ScreenProperties::encode(Encoder& encoder) const
 }
 
 template<class Decoder>
-std::optional<ScreenProperties> ScreenProperties::decode(Decoder& decoder)
+Optional<ScreenProperties> ScreenProperties::decode(Decoder& decoder)
 {
-    std::optional<PlatformDisplayID> primaryDisplayID;
+    Optional<PlatformDisplayID> primaryDisplayID;
     decoder >> primaryDisplayID;
     if (!primaryDisplayID)
-        return std::nullopt;
+        return WTF::nullopt;
 
-    std::optional<ScreenDataMap> screenDataMap;
+    Optional<ScreenDataMap> screenDataMap;
     decoder >> screenDataMap;
     if (!screenDataMap)
-        return std::nullopt;
+        return WTF::nullopt;
 
     return { { *primaryDisplayID, WTFMove(*screenDataMap) } };
 }
@@ -94,118 +97,169 @@ std::optional<ScreenProperties> ScreenProperties::decode(Decoder& decoder)
 template<class Encoder>
 void ScreenData::encode(Encoder& encoder) const
 {
-    encoder << screenAvailableRect << screenRect << screenDepth << screenDepthPerComponent << screenSupportsExtendedColor << screenHasInvertedColors << screenIsMonochrome << displayMask << gpuID;
+    encoder << screenAvailableRect << screenRect << screenDepth << screenDepthPerComponent << screenSupportsExtendedColor << screenHasInvertedColors << screenSupportsHighDynamicRange;
+
+#if PLATFORM(MAC)
+    encoder << screenIsMonochrome << displayMask << gpuID << preferredDynamicRangeMode;
+#endif
+
+#if PLATFORM(MAC) || PLATFORM(IOS_FAMILY)
+    encoder << scaleFactor;
+#endif
 
     if (colorSpace) {
         // Try to encode the name.
         if (auto name = adoptCF(CGColorSpaceCopyName(colorSpace.get()))) {
-            encoder.encodeEnum(ColorSpaceName);
+            encoder << ColorSpaceType::Name;
             encoder << String(name.get());
             return;
         }
 
         // Failing that, just encode the ICC data.
         if (auto profileData = adoptCF(CGColorSpaceCopyICCData(colorSpace.get()))) {
-            encoder.encodeEnum(ColorSpaceData);
-
             Vector<uint8_t> iccData;
             iccData.append(CFDataGetBytePtr(profileData.get()), CFDataGetLength(profileData.get()));
 
+            encoder << ColorSpaceType::Data;
             encoder << iccData;
             return;
         }
     }
 
     // The color space was null or failed to be encoded.
-    encoder << Null;
+    encoder << ColorSpaceType::None;
 }
 
 template<class Decoder>
-std::optional<ScreenData> ScreenData::decode(Decoder& decoder)
+Optional<ScreenData> ScreenData::decode(Decoder& decoder)
 {
-    std::optional<FloatRect> screenAvailableRect;
+    Optional<FloatRect> screenAvailableRect;
     decoder >> screenAvailableRect;
     if (!screenAvailableRect)
-        return std::nullopt;
+        return WTF::nullopt;
 
-    std::optional<FloatRect> screenRect;
+    Optional<FloatRect> screenRect;
     decoder >> screenRect;
     if (!screenRect)
-        return std::nullopt;
+        return WTF::nullopt;
 
-    std::optional<int> screenDepth;
+    Optional<int> screenDepth;
     decoder >> screenDepth;
     if (!screenDepth)
-        return std::nullopt;
+        return WTF::nullopt;
 
-    std::optional<int> screenDepthPerComponent;
+    Optional<int> screenDepthPerComponent;
     decoder >> screenDepthPerComponent;
     if (!screenDepthPerComponent)
-        return std::nullopt;
+        return WTF::nullopt;
 
-    std::optional<bool> screenSupportsExtendedColor;
+    Optional<bool> screenSupportsExtendedColor;
     decoder >> screenSupportsExtendedColor;
     if (!screenSupportsExtendedColor)
-        return std::nullopt;
+        return WTF::nullopt;
 
-    std::optional<bool> screenHasInvertedColors;
+    Optional<bool> screenHasInvertedColors;
     decoder >> screenHasInvertedColors;
     if (!screenHasInvertedColors)
-        return std::nullopt;
+        return WTF::nullopt;
 
-    std::optional<bool> screenIsMonochrome;
+    Optional<bool> screenSupportsHighDynamicRange;
+    decoder >> screenSupportsHighDynamicRange;
+    if (!screenSupportsHighDynamicRange)
+        return WTF::nullopt;
+
+#if PLATFORM(MAC)
+    Optional<bool> screenIsMonochrome;
     decoder >> screenIsMonochrome;
     if (!screenIsMonochrome)
-        return std::nullopt;
+        return WTF::nullopt;
 
-    std::optional<uint32_t> displayMask;
+    Optional<uint32_t> displayMask;
     decoder >> displayMask;
     if (!displayMask)
-        return std::nullopt;
+        return WTF::nullopt;
 
-    std::optional<IORegistryGPUID> gpuID;
+    Optional<IORegistryGPUID> gpuID;
     decoder >> gpuID;
     if (!gpuID)
-        return std::nullopt;
+        return WTF::nullopt;
 
-    EncodedColorSpaceDataType dataType;
-    if (!decoder.decodeEnum(dataType))
-        return std::nullopt;
+    Optional<DynamicRangeMode> preferredDynamicRangeMode;
+    decoder >> preferredDynamicRangeMode;
+    if (!preferredDynamicRangeMode)
+        return WTF::nullopt;
+#endif
+
+#if PLATFORM(MAC) || PLATFORM(IOS_FAMILY)
+    Optional<float> scaleFactor;
+    decoder >> scaleFactor;
+    if (!scaleFactor)
+        return WTF::nullopt;
+#endif
+
+    ColorSpaceType dataType;
+    if (!decoder.decode(dataType))
+        return WTF::nullopt;
 
     RetainPtr<CGColorSpaceRef> cgColorSpace;
     switch (dataType) {
-    case Null:
+    case ColorSpaceType::None:
         break;
-    case ColorSpaceName: {
-        std::optional<String> colorSpaceName;
+    case ColorSpaceType::Name: {
+        Optional<String> colorSpaceName;
         decoder >> colorSpaceName;
         ASSERT(colorSpaceName);
         if (!colorSpaceName)
-            return std::nullopt;
+            return WTF::nullopt;
 
         cgColorSpace = adoptCF(CGColorSpaceCreateWithName(colorSpaceName->createCFString().get()));
         break;
     }
-    case ColorSpaceData: {
-        std::optional<Vector<uint8_t>> iccData;
+    case ColorSpaceType::Data: {
+        Optional<Vector<uint8_t>> iccData;
         decoder >> iccData;
         ASSERT(iccData);
         if (!iccData)
-            return std::nullopt;
+            return WTF::nullopt;
 
         auto colorSpaceData = adoptCF(CFDataCreate(kCFAllocatorDefault, iccData->data(), iccData->size()));
-        // FIXME: <http://webkit.org/b/184358> We should switch to CGColorSpaceCreateICCBased.
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        cgColorSpace = adoptCF(CGColorSpaceCreateWithICCProfile(colorSpaceData.get()));
-#pragma clang diagnostic pop
+        cgColorSpace = adoptCF(CGColorSpaceCreateWithICCData(colorSpaceData.get()));
         break;
     }
     }
 
-    return { { WTFMove(*screenAvailableRect), WTFMove(*screenRect), WTFMove(cgColorSpace), WTFMove(*screenDepth), WTFMove(*screenDepthPerComponent), WTFMove(*screenSupportsExtendedColor), WTFMove(*screenHasInvertedColors), WTFMove(*screenIsMonochrome), WTFMove(*displayMask), WTFMove(*gpuID) } };
+    return { {
+        WTFMove(*screenAvailableRect),
+        WTFMove(*screenRect),
+        WTFMove(cgColorSpace),
+        WTFMove(*screenDepth),
+        WTFMove(*screenDepthPerComponent),
+        WTFMove(*screenSupportsExtendedColor),
+        WTFMove(*screenHasInvertedColors),
+        WTFMove(*screenSupportsHighDynamicRange),
+#if PLATFORM(MAC)
+        WTFMove(*screenIsMonochrome),
+        WTFMove(*displayMask),
+        WTFMove(*gpuID),
+        WTFMove(*preferredDynamicRangeMode),
+#endif
+#if PLATFORM(MAC) || PLATFORM(IOS_FAMILY)
+        WTFMove(*scaleFactor),
+#endif
+    } };
 }
 
 } // namespace WebCore
 
-#endif // PLATFORM(MAC)
+namespace WTF {
+
+template<> struct EnumTraits<WebCore::ScreenData::ColorSpaceType> {
+    using values = EnumValues<
+        WebCore::ScreenData::ColorSpaceType,
+        WebCore::ScreenData::ColorSpaceType::None,
+        WebCore::ScreenData::ColorSpaceType::Name,
+        WebCore::ScreenData::ColorSpaceType::Data
+    >;
+};
+
+} // namespace WTF

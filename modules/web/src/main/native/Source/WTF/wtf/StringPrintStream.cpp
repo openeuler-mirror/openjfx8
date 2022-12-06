@@ -24,7 +24,7 @@
  */
 
 #include "config.h"
-#include "StringPrintStream.h"
+#include <wtf/StringPrintStream.h>
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -93,6 +93,14 @@ void StringPrintStream::reset()
 {
     m_next = 0;
     m_buffer[0] = 0;
+}
+
+Expected<String, UTF8ConversionError> StringPrintStream::tryToString()
+{
+    ASSERT(m_next == strlen(m_buffer));
+    if (m_next > String::MaxLength)
+        return makeUnexpected(UTF8ConversionError::OutOfMemory);
+    return String::fromUTF8(m_buffer, m_next);
 }
 
 String StringPrintStream::toString()

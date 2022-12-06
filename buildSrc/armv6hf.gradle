@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2013, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -506,17 +506,6 @@ ARMV6HF.font.ccFlags = fontCFlags
 ARMV6HF.font.linker = linker
 ARMV6HF.font.linkFlags = fontLFlags
 ARMV6HF.font.lib = "javafx_font"
-
-ARMV6HF.fontT2K = [:]
-ARMV6HF.fontT2K.javahInclude = ["com/sun/javafx/font/t2k/**/*"]
-ARMV6HF.fontT2K.nativeSource = [
-        file("$closedDir/javafx-font-t2k-native/src"),
-        file("$closedDir/javafx-font-t2k-native/src/layout")]
-ARMV6HF.fontT2K.compiler = compiler
-ARMV6HF.fontT2K.ccFlags = [fontCFlags, "-DLE_STANDALONE"].flatten()
-ARMV6HF.fontT2K.linker = linker
-ARMV6HF.fontT2K.linkFlags = fontLFlags
-ARMV6HF.fontT2K.lib = "javafx_font_t2k"
 
 ARMV6HF.fontFreetype = [:]
 ARMV6HF.fontFreetype.javahInclude = ["com/sun/javafx/font/freetype/OSFreetype.class*"]

@@ -125,7 +125,7 @@ import javafx.scene.text.FontSmoothingType;
  * A 3x2 2D affine transformation matrix that controls how coordinates are
  * mapped onto the logical pixels of the canvas image.
  * </td></tr>
- * <tr class="altColor">
+ * <tr class="rowColor">
  * <td class="colLast" style="width:15%">{@link #setEffect(javafx.scene.effect.Effect) Effect}</td>
  * <td class="colLast" style="width:10%; text-align:center; color:#0c0">Yes</td>
  * <td class="colLast" style="width:10%; text-align:center">{@code null}</td>
@@ -253,6 +253,15 @@ import javafx.scene.text.FontSmoothingType;
  * The method used to determine the interior of paths for a path fill or
  * clip operation.
  * </td></tr>
+ * <tr><th colspan="3" scope="row"><a id="image-attr">Image Attributes</a></th></tr>
+ * <tr class="rowColor">
+ * <th scope="row" class="colLast" style="width:15%">{@link #setImageSmoothing(boolean) Image Smoothing}</th>
+ * <td class="colLast" style="width:10%; text-align:center; color:#0c0">Yes</td>
+ * <td class="colLast" style="width:10%; text-align:center">{@code true}</td>
+ * <td class="colLast">
+ * A boolean state which enables or disables image smoothing for
+ * {@link #drawImage(javafx.scene.image.Image, double, double) drawImage(all forms)}.
+ * </td></tr>
  * </table>
  *
  * <p>
@@ -280,11 +289,12 @@ import javafx.scene.text.FontSmoothingType;
  * {@link #fillArc(double, double, double, double, double, double, javafx.scene.shape.ArcType) fillArc()}
  * </a>
  * </td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
  * </tr>
  * <tr class="altColor">
  * <td class="colLast" style="width:25%">
@@ -296,11 +306,12 @@ import javafx.scene.text.FontSmoothingType;
  * {@link #strokeArc(double, double, double, double, double, double, javafx.scene.shape.ArcType) strokeArc()}
  * </a>
  * </td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
  * </tr>
  * <tr class="rowColor">
  * <td class="colLast" style="width:25%">
@@ -308,11 +319,12 @@ import javafx.scene.text.FontSmoothingType;
  * {@link #clearRect(double, double, double, double) clearRect()}
  * </a>
  * </td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes <a href="#base-fn-1">[1]</a></td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes <a href="#base-fn-1">[1]</a></td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
  * </tr>
  * <tr class="altColor">
  * <td class="colLast" style="width:25%">
@@ -320,11 +332,12 @@ import javafx.scene.text.FontSmoothingType;
  * {@link #fillPolygon(double[], double[], int) fillPolygon()}
  * </a>
  * </td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes <a href="#base-fn-2">[2]</a></td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes <a href="#base-fn-2">[2]</a></td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
  * </tr>
  * <tr class="rowColor">
  * <td class="colLast" style="width:25%">
@@ -333,11 +346,12 @@ import javafx.scene.text.FontSmoothingType;
  * {@link #strokePolyline(double[], double[], int) strokePolyline()}
  * </a>
  * </td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
  * </tr>
  * <tr><td colspan="6"><p align="center">
  * <a name="base-fn-1">[1]</a> Only the Transform, Clip, and Effect apply to clearRect()<br>
@@ -352,11 +366,12 @@ import javafx.scene.text.FontSmoothingType;
  * {@link #fillText(java.lang.String, double, double, double) fillText(with maxWidth)}
  * </a>
  * </td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes <a href="#text-fn-3">[3]</a></td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes <a href="#text-fn-3">[3]</a></td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
  * </tr>
  * <tr class="altColor">
  * <td class="colLast" style="width:25%">
@@ -365,11 +380,12 @@ import javafx.scene.text.FontSmoothingType;
  * {@link #strokeText(java.lang.String, double, double, double) strokeText(with maxWidth)}
  * </a>
  * </td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes <a href="#text-fn-3">[3]</a></td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes <a href="#text-fn-3">[3]</a></td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
  * </tr>
  * <tr><td colspan="6"><p align="center">
  * <a name="text-fn-3">[3]</a> The Font Smoothing attribute only applies to filled text
@@ -389,11 +405,12 @@ import javafx.scene.text.FontSmoothingType;
  * {@link #closePath() closePath()},
  * {@link #rect(double, double, double, double) rect()}
  * </td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes <a href="#path-fn-4">[4]</a></td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes <a href="#path-fn-4">[4]</a></td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
  * </tr>
  * <tr class="altColor">
  * <td class="colLast" style="width:25%">
@@ -401,11 +418,12 @@ import javafx.scene.text.FontSmoothingType;
  * {@link #fill() fill()}
  * </a>
  * </td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes <a href="#path-fn-4">[4]</a></td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes <a href="#path-fn-4">[4]</a></td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
  * </tr>
  * <tr class="rowColor">
  * <td class="colLast" style="width:25%">
@@ -413,11 +431,12 @@ import javafx.scene.text.FontSmoothingType;
  * {@link #stroke() stroke()}
  * </a>
  * </td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes <a href="#path-fn-4">[4]</a></td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes <a href="#path-fn-5">[5]</a></td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes <a href="#path-fn-4">[4]</a></td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes <a href="#path-fn-5">[5]</a></td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
  * </tr>
  * <tr class="altColor">
  * <td class="colLast" style="width:25%">
@@ -425,11 +444,12 @@ import javafx.scene.text.FontSmoothingType;
  * {@link #clip() clip()}
  * </a>
  * </td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
  * </tr>
  * <tr><td colspan="6"><p align="center">
  * <a name="path-fn-4">[4]</a> Transform applied only during path construction<br>
@@ -443,11 +463,12 @@ import javafx.scene.text.FontSmoothingType;
  * {@link #drawImage(javafx.scene.image.Image, double, double) drawImage(all forms)}
  * </a>
  * </td>
- * <td class="colLast" style="width:15%; text-align:center; color:#0c0">Yes</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#0c0">Yes</td>
  * </tr>
  *
  * <tr><th colspan="1"><p align="center">Miscellaneous</p></th></tr>
@@ -456,11 +477,12 @@ import javafx.scene.text.FontSmoothingType;
  * {@link #applyEffect(javafx.scene.effect.Effect) applyEffect()},
  * {@link #getPixelWriter() PixelWriter methods}
  * </td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
- * <td class="colLast" style="width:15%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
+ * <td class="colLast" style="width:13%; text-align:center; color:#c00">No</td>
  * </tr>
  * </table>
  *
@@ -525,6 +547,7 @@ public final class GraphicsContext {
         VPos textbaseline;
         Effect effect;
         FillRule fillRule;
+        boolean imageSmoothing = true;
 
         State() {
             init();
@@ -539,7 +562,7 @@ public final class GraphicsContext {
                 0,
                 Font.getDefault(), FontSmoothingType.GRAY,
                 TextAlignment.LEFT, VPos.BASELINE,
-                null, FillRule.NON_ZERO);
+                null, FillRule.NON_ZERO, true);
         }
 
         State(State copy) {
@@ -550,7 +573,7 @@ public final class GraphicsContext {
                 copy.dashes, copy.dashOffset,
                 copy.numClipPaths,
                 copy.font, copy.fontsmoothing, copy.textalign, copy.textbaseline,
-                copy.effect, copy.fillRule);
+                copy.effect, copy.fillRule, copy.imageSmoothing);
         }
 
         final void set(double globalAlpha, BlendMode blendop,
@@ -561,7 +584,7 @@ public final class GraphicsContext {
                        int numClipPaths,
                        Font font, FontSmoothingType smoothing,
                        TextAlignment align, VPos baseline,
-                       Effect effect, FillRule fillRule)
+                       Effect effect, FillRule fillRule, boolean imageSmoothing)
         {
             this.globalAlpha = globalAlpha;
             this.blendop = blendop;
@@ -581,6 +604,7 @@ public final class GraphicsContext {
             this.textbaseline = baseline;
             this.effect = effect;
             this.fillRule = fillRule;
+            this.imageSmoothing = imageSmoothing;
         }
 
         State copy() {
@@ -613,6 +637,7 @@ public final class GraphicsContext {
             ctx.setTextAlign(textalign);
             ctx.setTextBaseline(textbaseline);
             ctx.setEffect(effect);
+            ctx.setImageSmoothing(imageSmoothing);
         }
     }
 
@@ -1761,6 +1786,43 @@ public final class GraphicsContext {
      }
 
     /**
+     * Sets the image smoothing state.
+     * Image smoothing is an <a href="#image-attr">Image attribute</a>
+     * used to enable or disable image smoothing for
+     * {@link #drawImage(javafx.scene.image.Image, double, double) drawImage(all forms)}
+     * as specified in the <a href="#attr-ops-table">Rendering Attributes Table</a>.<br>
+     * If image smoothing is {@code true}, images will be scaled using a higher
+     * quality filtering when transforming or scaling the source image to fit
+     * in the destination rectangle.<br>
+     * If image smoothing is {@code false}, images will be scaled without filtering
+     * (or by using a lower quality filtering) when transforming or scaling the
+     * source image to fit in the destination rectangle.
+     *
+     * @defaultValue {@code true}
+     * @param imageSmoothing {@code true} to enable or {@code false} to disable smoothing
+     * @since 12
+     */
+    public void setImageSmoothing(boolean imageSmoothing) {
+        if (curState.imageSmoothing != imageSmoothing) {
+            curState.imageSmoothing = imageSmoothing;
+            GrowableDataBuffer buf = getBuffer();
+            buf.putByte(NGCanvas.IMAGE_SMOOTH);
+            buf.putBoolean(curState.imageSmoothing);
+        }
+    }
+
+    /**
+     * Gets the current image smoothing state.
+     *
+     * @defaultValue {@code true}
+     * @return image smoothing state
+     * @since 12
+     */
+    public boolean isImageSmoothing() {
+        return curState.imageSmoothing;
+    }
+
+    /**
      * Resets the current path to empty.
      * The default path is empty.
      * The current path is a <a href="#path-attr">path attribute</a>
@@ -2623,6 +2685,7 @@ public final class GraphicsContext {
      * <p>
      * This method will be affected by any of the
      * <a href="#comm-attr">global common</a>
+     * or <a href="#image-attr">image</a>
      * attributes as specified in the
      * <a href="#attr-ops-table">Rendering Attributes Table</a>.
      * </p>
@@ -2645,6 +2708,7 @@ public final class GraphicsContext {
      * <p>
      * This method will be affected by any of the
      * <a href="#comm-attr">global common</a>
+     * or <a href="#image-attr">image</a>
      * attributes as specified in the
      * <a href="#attr-ops-table">Rendering Attributes Table</a>.
      * </p>
@@ -2666,6 +2730,7 @@ public final class GraphicsContext {
      * <p>
      * This method will be affected by any of the
      * <a href="#comm-attr">global common</a>
+     * or <a href="#image-attr">image</a>
      * attributes as specified in the
      * <a href="#attr-ops-table">Rendering Attributes Table</a>.
      * </p>

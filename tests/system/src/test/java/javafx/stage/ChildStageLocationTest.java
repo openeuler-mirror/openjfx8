@@ -23,7 +23,7 @@
  * questions.
  */
 
-package test.javafx.stage;
+package javafx.stage;
 
 import java.util.TimerTask;
 import java.util.Timer;
@@ -46,6 +46,7 @@ import org.junit.Test;
 
 import static junit.framework.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.junit.Assume.assumeTrue;
 
 public class ChildStageLocationTest {
     static CountDownLatch startupLatch;
@@ -75,6 +76,7 @@ public class ChildStageLocationTest {
 
     @Test
     public void testLocation() {
+        assumeTrue(Boolean.getBoolean("unstable.test")); // JDK-8176776
         Rectangle2D bounds = Screen.getPrimary().getVisualBounds();
         Window window = stage.getScene().getWindow();
         double minX = bounds.getMinX() + (bounds.getWidth() - window.getWidth())/2 - 50;

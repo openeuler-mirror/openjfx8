@@ -8925,6 +8925,12 @@ public abstract class Node implements EventTarget, Styleable {
         }
     }
 
+    final void recalculateRelativeSizeProperties(Font fontForRelativeSizes) {
+        if (styleHelper != null) {
+            styleHelper.recalculateRelativeSizeProperties(this, fontForRelativeSizes);
+        }
+    }
+
     /**
      * @treatAsPrivate implementation detail
      * @deprecated This is an internal API that is not intended for use and will be removed in the next version
@@ -8935,6 +8941,13 @@ public abstract class Node implements EventTarget, Styleable {
         if (getScene() == null) return;
 
         if (cssFlag == CssFlags.REAPPLY) return;
+
+        if (cssFlag == CssFlags.DIRTY_BRANCH) {
+            // JDK-8193445 - don't reapply CSS from here
+            // Defer CSS application to this Node by marking cssFlag as REAPPLY
+            cssFlag = CssFlags.REAPPLY;
+            return;
+        }
 
         // RT-36838 - don't reapply CSS in the middle of an update
         if (cssFlag == CssFlags.UPDATE) {
@@ -9362,6 +9375,11 @@ public abstract class Node implements EventTarget, Styleable {
             @Override
             public Accessible getAccessible(Node node) {
                 return node.getAccessible();
+            }
+
+            @Override
+            public void recalculateRelativeSizeProperties(Node node, Font fontForRelativeSizes) {
+                node.recalculateRelativeSizeProperties(fontForRelativeSizes);
             }
         });
     }

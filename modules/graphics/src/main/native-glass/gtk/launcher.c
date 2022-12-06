@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2018, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -58,7 +58,11 @@ static const char * gtk3_chain[] = {
 static JavaVM* javaVM;
 
 JNIEXPORT jint JNICALL
+#ifdef STATIC_BUILD
+JNI_OnLoad_glass(JavaVM *jvm, void *reserved)
+#else
 JNI_OnLoad(JavaVM *jvm, void *reserved)
+#endif
 {
     (void) reserved;
 
@@ -129,7 +133,7 @@ static int sniffLibs(int wantVersion) {
      }
 
      int success = 1;
-     char *** use_chain = two_to_three;
+     char *** use_chain = three_to_two;
      int i, found = 0;
 
      //at first try to detect already loaded GTK version
@@ -141,17 +145,17 @@ static int sniffLibs(int wantVersion) {
      }
 
      if (!found) {
-         if (wantVersion == 0 || wantVersion == 2) {
-             use_chain = two_to_three;
-         } else if (wantVersion == 3) {
+         if (wantVersion == 0 || wantVersion == 3) {
              use_chain = three_to_two;
+         } else if (wantVersion == 2) {
+             use_chain = two_to_three;
          } else {
              // Note, this should never happen, java should be protecting us
              if (gtk_versionDebug) {
-                 printf("bad GTK version specified, assuming 2\n");
+                 printf("bad GTK version specified, assuming 3\n");
              }
-             wantVersion = 2;
-             use_chain = two_to_three;
+             wantVersion = 3;
+             use_chain = three_to_two;
          }
 
          for (i = 0; use_chain[i] && !found; i++) {

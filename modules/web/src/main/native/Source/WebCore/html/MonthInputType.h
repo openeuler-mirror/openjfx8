@@ -41,15 +41,15 @@ public:
     explicit MonthInputType(HTMLInputElement& element) : BaseChooserOnlyDateAndTimeInputType(element) { }
 
 private:
-    const AtomicString& formControlType() const override;
+    const AtomString& formControlType() const override;
     DateComponents::Type dateType() const override;
     double valueAsDate() const override;
     String serializeWithMilliseconds(double) const override;
     Decimal parseToNumber(const String&, const Decimal&) const override;
     Decimal defaultValueForStepUp() const override;
     StepRange createStepRange(AnyStepHandling) const override;
-    bool parseToDateComponentsInternal(const UChar*, unsigned length, DateComponents*) const override;
-    bool setMillisecondToDateComponents(double, DateComponents*) const override;
+    Optional<DateComponents> parseToDateComponents(const StringView&) const override;
+    Optional<DateComponents> setMillisecondToDateComponents(double) const override;
     bool isMonthField() const override;
 };
 

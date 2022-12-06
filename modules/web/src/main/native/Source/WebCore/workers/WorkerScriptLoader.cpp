@@ -28,6 +28,7 @@
 #include "WorkerScriptLoader.h"
 
 #include "ContentSecurityPolicy.h"
+#include "Exception.h"
 #include "FetchIdioms.h"
 #include "MIMETypeRegistry.h"
 #include "ResourceResponse.h"
@@ -46,7 +47,7 @@ WorkerScriptLoader::WorkerScriptLoader() = default;
 
 WorkerScriptLoader::~WorkerScriptLoader() = default;
 
-std::optional<Exception> WorkerScriptLoader::loadSynchronously(ScriptExecutionContext* scriptExecutionContext, const URL& url, FetchOptions::Mode mode, FetchOptions::Cache cachePolicy, ContentSecurityPolicyEnforcement contentSecurityPolicyEnforcement, const String& initiatorIdentifier)
+Optional<Exception> WorkerScriptLoader::loadSynchronously(ScriptExecutionContext* scriptExecutionContext, const URL& url, FetchOptions::Mode mode, FetchOptions::Cache cachePolicy, ContentSecurityPolicyEnforcement contentSecurityPolicyEnforcement, const String& initiatorIdentifier)
 {
     ASSERT(scriptExecutionContext);
     auto& workerGlobalScope = downcast<WorkerGlobalScope>(*scriptExecutionContext);
@@ -60,16 +61,16 @@ std::optional<Exception> WorkerScriptLoader::loadSynchronously(ScriptExecutionCo
     if (isServiceWorkerGlobalScope) {
         if (auto* scriptResource = downcast<ServiceWorkerGlobalScope>(workerGlobalScope).scriptResource(url)) {
             m_script.append(scriptResource->script);
-            m_responseURL = URL { URL { }, scriptResource->responseURL };
+            m_responseURL = scriptResource->responseURL;
             m_responseMIMEType = scriptResource->mimeType;
-            return std::nullopt;
+            return WTF::nullopt;
         }
     }
 #endif
 
     std::unique_ptr<ResourceRequest> request(createResourceRequest(initiatorIdentifier));
     if (!request)
-        return std::nullopt;
+        return WTF::nullopt;
 
     ASSERT_WITH_SECURITY_IMPLICATION(is<WorkerGlobalScope>(scriptExecutionContext));
 
@@ -103,7 +104,7 @@ std::optional<Exception> WorkerScriptLoader::loadSynchronously(ScriptExecutionCo
         downcast<ServiceWorkerGlobalScope>(workerGlobalScope).setScriptResource(url, ServiceWorkerContextData::ImportedScript { script(), m_responseURL, m_responseMIMEType });
     }
 #endif
-    return std::nullopt;
+    return WTF::nullopt;
 }
 
 void WorkerScriptLoader::loadAsynchronously(ScriptExecutionContext& scriptExecutionContext, ResourceRequest&& scriptRequest, FetchOptions&& fetchOptions, ContentSecurityPolicyEnforcement contentSecurityPolicyEnforcement, ServiceWorkersMode serviceWorkerMode, WorkerScriptLoaderClient& client)
@@ -114,7 +115,7 @@ void WorkerScriptLoader::loadAsynchronously(ScriptExecutionContext& scriptExecut
 
     ASSERT(scriptRequest.httpMethod() == "GET");
 
-    auto request = std::make_unique<ResourceRequest>(WTFMove(scriptRequest));
+    auto request = makeUnique<ResourceRequest>(WTFMove(scriptRequest));
     if (!request)
         return;
 
@@ -126,6 +127,8 @@ void WorkerScriptLoader::loadAsynchronously(ScriptExecutionContext& scriptExecut
     options.credentials = FetchOptions::Credentials::SameOrigin;
     options.sendLoadCallbacks = SendCallbackPolicy::SendCallbacks;
     options.contentSecurityPolicyEnforcement = contentSecurityPolicyEnforcement;
+    if (fetchOptions.destination == FetchOptions::Destination::Serviceworker)
+        options.certificateInfoPolicy = CertificateInfoPolicy::IncludeCertificateInfo;
     // A service worker job can be executed from a worker context or a document context.
     options.serviceWorkersMode = serviceWorkerMode;
 #if ENABLE(SERVICE_WORKER)
@@ -146,37 +149,44 @@ const URL& WorkerScriptLoader::responseURL() const
 
 std::unique_ptr<ResourceRequest> WorkerScriptLoader::createResourceRequest(const String& initiatorIdentifier)
 {
-    auto request = std::make_unique<ResourceRequest>(m_url);
+    auto request = makeUnique<ResourceRequest>(m_url);
     request->setHTTPMethod("GET"_s);
     request->setInitiatorIdentifier(initiatorIdentifier);
     return request;
 }
 
-void WorkerScriptLoader::didReceiveResponse(unsigned long identifier, const ResourceResponse& response)
+ResourceError WorkerScriptLoader::validateWorkerResponse(const ResourceResponse& response, FetchOptions::Destination destination)
 {
-    if (response.httpStatusCode() / 100 != 2 && response.httpStatusCode()) {
-        m_failed = true;
-        return;
-    }
+    if (response.httpStatusCode() / 100 != 2 && response.httpStatusCode())
+        return ResourceError { errorDomainWebKitInternal, 0, response.url(), "Response is not 2xx"_s, ResourceError::Type::General };
 
     if (!isScriptAllowedByNosniff(response)) {
-        String message = makeString("Refused to execute ", response.url().stringCenterEllipsizedToLength(), " as script because \"X-Content-Type: nosniff\" was given and its Content-Type is not a script MIME type.");
-        m_error = ResourceError { errorDomainWebKitInternal, 0, url(), message, ResourceError::Type::General };
-        m_failed = true;
-        return;
+        String message = makeString("Refused to execute ", response.url().stringCenterEllipsizedToLength(), " as script because \"X-Content-Type-Options: nosniff\" was given and its Content-Type is not a script MIME type.");
+        return ResourceError { errorDomainWebKitInternal, 0, response.url(), WTFMove(message), ResourceError::Type::General };
     }
 
-    if (shouldBlockResponseDueToMIMEType(response, m_destination)) {
+    if (shouldBlockResponseDueToMIMEType(response, destination)) {
         String message = makeString("Refused to execute ", response.url().stringCenterEllipsizedToLength(), " as script because ", response.mimeType(), " is not a script MIME type.");
-        m_error = ResourceError { errorDomainWebKitInternal, 0, response.url(), message, ResourceError::Type::General };
+        return ResourceError { errorDomainWebKitInternal, 0, response.url(), WTFMove(message), ResourceError::Type::General };
+    }
+
+    return { };
+}
+
+void WorkerScriptLoader::didReceiveResponse(unsigned long identifier, const ResourceResponse& response)
+{
+    m_error = validateWorkerResponse(response, m_destination);
+    if (!m_error.isNull()) {
         m_failed = true;
         return;
     }
 
     m_responseURL = response.url();
+    m_certificateInfo = response.certificateInfo() ? *response.certificateInfo() : CertificateInfo();
     m_responseMIMEType = response.mimeType();
     m_responseEncoding = response.textEncodingName();
     m_contentSecurityPolicy = ContentSecurityPolicyResponseHeaders { response };
+    m_referrerPolicy = response.httpHeaderField(HTTPHeaderName::ReferrerPolicy);
     if (m_client)
         m_client->didReceiveResponse(identifier, response);
 }

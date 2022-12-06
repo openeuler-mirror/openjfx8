@@ -46,7 +46,7 @@ Ref<HTMLBaseElement> HTMLBaseElement::create(const QualifiedName& tagName, Docum
     return adoptRef(*new HTMLBaseElement(tagName, document));
 }
 
-void HTMLBaseElement::parseAttribute(const QualifiedName& name, const AtomicString& value)
+void HTMLBaseElement::parseAttribute(const QualifiedName& name, const AtomString& value)
 {
     if (name == hrefAttr || name == targetAttr)
         document().processBaseElement();
@@ -85,13 +85,13 @@ URL HTMLBaseElement::href() const
     // base elements like this one can be used to set that base URL. Thus we need to resolve relative to the document's
     // URL and ignore the base URL.
 
-    const AtomicString& attributeValue = attributeWithoutSynchronization(hrefAttr);
+    const AtomString& attributeValue = attributeWithoutSynchronization(hrefAttr);
     if (attributeValue.isNull())
         return document().url();
 
-    URL url = !document().decoder() ?
-        URL(document().url(), stripLeadingAndTrailingHTMLSpaces(attributeValue)) :
-        URL(document().url(), stripLeadingAndTrailingHTMLSpaces(attributeValue), document().decoder()->encoding());
+    // Same logic as openFunc() in XMLDocumentParserLibxml2.cpp. Keep them in sync.
+    auto* encoding = document().decoder() ? document().decoder()->encodingForURLParsing() : nullptr;
+    URL url(document().url(), stripLeadingAndTrailingHTMLSpaces(attributeValue), encoding);
 
     if (!url.isValid())
         return URL();
@@ -99,7 +99,7 @@ URL HTMLBaseElement::href() const
     return url;
 }
 
-void HTMLBaseElement::setHref(const AtomicString& value)
+void HTMLBaseElement::setHref(const AtomString& value)
 {
     setAttributeWithoutSynchronization(hrefAttr, value);
 }

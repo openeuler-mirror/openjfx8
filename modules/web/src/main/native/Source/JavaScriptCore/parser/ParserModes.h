@@ -26,6 +26,7 @@
 #pragma once
 
 #include "ConstructAbility.h"
+#include "ConstructorKind.h"
 #include "Identifier.h"
 
 namespace JSC {
@@ -33,12 +34,14 @@ namespace JSC {
 enum class JSParserStrictMode { NotStrict, Strict };
 enum class JSParserBuiltinMode { NotBuiltin, Builtin };
 enum class JSParserScriptMode { Classic, Module };
-enum class JSParserCodeType { Program, Function, Module };
 
-enum class ConstructorKind { None, Base, Extends };
 enum class SuperBinding { Needed, NotNeeded };
 
-enum DebuggerMode { DebuggerOff, DebuggerOn };
+enum class CodeGenerationMode : uint8_t {
+    Debugger = 1 << 0,
+    TypeProfiler = 1 << 1,
+    ControlFlowProfiler = 1 << 2,
+};
 
 enum class FunctionMode { FunctionExpression, FunctionDeclaration, MethodDefinition };
 
@@ -63,6 +66,7 @@ enum class SourceParseMode : uint8_t {
     AsyncGeneratorWrapperFunctionMode = 16,
     AsyncGeneratorWrapperMethodMode   = 17,
     GeneratorWrapperMethodMode        = 18,
+    InstanceFieldInitializerMode      = 19,
 };
 
 class SourceParseModeSet {
@@ -111,7 +115,8 @@ ALWAYS_INLINE bool isFunctionParseMode(SourceParseMode parseMode)
         SourceParseMode::AsyncArrowFunctionBodyMode,
         SourceParseMode::AsyncGeneratorBodyMode,
         SourceParseMode::AsyncGeneratorWrapperFunctionMode,
-        SourceParseMode::AsyncGeneratorWrapperMethodMode).contains(parseMode);
+        SourceParseMode::AsyncGeneratorWrapperMethodMode,
+        SourceParseMode::InstanceFieldInitializerMode).contains(parseMode);
 }
 
 ALWAYS_INLINE bool isAsyncFunctionParseMode(SourceParseMode parseMode)
@@ -329,4 +334,5 @@ const InnerArrowFunctionCodeFeatures SuperPropertyInnerArrowFunctionFeature = 1 
 const InnerArrowFunctionCodeFeatures NewTargetInnerArrowFunctionFeature =     1 << 5;
 
 const InnerArrowFunctionCodeFeatures AllInnerArrowFunctionCodeFeatures = EvalInnerArrowFunctionFeature | ArgumentsInnerArrowFunctionFeature | ThisInnerArrowFunctionFeature | SuperCallInnerArrowFunctionFeature | SuperPropertyInnerArrowFunctionFeature | NewTargetInnerArrowFunctionFeature;
+static_assert(AllInnerArrowFunctionCodeFeatures <= 0b111111, "InnerArrowFunctionCodeFeatures must be 6bits");
 } // namespace JSC

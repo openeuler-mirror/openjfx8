@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2017, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -33,14 +33,14 @@ namespace WebCore {
 
 bool GlyphPage::fill(UChar* buffer, unsigned bufferLength)
 {
-    JNIEnv* env = WebCore_GetJavaEnv();
+    JNIEnv* env = WTF::GetJavaEnv();
 
     RefPtr<RQRef> jFont = this->font().platformData().nativeFontData();
     if (!jFont)
         return false;
 
     JLocalRef<jcharArray> jchars(env->NewCharArray(bufferLength));
-    CheckAndClearException(env); // OOME
+    WTF::CheckAndClearException(env); // OOME
     ASSERT(jchars);
     if (!jchars)
         return false;
@@ -53,7 +53,7 @@ bool GlyphPage::fill(UChar* buffer, unsigned bufferLength)
     static jmethodID mid = env->GetMethodID(PG_GetFontClass(env), "getGlyphCodes", "([C)[I");
     ASSERT(mid);
     JLocalRef<jintArray> jglyphs(static_cast<jintArray>(env->CallObjectMethod(*jFont, mid, (jcharArray)jchars)));
-    CheckAndClearException(env);
+    WTF::CheckAndClearException(env);
     ASSERT(jglyphs);
     if (!jglyphs)
         return false;

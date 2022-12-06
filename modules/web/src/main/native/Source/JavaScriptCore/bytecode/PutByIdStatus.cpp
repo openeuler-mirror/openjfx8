@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,16 +26,13 @@
 #include "config.h"
 #include "PutByIdStatus.h"
 
+#include "BytecodeStructs.h"
 #include "CodeBlock.h"
 #include "ComplexGetStatus.h"
 #include "GetterSetterAccessCase.h"
 #include "ICStatusUtils.h"
-#include "LLIntData.h"
-#include "LowLevelInterpreter.h"
-#include "JSCInlines.h"
 #include "PolymorphicAccess.h"
-#include "Structure.h"
-#include "StructureChain.h"
+#include "StructureInlines.h"
 #include "StructureStubInfo.h"
 #include <wtf/ListDump.h>
 
@@ -46,36 +43,27 @@ bool PutByIdStatus::appendVariant(const PutByIdVariant& variant)
     return appendICStatusVariant(m_variants, variant);
 }
 
-#if ENABLE(DFG_JIT)
-ExitFlag PutByIdStatus::hasExitSite(CodeBlock* profiledBlock, unsigned bytecodeIndex)
+PutByIdStatus PutByIdStatus::computeFromLLInt(CodeBlock* profiledBlock, BytecodeIndex bytecodeIndex, UniquedStringImpl* uid)
 {
-    return hasBadCacheExitSite(profiledBlock, bytecodeIndex);
-}
-#endif
+    VM& vm = profiledBlock->vm();
 
-PutByIdStatus PutByIdStatus::computeFromLLInt(CodeBlock* profiledBlock, unsigned bytecodeIndex, UniquedStringImpl* uid)
-{
-    UNUSED_PARAM(profiledBlock);
-    UNUSED_PARAM(bytecodeIndex);
-    UNUSED_PARAM(uid);
+    auto instruction = profiledBlock->instructions().at(bytecodeIndex.offset());
+    auto bytecode = instruction->as<OpPutById>();
+    auto& metadata = bytecode.metadata(profiledBlock);
 
-    VM& vm = *profiledBlock->vm();
-
-    Instruction* instruction = &profiledBlock->instructions()[bytecodeIndex];
-
-    StructureID structureID = instruction[4].u.structureID;
+    StructureID structureID = metadata.m_oldStructureID;
     if (!structureID)
         return PutByIdStatus(NoInformation);
 
     Structure* structure = vm.heap.structureIDTable().get(structureID);
 
-    StructureID newStructureID = instruction[6].u.structureID;
+    StructureID newStructureID = metadata.m_newStructureID;
     if (!newStructureID) {
         PropertyOffset offset = structure->getConcurrently(uid);
         if (!isValidOffset(offset))
             return PutByIdStatus(NoInformation);
 
-        return PutByIdVariant::replace(structure, offset, structure->inferredTypeDescriptorFor(uid));
+        return PutByIdVariant::replace(structure, offset);
     }
 
     Structure* newStructure = vm.heap.structureIDTable().get(newStructureID);
@@ -87,7 +75,7 @@ PutByIdStatus PutByIdStatus::computeFromLLInt(CodeBlock* profiledBlock, unsigned
         return PutByIdStatus(NoInformation);
 
     ObjectPropertyConditionSet conditionSet;
-    if (!(instruction[8].u.putByIdFlags & PutByIdIsDirect)) {
+    if (!(bytecode.m_flags.isDirect())) {
         conditionSet =
             generateConditionsForPropertySetterMissConcurrently(
                 vm, profiledBlock->globalObject(), structure, uid);
@@ -96,11 +84,11 @@ PutByIdStatus PutByIdStatus::computeFromLLInt(CodeBlock* profiledBlock, unsigned
     }
 
     return PutByIdVariant::transition(
-        structure, newStructure, conditionSet, offset, newStructure->inferredTypeDescriptorFor(uid));
+        structure, newStructure, conditionSet, offset);
 }
 
 #if ENABLE(JIT)
-PutByIdStatus PutByIdStatus::computeFor(CodeBlock* profiledBlock, ICStatusMap& map, unsigned bytecodeIndex, UniquedStringImpl* uid, ExitFlag didExit, CallLinkStatus::ExitSiteData callExitSiteData)
+PutByIdStatus PutByIdStatus::computeFor(CodeBlock* profiledBlock, ICStatusMap& map, BytecodeIndex bytecodeIndex, UniquedStringImpl* uid, ExitFlag didExit, CallLinkStatus::ExitSiteData callExitSiteData)
 {
     ConcurrentJSLocker locker(profiledBlock->m_lock);
 
@@ -120,6 +108,8 @@ PutByIdStatus PutByIdStatus::computeFor(CodeBlock* profiledBlock, ICStatusMap& m
     return result;
 #else // ENABLE(JIT)
     UNUSED_PARAM(map);
+    UNUSED_PARAM(didExit);
+    UNUSED_PARAM(callExitSiteData);
     return PutByIdStatus(NoInformation);
 #endif // ENABLE(JIT)
 }
@@ -128,18 +118,18 @@ PutByIdStatus PutByIdStatus::computeForStubInfo(const ConcurrentJSLocker& locker
 {
     return computeForStubInfo(
         locker, baselineBlock, stubInfo, uid,
-        CallLinkStatus::computeExitSiteData(baselineBlock, codeOrigin.bytecodeIndex));
+        CallLinkStatus::computeExitSiteData(baselineBlock, codeOrigin.bytecodeIndex()));
 }
 
 PutByIdStatus PutByIdStatus::computeForStubInfo(
     const ConcurrentJSLocker& locker, CodeBlock* profiledBlock, StructureStubInfo* stubInfo,
     UniquedStringImpl* uid, CallLinkStatus::ExitSiteData callExitSiteData)
 {
-    StubInfoSummary summary = StructureStubInfo::summary(stubInfo);
+    StubInfoSummary summary = StructureStubInfo::summary(profiledBlock->vm(), stubInfo);
     if (!isInlineable(summary))
         return PutByIdStatus(summary);
 
-    switch (stubInfo->cacheType) {
+    switch (stubInfo->cacheType()) {
     case CacheType::Unset:
         // This means that we attempted to cache but failed for some reason.
         return PutByIdStatus(JSC::slowVersion(summary));
@@ -149,7 +139,7 @@ PutByIdStatus PutByIdStatus::computeForStubInfo(
             stubInfo->u.byIdSelf.baseObjectStructure->getConcurrently(uid);
         if (isValidOffset(offset)) {
             return PutByIdVariant::replace(
-                stubInfo->u.byIdSelf.baseObjectStructure.get(), offset, InferredType::Top);
+                stubInfo->u.byIdSelf.baseObjectStructure.get(), offset);
         }
         return PutByIdStatus(JSC::slowVersion(summary));
     }
@@ -176,7 +166,7 @@ PutByIdStatus PutByIdStatus::computeForStubInfo(
                 if (!isValidOffset(offset))
                     return PutByIdStatus(JSC::slowVersion(summary));
                 variant = PutByIdVariant::replace(
-                    structure, offset, structure->inferredTypeDescriptorFor(uid));
+                    structure, offset);
                 break;
             }
 
@@ -189,8 +179,7 @@ PutByIdStatus PutByIdStatus::computeForStubInfo(
                 if (!conditionSet.structuresEnsureValidity())
                     return PutByIdStatus(JSC::slowVersion(summary));
                 variant = PutByIdVariant::transition(
-                    access.structure(), access.newStructure(), conditionSet, offset,
-                    access.newStructure()->inferredTypeDescriptorFor(uid));
+                    access.structure(), access.newStructure(), conditionSet, offset);
                 break;
             }
 
@@ -209,7 +198,7 @@ PutByIdStatus PutByIdStatus::computeForStubInfo(
 
                 case ComplexGetStatus::Inlineable: {
                     std::unique_ptr<CallLinkStatus> callLinkStatus =
-                        std::make_unique<CallLinkStatus>();
+                        makeUnique<CallLinkStatus>();
                     if (CallLinkInfo* callLinkInfo = access.as<GetterSetterAccessCase>().callLinkInfo()) {
                         *callLinkStatus = CallLinkStatus::computeFor(
                             locker, profiledBlock, *callLinkInfo, callExitSiteData);
@@ -244,9 +233,9 @@ PutByIdStatus PutByIdStatus::computeForStubInfo(
 
 PutByIdStatus PutByIdStatus::computeFor(CodeBlock* baselineBlock, ICStatusMap& baselineMap, ICStatusContextStack& contextStack, CodeOrigin codeOrigin, UniquedStringImpl* uid)
 {
-    CallLinkStatus::ExitSiteData callExitSiteData =
-        CallLinkStatus::computeExitSiteData(baselineBlock, codeOrigin.bytecodeIndex);
-    ExitFlag didExit = hasExitSite(baselineBlock, codeOrigin.bytecodeIndex);
+    BytecodeIndex bytecodeIndex = codeOrigin.bytecodeIndex();
+    CallLinkStatus::ExitSiteData callExitSiteData = CallLinkStatus::computeExitSiteData(baselineBlock, bytecodeIndex);
+    ExitFlag didExit = hasBadCacheExitSite(baselineBlock, bytecodeIndex);
 
     for (ICStatusContext* context : contextStack) {
         ICStatus status = context->get(codeOrigin);
@@ -254,7 +243,7 @@ PutByIdStatus PutByIdStatus::computeFor(CodeBlock* baselineBlock, ICStatusMap& b
         auto bless = [&] (const PutByIdStatus& result) -> PutByIdStatus {
             if (!context->isInlined(codeOrigin)) {
                 PutByIdStatus baselineResult = computeFor(
-                    baselineBlock, baselineMap, codeOrigin.bytecodeIndex, uid, didExit,
+                    baselineBlock, baselineMap, bytecodeIndex, uid, didExit,
                     callExitSiteData);
                 baselineResult.merge(result);
                 return baselineResult;
@@ -279,7 +268,7 @@ PutByIdStatus PutByIdStatus::computeFor(CodeBlock* baselineBlock, ICStatusMap& b
             return bless(*status.putStatus);
     }
 
-    return computeFor(baselineBlock, baselineMap, codeOrigin.bytecodeIndex, uid, didExit, callExitSiteData);
+    return computeFor(baselineBlock, baselineMap, bytecodeIndex, uid, didExit, callExitSiteData);
 }
 
 PutByIdStatus PutByIdStatus::computeFor(JSGlobalObject* globalObject, const StructureSet& set, UniquedStringImpl* uid, bool isDirect)
@@ -305,7 +294,7 @@ PutByIdStatus PutByIdStatus::computeFor(JSGlobalObject* globalObject, const Stru
         unsigned attributes;
         PropertyOffset offset = structure->getConcurrently(uid, attributes);
         if (isValidOffset(offset)) {
-            if (attributes & PropertyAttribute::CustomAccessor)
+            if (attributes & PropertyAttribute::CustomAccessorOrValue)
                 return PutByIdStatus(MakesCalls);
 
             if (attributes & (PropertyAttribute::Accessor | PropertyAttribute::ReadOnly))
@@ -322,7 +311,7 @@ PutByIdStatus PutByIdStatus::computeFor(JSGlobalObject* globalObject, const Stru
             }
 
             PutByIdVariant variant =
-                PutByIdVariant::replace(structure, offset, structure->inferredTypeDescriptorFor(uid));
+                PutByIdVariant::replace(structure, offset);
             if (!result.appendVariant(variant))
                 return PutByIdStatus(TakesSlowPath);
             continue;
@@ -357,8 +346,7 @@ PutByIdStatus PutByIdStatus::computeFor(JSGlobalObject* globalObject, const Stru
 
         bool didAppend = result.appendVariant(
             PutByIdVariant::transition(
-                structure, transition, conditionSet, offset,
-                transition->inferredTypeDescriptorFor(uid)));
+                structure, transition, conditionSet, offset));
         if (!didAppend)
             return PutByIdStatus(TakesSlowPath);
     }
@@ -394,10 +382,10 @@ void PutByIdStatus::markIfCheap(SlotVisitor& visitor)
         variant.markIfCheap(visitor);
 }
 
-bool PutByIdStatus::finalize()
+bool PutByIdStatus::finalize(VM& vm)
 {
     for (PutByIdVariant& variant : m_variants) {
-        if (!variant.finalize())
+        if (!variant.finalize(vm))
             return false;
     }
     return true;

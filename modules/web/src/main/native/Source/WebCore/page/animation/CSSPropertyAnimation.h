@@ -42,13 +42,13 @@ public:
     static bool animationOfPropertyIsAccelerated(CSSPropertyID);
     static bool propertiesEqual(CSSPropertyID, const RenderStyle* a, const RenderStyle* b);
     static bool canPropertyBeInterpolated(CSSPropertyID, const RenderStyle* a, const RenderStyle* b);
-    static CSSPropertyID getPropertyAtIndex(int, std::optional<bool>& isShorthand);
+    static CSSPropertyID getPropertyAtIndex(int, Optional<bool>& isShorthand);
     static int getNumProperties();
 
     static HashSet<CSSPropertyID> animatableShorthandsAffectingProperty(CSSPropertyID);
 
     // Return true if we need to start software animation timers
-    static bool blendProperties(const CSSPropertyBlendingClient*, CSSPropertyID, RenderStyle* dst, const RenderStyle* a, const RenderStyle* b, double progress);
+    static void blendProperties(const CSSPropertyBlendingClient*, CSSPropertyID, RenderStyle* dst, const RenderStyle* a, const RenderStyle* b, double progress);
 };
 
 } // namespace WebCore

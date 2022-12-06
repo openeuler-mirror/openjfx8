@@ -26,7 +26,11 @@
 #include "config.h"
 #include "ScrollAnimationKinetic.h"
 
-#include "ScrollableArea.h"
+#include "PlatformWheelEvent.h"
+
+#if USE(GLIB_EVENT_LOOP)
+#include <wtf/glib/RunLoopSourcePriority.h>
+#endif
 
 /*
  * PerAxisData is a port of GtkKineticScrolling as of GTK+ 3.20,
@@ -65,6 +69,7 @@ static const double decelFriction = 4;
 static const double frameRate = 60;
 static const Seconds tickTime = 1_s / frameRate;
 static const Seconds minimumTimerInterval { 1_ms };
+static const Seconds scrollCaptureThreshold { 150_ms };
 
 namespace WebCore {
 
@@ -89,12 +94,14 @@ bool ScrollAnimationKinetic::PerAxisData::animateScroll(Seconds timeDelta)
     m_velocity = -decelFriction * m_coef2 * exponentialPart;
 
     if (m_position < m_lower) {
+        m_velocity = m_lower - m_position;
         m_position = m_lower;
-        m_velocity = 0;
     } else if (m_position > m_upper) {
+        m_velocity = m_upper - m_position;
         m_position = m_upper;
-        m_velocity = 0;
-    } else if (fabs(m_velocity) < 1 || (lastTime && fabs(m_position - lastPosition) < 1)) {
+    }
+
+    if (fabs(m_velocity) < 1 || (lastTime && fabs(m_position - lastPosition) < 1)) {
         m_position = round(m_position);
         m_velocity = 0;
     }
@@ -102,11 +109,14 @@ bool ScrollAnimationKinetic::PerAxisData::animateScroll(Seconds timeDelta)
     return m_velocity;
 }
 
-ScrollAnimationKinetic::ScrollAnimationKinetic(ScrollableArea& scrollableArea, std::function<void(FloatPoint&&)>&& notifyPositionChangedFunction)
-    : ScrollAnimation(scrollableArea)
+ScrollAnimationKinetic::ScrollAnimationKinetic(ScrollExtentsCallback&& scrollExtentsFunction, NotifyPositionChangedCallback&& notifyPositionChangedFunction)
+    : m_scrollExtentsFunction(WTFMove(scrollExtentsFunction))
     , m_notifyPositionChangedFunction(WTFMove(notifyPositionChangedFunction))
-    , m_animationTimer(*this, &ScrollAnimationKinetic::animationTimerFired)
+    , m_animationTimer(RunLoop::current(), this, &ScrollAnimationKinetic::animationTimerFired)
 {
+#if USE(GLIB_EVENT_LOOP)
+    m_animationTimer.setPriority(WTF::RunLoopSourcePriority::DisplayRefreshMonitorTimer);
+#endif
 }
 
 ScrollAnimationKinetic::~ScrollAnimationKinetic() = default;
@@ -114,8 +124,47 @@ ScrollAnimationKinetic::~ScrollAnimationKinetic() = default;
 void ScrollAnimationKinetic::stop()
 {
     m_animationTimer.stop();
-    m_horizontalData = std::nullopt;
-    m_verticalData = std::nullopt;
+    m_horizontalData = WTF::nullopt;
+    m_verticalData = WTF::nullopt;
+}
+
+bool ScrollAnimationKinetic::isActive() const
+{
+    return m_animationTimer.isActive();
+}
+
+void ScrollAnimationKinetic::appendToScrollHistory(const PlatformWheelEvent& event)
+{
+    m_scrollHistory.removeAllMatching([&event] (PlatformWheelEvent& otherEvent) -> bool {
+        return (event.timestamp() - otherEvent.timestamp()) > scrollCaptureThreshold;
+    });
+
+    m_scrollHistory.append(event);
+}
+
+void ScrollAnimationKinetic::clearScrollHistory()
+{
+    m_scrollHistory.clear();
+}
+
+FloatPoint ScrollAnimationKinetic::computeVelocity()
+{
+    if (m_scrollHistory.isEmpty())
+        return { };
+
+    auto first = m_scrollHistory[0].timestamp();
+    auto last = m_scrollHistory.rbegin()->timestamp();
+
+    if (last == first)
+        return { };
+
+    FloatPoint accumDelta;
+    for (const auto& scrollEvent : m_scrollHistory)
+        accumDelta += FloatPoint(scrollEvent.deltaX(), scrollEvent.deltaY());
+
+    m_scrollHistory.clear();
+
+    return FloatPoint(accumDelta.x() * -1 / (last - first).value(), accumDelta.y() * -1 / (last - first).value());
 }
 
 void ScrollAnimationKinetic::start(const FloatPoint& initialPosition, const FloatPoint& velocity, bool mayHScroll, bool mayVScroll)
@@ -127,14 +176,15 @@ void ScrollAnimationKinetic::start(const FloatPoint& initialPosition, const Floa
     if (!velocity.x() && !velocity.y())
         return;
 
+    auto extents = m_scrollExtentsFunction();
     if (mayHScroll) {
-        m_horizontalData = PerAxisData(m_scrollableArea.minimumScrollPosition().x(),
-            m_scrollableArea.maximumScrollPosition().x(),
+        m_horizontalData = PerAxisData(extents.minimumScrollPosition.x(),
+            extents.maximumScrollPosition.x(),
             initialPosition.x(), velocity.x());
     }
     if (mayVScroll) {
-        m_verticalData = PerAxisData(m_scrollableArea.minimumScrollPosition().y(),
-            m_scrollableArea.maximumScrollPosition().y(),
+        m_verticalData = PerAxisData(extents.minimumScrollPosition.y(),
+            extents.maximumScrollPosition.y(),
             initialPosition.y(), velocity.y());
     }
 
@@ -148,10 +198,10 @@ void ScrollAnimationKinetic::animationTimerFired()
     Seconds deltaToNextFrame = 1_s * ceil((currentTime - m_startTime).value() * frameRate) / frameRate - (currentTime - m_startTime);
 
     if (m_horizontalData && !m_horizontalData.value().animateScroll(deltaToNextFrame))
-        m_horizontalData = std::nullopt;
+        m_horizontalData = WTF::nullopt;
 
     if (m_verticalData && !m_verticalData.value().animateScroll(deltaToNextFrame))
-        m_verticalData = std::nullopt;
+        m_verticalData = WTF::nullopt;
 
     // If one of the axes didn't finish its animation we must continue it.
     if (m_horizontalData || m_verticalData)

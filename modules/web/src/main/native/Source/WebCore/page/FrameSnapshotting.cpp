@@ -92,23 +92,26 @@ std::unique_ptr<ImageBuffer> snapshotFrameRectWithClip(Frame& frame, const IntRe
 
     auto paintBehavior = state.paintBehavior;
     if (options & SnapshotOptionsForceBlackText)
-        paintBehavior |= PaintBehavior::ForceBlackText;
+        paintBehavior.add(PaintBehavior::ForceBlackText);
     if (options & SnapshotOptionsPaintSelectionOnly)
-        paintBehavior |= PaintBehavior::SelectionOnly;
+        paintBehavior.add(PaintBehavior::SelectionOnly);
     if (options & SnapshotOptionsPaintSelectionAndBackgroundsOnly)
-        paintBehavior |= PaintBehavior::SelectionAndBackgroundsOnly;
+        paintBehavior.add(PaintBehavior::SelectionAndBackgroundsOnly);
     if (options & SnapshotOptionsPaintEverythingExcludingSelection)
-        paintBehavior |= PaintBehavior::ExcludeSelection;
+        paintBehavior.add(PaintBehavior::ExcludeSelection);
 
     // Other paint behaviors are set by paintContentsForSnapshot.
     frame.view()->setPaintBehavior(paintBehavior);
 
     float scaleFactor = frame.page()->deviceScaleFactor();
 
-    if (frame.settings().delegatesPageScaling())
+    if (frame.page()->delegatesScaling())
         scaleFactor *= frame.page()->pageScaleFactor();
 
-    std::unique_ptr<ImageBuffer> buffer = ImageBuffer::create(imageRect.size(), Unaccelerated, scaleFactor);
+    if (options & SnapshotOptionsPaintWithIntegralScaleFactor)
+        scaleFactor = ceilf(scaleFactor);
+
+    std::unique_ptr<ImageBuffer> buffer = ImageBuffer::create(imageRect.size(), RenderingMode::Unaccelerated, scaleFactor);
     if (!buffer)
         return nullptr;
     buffer->context().translate(-imageRect.x(), -imageRect.y());
@@ -116,7 +119,7 @@ std::unique_ptr<ImageBuffer> snapshotFrameRectWithClip(Frame& frame, const IntRe
     if (!clipRects.isEmpty()) {
         Path clipPath;
         for (auto& rect : clipRects)
-            clipPath.addRect(rect);
+            clipPath.addRect(encloseRectToDevicePixels(rect, scaleFactor));
         buffer->context().clipPath(clipPath);
     }
 
@@ -148,7 +151,7 @@ std::unique_ptr<ImageBuffer> snapshotNode(Frame& frame, Node& node)
 
     ScopedFramePaintingState state(frame, &node);
 
-    frame.view()->setBaseBackgroundColor(Color::transparent);
+    frame.view()->setBaseBackgroundColor(Color::transparentBlack);
     frame.view()->setNodeToDraw(&node);
 
     LayoutRect topLevelRect;

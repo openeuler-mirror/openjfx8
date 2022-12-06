@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,8 +23,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef WTF_WordLock_h
-#define WTF_WordLock_h
+#pragma once
 
 #include <wtf/Atomics.h>
 #include <wtf/Compiler.h>
@@ -46,7 +45,7 @@ namespace WTF {
 // PrintStream uses this so that ParkingLot and Lock can use PrintStream. This means that if you
 // try to use dataLog to debug this code, you will have a bad time.
 
-class WordLock {
+class WordLock final {
     WTF_MAKE_NONCOPYABLE(WordLock);
     WTF_MAKE_FAST_ALLOCATED;
 public:
@@ -85,9 +84,9 @@ public:
 protected:
     friend struct TestWebKitAPI::LockInspector;
 
-    static const uintptr_t isLockedBit = 1;
-    static const uintptr_t isQueueLockedBit = 2;
-    static const uintptr_t queueHeadMask = 3;
+    static constexpr uintptr_t isLockedBit = 1;
+    static constexpr uintptr_t isQueueLockedBit = 2;
+    static constexpr uintptr_t queueHeadMask = 3;
 
     WTF_EXPORT_PRIVATE void lockSlow();
     WTF_EXPORT_PRIVATE void unlockSlow();
@@ -107,6 +106,3 @@ using WordLockHolder = Locker<WordLock>;
 
 using WTF::WordLock;
 using WTF::WordLockHolder;
-
-#endif // WTF_WordLock_h
-

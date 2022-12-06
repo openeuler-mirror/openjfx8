@@ -36,6 +36,7 @@
 #include "LocaleToScriptMapping.h"
 #include "Page.h"
 #include "PageGroup.h"
+#include "PlatformMediaSessionManager.h"
 #include "RenderTheme.h"
 #include "RuntimeEnabledFeatures.h"
 #include "Settings.h"
@@ -57,6 +58,7 @@ InternalSettings::Backup::Backup(Settings& settings)
 #if ENABLE(TEXT_AUTOSIZING)
     , m_originalTextAutosizingEnabled(settings.textAutosizingEnabled())
     , m_originalTextAutosizingWindowSizeOverride(settings.textAutosizingWindowSizeOverride())
+    , m_originalTextAutosizingUsesIdempotentMode(settings.textAutosizingUsesIdempotentMode())
 #endif
     , m_originalMediaTypeOverride(settings.mediaTypeOverride())
     , m_originalCanvasUsesAcceleratedDrawing(settings.canvasUsesAcceleratedDrawing())
@@ -64,7 +66,7 @@ InternalSettings::Backup::Backup(Settings& settings)
     , m_imagesEnabled(settings.areImagesEnabled())
     , m_preferMIMETypeForImages(settings.preferMIMETypeForImages())
     , m_minimumDOMTimerInterval(settings.minimumDOMTimerInterval())
-#if ENABLE(VIDEO_TRACK)
+#if ENABLE(VIDEO)
     , m_shouldDisplaySubtitles(settings.shouldDisplaySubtitles())
     , m_shouldDisplayCaptions(settings.shouldDisplayCaptions())
     , m_shouldDisplayTextDescriptions(settings.shouldDisplayTextDescriptions())
@@ -94,9 +96,12 @@ InternalSettings::Backup::Backup(Settings& settings)
     , m_deferredCSSParserEnabled(settings.deferredCSSParserEnabled())
     , m_inputEventsEnabled(settings.inputEventsEnabled())
     , m_incompleteImageBorderEnabled(settings.incompleteImageBorderEnabled())
-#if ENABLE(ACCESSIBILITY_EVENTS)
-    , m_accessibilityEventsEnabled(settings.accessibilityEventsEnabled())
+    , m_shouldDispatchSyntheticMouseEventsWhenModifyingSelection(settings.shouldDispatchSyntheticMouseEventsWhenModifyingSelection())
+    , m_shouldDispatchSyntheticMouseOutAfterSyntheticClick(settings.shouldDispatchSyntheticMouseOutAfterSyntheticClick())
+#if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
+    , m_shouldDeactivateAudioSession(PlatformMediaSessionManager::shouldDeactivateAudioSession())
 #endif
+    , m_animatedImageDebugCanvasDrawingEnabled(settings.animatedImageDebugCanvasDrawingEnabled())
     , m_userInterfaceDirectionPolicy(settings.userInterfaceDirectionPolicy())
     , m_systemLayoutDirection(settings.systemLayoutDirection())
     , m_pdfImageCachingPolicy(settings.pdfImageCachingPolicy())
@@ -111,19 +116,15 @@ InternalSettings::Backup::Backup(Settings& settings)
 #if ENABLE(WEBGL2)
     , m_webGL2Enabled(RuntimeEnabledFeatures::sharedFeatures().webGL2Enabled())
 #endif
-#if ENABLE(WEBGPU)
-    , m_webGPUEnabled(RuntimeEnabledFeatures::sharedFeatures().webGPUEnabled())
-#endif
-    , m_webVREnabled(RuntimeEnabledFeatures::sharedFeatures().webVREnabled())
 #if ENABLE(MEDIA_STREAM)
     , m_setScreenCaptureEnabled(RuntimeEnabledFeatures::sharedFeatures().screenCaptureEnabled())
 #endif
+    , m_fetchAPIKeepAliveAPIEnabled(RuntimeEnabledFeatures::sharedFeatures().fetchAPIKeepAliveEnabled())
     , m_shouldMockBoldSystemFontForAccessibility(RenderTheme::singleton().shouldMockBoldSystemFontForAccessibility())
 #if USE(AUDIO_SESSION)
     , m_shouldManageAudioSessionCategory(DeprecatedGlobalSettings::shouldManageAudioSessionCategory())
 #endif
     , m_customPasteboardDataEnabled(RuntimeEnabledFeatures::sharedFeatures().customPasteboardDataEnabled())
-    , m_promptForStorageAccessAPIEnabled(RuntimeEnabledFeatures::sharedFeatures().storageAccessPromptsEnabled())
 {
 }
 
@@ -162,13 +163,14 @@ void InternalSettings::Backup::restoreTo(Settings& settings)
 #if ENABLE(TEXT_AUTOSIZING)
     settings.setTextAutosizingEnabled(m_originalTextAutosizingEnabled);
     settings.setTextAutosizingWindowSizeOverride(m_originalTextAutosizingWindowSizeOverride);
+    settings.setTextAutosizingUsesIdempotentMode(m_originalTextAutosizingUsesIdempotentMode);
 #endif
     settings.setMediaTypeOverride(m_originalMediaTypeOverride);
     settings.setCanvasUsesAcceleratedDrawing(m_originalCanvasUsesAcceleratedDrawing);
     settings.setImagesEnabled(m_imagesEnabled);
     settings.setPreferMIMETypeForImages(m_preferMIMETypeForImages);
     settings.setMinimumDOMTimerInterval(m_minimumDOMTimerInterval);
-#if ENABLE(VIDEO_TRACK)
+#if ENABLE(VIDEO)
     settings.setShouldDisplaySubtitles(m_shouldDisplaySubtitles);
     settings.setShouldDisplayCaptions(m_shouldDisplayCaptions);
     settings.setShouldDisplayTextDescriptions(m_shouldDisplayTextDescriptions);
@@ -201,14 +203,16 @@ void InternalSettings::Backup::restoreTo(Settings& settings)
     settings.setForcedDisplayIsMonochromeAccessibilityValue(m_forcedDisplayIsMonochromeAccessibilityValue);
     settings.setForcedPrefersReducedMotionAccessibilityValue(m_forcedPrefersReducedMotionAccessibilityValue);
     settings.setFontLoadTimingOverride(m_fontLoadTimingOverride);
-    DeprecatedGlobalSettings::setAllowsAnySSLCertificate(false);
     RenderTheme::singleton().setShouldMockBoldSystemFontForAccessibility(m_shouldMockBoldSystemFontForAccessibility);
     FontCache::singleton().setShouldMockBoldSystemFontForAccessibility(m_shouldMockBoldSystemFontForAccessibility);
     settings.setFrameFlattening(m_frameFlattening);
     settings.setIncompleteImageBorderEnabled(m_incompleteImageBorderEnabled);
-#if ENABLE(ACCESSIBILITY_EVENTS)
-    settings.setAccessibilityEventsEnabled(m_accessibilityEventsEnabled);
+    settings.setShouldDispatchSyntheticMouseEventsWhenModifyingSelection(m_shouldDispatchSyntheticMouseEventsWhenModifyingSelection);
+    settings.setShouldDispatchSyntheticMouseOutAfterSyntheticClick(m_shouldDispatchSyntheticMouseOutAfterSyntheticClick);
+#if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
+    PlatformMediaSessionManager::setShouldDeactivateAudioSession(m_shouldDeactivateAudioSession);
 #endif
+    settings.setAnimatedImageDebugCanvasDrawingEnabled(m_animatedImageDebugCanvasDrawingEnabled);
 
 #if ENABLE(INDEXED_DATABASE_IN_WORKERS)
     RuntimeEnabledFeatures::sharedFeatures().setIndexedDBWorkersEnabled(m_indexedDBWorkersEnabled);
@@ -216,28 +220,24 @@ void InternalSettings::Backup::restoreTo(Settings& settings)
 #if ENABLE(WEBGL2)
     RuntimeEnabledFeatures::sharedFeatures().setWebGL2Enabled(m_webGL2Enabled);
 #endif
-#if ENABLE(WEBGPU)
-    RuntimeEnabledFeatures::sharedFeatures().setWebGPUEnabled(m_webGPUEnabled);
-#endif
-    RuntimeEnabledFeatures::sharedFeatures().setWebVREnabled(m_webVREnabled);
 #if ENABLE(MEDIA_STREAM)
     RuntimeEnabledFeatures::sharedFeatures().setScreenCaptureEnabled(m_setScreenCaptureEnabled);
 #endif
+    RuntimeEnabledFeatures::sharedFeatures().setFetchAPIKeepAliveEnabled(m_fetchAPIKeepAliveAPIEnabled);
     RuntimeEnabledFeatures::sharedFeatures().setCustomPasteboardDataEnabled(m_customPasteboardDataEnabled);
 
 #if USE(AUDIO_SESSION)
     DeprecatedGlobalSettings::setShouldManageAudioSessionCategory(m_shouldManageAudioSessionCategory);
 #endif
-
-    RuntimeEnabledFeatures::sharedFeatures().setStorageAccessPromptsEnabled(m_promptForStorageAccessAPIEnabled);
 }
 
 class InternalSettingsWrapper : public Supplement<Page> {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     explicit InternalSettingsWrapper(Page* page)
         : m_internalSettings(InternalSettings::create(page)) { }
     virtual ~InternalSettingsWrapper() { m_internalSettings->hostDestroyed(); }
-#if !ASSERT_DISABLED
+#if ASSERT_ENABLED
     bool isRefCountedWrapper() const override { return true; }
 #endif
     InternalSettings* internalSettings() const { return m_internalSettings.get(); }
@@ -254,7 +254,7 @@ const char* InternalSettings::supplementName()
 InternalSettings* InternalSettings::from(Page* page)
 {
     if (!Supplement<Page>::from(page, supplementName()))
-        Supplement<Page>::provideTo(page, supplementName(), std::make_unique<InternalSettingsWrapper>(page));
+        Supplement<Page>::provideTo(page, supplementName(), makeUnique<InternalSettingsWrapper>(page));
     return static_cast<InternalSettingsWrapper*>(Supplement<Page>::from(page, supplementName()))->internalSettings();
 }
 
@@ -286,6 +286,7 @@ void InternalSettings::resetToConsistentState()
     m_page->setPageScaleFactor(1, { 0, 0 });
     m_page->mainFrame().setPageAndTextZoomFactors(1, 1);
     m_page->setCanStartMedia(true);
+    setUseDarkAppearanceInternal(false);
 
     settings().setForcePendingWebGLPolicy(false);
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
@@ -428,6 +429,30 @@ ExceptionOr<void> InternalSettings::setTextAutosizingWindowSizeOverride(int widt
     return { };
 }
 
+ExceptionOr<void> InternalSettings::setTextAutosizingUsesIdempotentMode(bool enabled)
+{
+    if (!m_page)
+        return Exception { InvalidAccessError };
+#if ENABLE(TEXT_AUTOSIZING)
+    settings().setTextAutosizingUsesIdempotentMode(enabled);
+#else
+    UNUSED_PARAM(enabled);
+#endif
+    return { };
+}
+
+ExceptionOr<void> InternalSettings::setEditableRegionEnabled(bool enabled)
+{
+    if (!m_page)
+        return Exception { InvalidAccessError };
+#if ENABLE(EDITABLE_REGION)
+    m_page->setEditableRegionEnabled(enabled);
+#else
+    UNUSED_PARAM(enabled);
+#endif
+    return { };
+}
+
 ExceptionOr<void> InternalSettings::setMediaTypeOverride(const String& mediaType)
 {
     if (!m_page)
@@ -461,7 +486,7 @@ ExceptionOr<void> InternalSettings::setMediaCaptureRequiresSecureConnection(bool
     if (!m_page)
         return Exception { InvalidAccessError };
 #if ENABLE(MEDIA_STREAM)
-    DeprecatedGlobalSettings::setMediaCaptureRequiresSecureConnection(requires);
+    m_page->settings().setMediaCaptureRequiresSecureConnection(requires);
 #else
     UNUSED_PARAM(requires);
 #endif
@@ -489,7 +514,7 @@ ExceptionOr<void> InternalSettings::setShouldDisplayTrackKind(const String& kind
 {
     if (!m_page)
         return Exception { InvalidAccessError };
-#if ENABLE(VIDEO_TRACK)
+#if ENABLE(VIDEO)
     auto& captionPreferences = m_page->group().captionPreferences();
     if (equalLettersIgnoringASCIICase(kind, "subtitles"))
         captionPreferences.setUserPrefersSubtitles(enabled);
@@ -510,7 +535,7 @@ ExceptionOr<bool> InternalSettings::shouldDisplayTrackKind(const String& kind)
 {
     if (!m_page)
         return Exception { InvalidAccessError };
-#if ENABLE(VIDEO_TRACK)
+#if ENABLE(VIDEO)
     auto& captionPreferences = m_page->group().captionPreferences();
     if (equalLettersIgnoringASCIICase(kind, "subtitles"))
         return captionPreferences.userPrefersSubtitles();
@@ -524,6 +549,20 @@ ExceptionOr<bool> InternalSettings::shouldDisplayTrackKind(const String& kind)
     UNUSED_PARAM(kind);
     return false;
 #endif
+}
+
+void InternalSettings::setUseDarkAppearanceInternal(bool useDarkAppearance)
+{
+    ASSERT(m_page);
+    m_page->effectiveAppearanceDidChange(useDarkAppearance, m_page->useElevatedUserInterfaceLevel());
+}
+
+ExceptionOr<void> InternalSettings::setUseDarkAppearance(bool useDarkAppearance)
+{
+    if (!m_page)
+        return Exception { InvalidAccessError };
+    setUseDarkAppearanceInternal(useDarkAppearance);
+    return { };
 }
 
 ExceptionOr<void> InternalSettings::setStorageBlockingPolicy(const String& mode)
@@ -740,6 +779,14 @@ ExceptionOr<void> InternalSettings::setShouldMockBoldSystemFontForAccessibility(
     return { };
 }
 
+ExceptionOr<void> InternalSettings::setAnimatedImageDebugCanvasDrawingEnabled(bool ignore)
+{
+    if (!m_page)
+        return Exception { InvalidAccessError };
+    settings().setAnimatedImageDebugCanvasDrawingEnabled(ignore);
+    return { };
+}
+
 void InternalSettings::setIndexedDBWorkersEnabled(bool enabled)
 {
 #if ENABLE(INDEXED_DATABASE_IN_WORKERS)
@@ -767,11 +814,6 @@ void InternalSettings::setWebGPUEnabled(bool enabled)
 #endif
 }
 
-void InternalSettings::setWebVREnabled(bool enabled)
-{
-    RuntimeEnabledFeatures::sharedFeatures().setWebVREnabled(enabled);
-}
-
 void InternalSettings::setScreenCaptureEnabled(bool enabled)
 {
 #if ENABLE(MEDIA_STREAM)
@@ -781,9 +823,9 @@ void InternalSettings::setScreenCaptureEnabled(bool enabled)
 #endif
 }
 
-void InternalSettings::setStorageAccessPromptsEnabled(bool enabled)
+void InternalSettings::setFetchAPIKeepAliveEnabled(bool enabled)
 {
-    RuntimeEnabledFeatures::sharedFeatures().setStorageAccessPromptsEnabled(enabled);
+    RuntimeEnabledFeatures::sharedFeatures().setFetchAPIKeepAliveEnabled(enabled);
 }
 
 ExceptionOr<String> InternalSettings::userInterfaceDirectionPolicy()
@@ -792,9 +834,9 @@ ExceptionOr<String> InternalSettings::userInterfaceDirectionPolicy()
         return Exception { InvalidAccessError };
     switch (settings().userInterfaceDirectionPolicy()) {
     case UserInterfaceDirectionPolicy::Content:
-        return String { "Content"_s };
+        return "Content"_str;
     case UserInterfaceDirectionPolicy::System:
-        return String { "View"_s };
+        return "View"_str;
     }
     ASSERT_NOT_REACHED();
     return Exception { InvalidAccessError };
@@ -821,9 +863,9 @@ ExceptionOr<String> InternalSettings::systemLayoutDirection()
         return Exception { InvalidAccessError };
     switch (settings().systemLayoutDirection()) {
     case TextDirection::LTR:
-        return String { "LTR"_s };
+        return "LTR"_str;
     case TextDirection::RTL:
-        return String { "RTL"_s };
+        return "RTL"_str;
     }
     ASSERT_NOT_REACHED();
     return Exception { InvalidAccessError };
@@ -892,23 +934,27 @@ ExceptionOr<void> InternalSettings::setCustomPasteboardDataEnabled(bool enabled)
     return { };
 }
 
-ExceptionOr<void> InternalSettings::setAccessibilityEventsEnabled(bool enabled)
-{
-    if (!m_page)
-        return Exception { InvalidAccessError };
-#if ENABLE(ACCESSIBILITY_EVENTS)
-    settings().setAccessibilityEventsEnabled(enabled);
-#else
-    UNUSED_PARAM(enabled);
-#endif
-    return { };
-}
-
 ExceptionOr<void> InternalSettings::setIncompleteImageBorderEnabled(bool enabled)
 {
     if (!m_page)
         return Exception { InvalidAccessError };
     settings().setIncompleteImageBorderEnabled(enabled);
+    return { };
+}
+
+ExceptionOr<void> InternalSettings::setShouldDispatchSyntheticMouseEventsWhenModifyingSelection(bool shouldDispatch)
+{
+    if (!m_page)
+        return Exception { InvalidAccessError };
+    settings().setShouldDispatchSyntheticMouseEventsWhenModifyingSelection(shouldDispatch);
+    return { };
+}
+
+ExceptionOr<void> InternalSettings::setShouldDispatchSyntheticMouseOutAfterSyntheticClick(bool shouldDispatch)
+{
+    if (!m_page)
+        return Exception { InvalidAccessError };
+    settings().setShouldDispatchSyntheticMouseOutAfterSyntheticClick(shouldDispatch);
     return { };
 }
 
@@ -972,11 +1018,32 @@ void InternalSettings::setForcedPrefersReducedMotionAccessibilityValue(InternalS
     settings().setForcedPrefersReducedMotionAccessibilityValue(internalSettingsToSettingsValue(value));
 }
 
+InternalSettings::ForcedAccessibilityValue InternalSettings::forcedSupportsHighDynamicRangeValue() const
+{
+    return settingsToInternalSettingsValue(settings().forcedSupportsHighDynamicRangeValue());
+}
+
+void InternalSettings::setForcedSupportsHighDynamicRangeValue(InternalSettings::ForcedAccessibilityValue value)
+{
+    settings().setForcedSupportsHighDynamicRangeValue(internalSettingsToSettingsValue(value));
+}
+
 bool InternalSettings::webAnimationsCSSIntegrationEnabled()
 {
     return RuntimeEnabledFeatures::sharedFeatures().webAnimationsCSSIntegrationEnabled();
 }
 
+void InternalSettings::setShouldDeactivateAudioSession(bool should)
+{
+#if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
+    PlatformMediaSessionManager::setShouldDeactivateAudioSession(should);
+#endif
+}
+
+void InternalSettings::setStorageAccessAPIPerPageScopeEnabled(bool enabled)
+{
+    settings().setStorageAccessAPIPerPageScopeEnabled(enabled);
+}
 // If you add to this class, make sure that you update the Backup class for test reproducability!
 
 }

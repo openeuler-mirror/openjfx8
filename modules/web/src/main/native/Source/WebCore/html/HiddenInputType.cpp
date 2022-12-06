@@ -43,7 +43,7 @@ namespace WebCore {
 
 using namespace HTMLNames;
 
-const AtomicString& HiddenInputType::formControlType() const
+const AtomString& HiddenInputType::formControlType() const
 {
     return InputTypeNames::hidden();
 }
@@ -73,8 +73,9 @@ RenderPtr<RenderElement> HiddenInputType::createInputRenderer(RenderStyle&&)
     return nullptr;
 }
 
-void HiddenInputType::accessKeyAction(bool)
+bool HiddenInputType::accessKeyAction(bool)
 {
+    return false;
 }
 
 bool HiddenInputType::rendererIsNeeded()

@@ -24,9 +24,7 @@
  */
 
 #include "config.h"
-#include "ThreadGroup.h"
-
-#include <wtf/NeverDestroyed.h>
+#include <wtf/ThreadGroup.h>
 
 namespace WTF {
 

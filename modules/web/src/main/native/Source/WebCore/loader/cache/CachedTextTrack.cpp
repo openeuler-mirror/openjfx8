@@ -25,8 +25,6 @@
 
 #include "config.h"
 
-#if ENABLE(VIDEO_TRACK)
-
 #include "CachedTextTrack.h"
 
 #include "CachedResourceClient.h"
@@ -37,8 +35,8 @@
 
 namespace WebCore {
 
-CachedTextTrack::CachedTextTrack(CachedResourceRequest&& request, PAL::SessionID sessionID)
-    : CachedResource(WTFMove(request), Type::TextTrackResource, sessionID)
+CachedTextTrack::CachedTextTrack(CachedResourceRequest&& request, const PAL::SessionID& sessionID, const CookieJar* cookieJar)
+    : CachedResource(WTFMove(request), Type::TextTrackResource, sessionID, cookieJar)
 {
 }
 
@@ -59,12 +57,10 @@ void CachedTextTrack::updateBuffer(SharedBuffer& data)
     CachedResource::updateBuffer(data);
 }
 
-void CachedTextTrack::finishLoading(SharedBuffer* data)
+void CachedTextTrack::finishLoading(SharedBuffer* data, const NetworkLoadMetrics& metrics)
 {
     doUpdateBuffer(data);
-    CachedResource::finishLoading(data);
+    CachedResource::finishLoading(data, metrics);
 }
 
 }
-
-#endif

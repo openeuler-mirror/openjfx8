@@ -46,6 +46,7 @@
 #include "RenderObject.h"
 #include "ResourceHandle.h"
 #include "Settings.h"
+#include "ShareData.h"
 #include "StorageNamespace.h"
 #include "WindowFeatures.h"
 #include <JavaScriptCore/VM.h>
@@ -60,8 +61,8 @@
 #include "DataListSuggestionPicker.h"
 #endif
 
-#if PLATFORM(MAC) && ENABLE(GRAPHICS_CONTEXT_3D)
-#include "GraphicsContext3DManager.h"
+#if PLATFORM(MAC) && ENABLE(GRAPHICS_CONTEXT_GL)
+#include "GraphicsContextGLOpenGLManager.h"
 #endif
 
 namespace WebCore {
@@ -110,8 +111,6 @@ IntRect Chrome::rootViewToScreen(const IntRect& rect) const
     return m_client.rootViewToScreen(rect);
 }
 
-#if PLATFORM(IOS)
-
 IntPoint Chrome::accessibilityScreenToRootView(const IntPoint& point) const
 {
     return m_client.accessibilityScreenToRootView(point);
@@ -121,8 +120,6 @@ IntRect Chrome::rootViewToAccessibilityScreen(const IntRect& rect) const
 {
     return m_client.rootViewToAccessibilityScreen(rect);
 }
-
-#endif
 
 PlatformPageClient Chrome::platformPageClient() const
 {
@@ -184,16 +181,14 @@ void Chrome::focusedFrameChanged(Frame* frame) const
     m_client.focusedFrameChanged(frame);
 }
 
-Page* Chrome::createWindow(Frame& frame, const FrameLoadRequest& request, const WindowFeatures& features, const NavigationAction& action) const
+Page* Chrome::createWindow(Frame& frame, const WindowFeatures& features, const NavigationAction& action) const
 {
-    Page* newPage = m_client.createWindow(frame, request, features, action);
+    Page* newPage = m_client.createWindow(frame, features, action);
     if (!newPage)
         return nullptr;
 
     if (auto* oldSessionStorage = m_page.sessionStorage(false))
-        newPage->setSessionStorage(oldSessionStorage->copy(newPage));
-    if (auto* oldEphemeralLocalStorage = m_page.ephemeralLocalStorage(false))
-        newPage->setEphemeralLocalStorage(oldEphemeralLocalStorage->copy(newPage));
+        newPage->setSessionStorage(oldSessionStorage->copy(*newPage));
 
     return newPage;
 }
@@ -333,16 +328,19 @@ void Chrome::mouseDidMoveOverElement(const HitTestResult& result, unsigned modif
 {
     if (result.innerNode() && result.innerNode()->document().isDNSPrefetchEnabled())
         m_page.mainFrame().loader().client().prefetchDNS(result.absoluteLinkURL().host().toString());
-    m_client.mouseDidMoveOverElement(result, modifierFlags);
+
+    String toolTip;
+    TextDirection toolTipDirection;
+    getToolTip(result, toolTip, toolTipDirection);
+    m_client.mouseDidMoveOverElement(result, modifierFlags, toolTip, toolTipDirection);
 
     InspectorInstrumentation::mouseDidMoveOverElement(m_page, result, modifierFlags);
 }
 
-void Chrome::setToolTip(const HitTestResult& result)
+void Chrome::getToolTip(const HitTestResult& result, String& toolTip, TextDirection& toolTipDirection)
 {
     // First priority is a potential toolTip representing a spelling or grammar error
-    TextDirection toolTipDirection;
-    String toolTip = result.spellingToolTip(toolTipDirection);
+    toolTip = result.spellingToolTip(toolTipDirection);
 
     // Next priority is a toolTip from a URL beneath the mouse (if preference is set to show those).
     if (toolTip.isEmpty() && m_page.settings().showsURLsInToolTips()) {
@@ -387,14 +385,12 @@ void Chrome::setToolTip(const HitTestResult& result)
                 // FIXME: We should obtain text direction of tooltip from
                 // ChromeClient or platform. As of October 2011, all client
                 // implementations don't use text direction information for
-                // ChromeClient::setToolTip. We'll work on tooltip text
+                // ChromeClient::mouseDidMoveOverElement. We'll work on tooltip text
                 // direction during bidi cleanup in form inputs.
                 toolTipDirection = TextDirection::LTR;
             }
         }
     }
-
-    m_client.setToolTip(toolTip, toolTipDirection);
 }
 
 bool Chrome::print(Frame& frame)
@@ -424,11 +420,14 @@ void Chrome::disableSuddenTermination()
 
 std::unique_ptr<ColorChooser> Chrome::createColorChooser(ColorChooserClient& client, const Color& initialColor)
 {
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
+    UNUSED_PARAM(client);
+    UNUSED_PARAM(initialColor);
     return nullptr;
-#endif
+#else
     notifyPopupOpeningObservers();
     return m_client.createColorChooser(client, initialColor);
+#endif
 }
 
 #endif
@@ -447,6 +446,11 @@ void Chrome::runOpenPanel(Frame& frame, FileChooser& fileChooser)
 {
     notifyPopupOpeningObservers();
     m_client.runOpenPanel(frame, fileChooser);
+}
+
+void Chrome::showShareSheet(ShareDataWithParsedURL& shareData, CompletionHandler<void(bool)>&& callback)
+{
+    m_client.showShareSheet(shareData, WTFMove(callback));
 }
 
 void Chrome::loadIconForFiles(const Vector<String>& filenames, FileIconLoader& loader)
@@ -476,7 +480,7 @@ void Chrome::dispatchDisabledAdaptationsDidChange(const OptionSet<DisabledAdapta
 
 void Chrome::dispatchViewportPropertiesDidChange(const ViewportArguments& arguments) const
 {
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     if (m_isDispatchViewportDataDidChangeSuppressed)
         return;
 #endif
@@ -485,62 +489,39 @@ void Chrome::dispatchViewportPropertiesDidChange(const ViewportArguments& argume
 
 void Chrome::setCursor(const Cursor& cursor)
 {
-#if ENABLE(CURSOR_SUPPORT)
     m_client.setCursor(cursor);
-#else
-    UNUSED_PARAM(cursor);
-#endif
 }
 
 void Chrome::setCursorHiddenUntilMouseMoves(bool hiddenUntilMouseMoves)
 {
-#if ENABLE(CURSOR_SUPPORT)
     m_client.setCursorHiddenUntilMouseMoves(hiddenUntilMouseMoves);
-#else
-    UNUSED_PARAM(hiddenUntilMouseMoves);
-#endif
+}
+
+std::unique_ptr<ImageBuffer> Chrome::createImageBuffer(const FloatSize& size, ShouldAccelerate shouldAccelerate, ShouldUseDisplayList shouldUseDisplayList, RenderingPurpose purpose, float resolutionScale, ColorSpace colorSpace) const
+{
+    return m_client.createImageBuffer(size, shouldAccelerate, shouldUseDisplayList, purpose, resolutionScale, colorSpace);
+}
+
+std::unique_ptr<ImageBuffer> Chrome::createImageBuffer(const FloatSize& size, RenderingMode renderingMode, float resolutionScale, ColorSpace colorSpace) const
+{
+    return m_client.createImageBuffer(size, renderingMode, resolutionScale, colorSpace);
 }
 
 PlatformDisplayID Chrome::displayID() const
 {
-    return m_displayID;
+    return m_page.displayID();
 }
 
-void Chrome::windowScreenDidChange(PlatformDisplayID displayID)
+void Chrome::windowScreenDidChange(PlatformDisplayID displayID, Optional<unsigned> nominalFrameInterval)
 {
-    if (displayID == m_displayID)
+    if (displayID == m_page.displayID() && nominalFrameInterval == m_page.displayNominalFramesPerSecond())
         return;
 
-    m_displayID = displayID;
+    m_page.windowScreenDidChange(displayID, nominalFrameInterval);
 
-    for (Frame* frame = &m_page.mainFrame(); frame; frame = frame->tree().traverseNext()) {
-        if (frame->document())
-            frame->document()->windowScreenDidChange(displayID);
-    }
-
-#if PLATFORM(MAC) && ENABLE(GRAPHICS_CONTEXT_3D)
-    GraphicsContext3DManager::sharedManager().screenDidChange(displayID, this);
+#if PLATFORM(MAC) && ENABLE(GRAPHICS_CONTEXT_GL)
+    GraphicsContextGLOpenGLManager::sharedManager().screenDidChange(displayID, this);
 #endif
-
-}
-
-// --------
-
-#if ENABLE(DASHBOARD_SUPPORT)
-void ChromeClient::annotatedRegionsChanged()
-{
-}
-#endif
-
-bool ChromeClient::shouldReplaceWithGeneratedFileForUpload(const String&, String&)
-{
-    return false;
-}
-
-String ChromeClient::generateReplacementFile(const String&)
-{
-    ASSERT_NOT_REACHED();
-    return String();
 }
 
 bool Chrome::selectItemWritingDirectionIsNatural()
@@ -572,7 +553,7 @@ bool Chrome::requiresFullscreenForVideoPlayback()
 
 void Chrome::didReceiveDocType(Frame& frame)
 {
-#if !PLATFORM(IOS)
+#if !PLATFORM(IOS_FAMILY)
     UNUSED_PARAM(frame);
 #else
     if (!frame.isMainFrame())

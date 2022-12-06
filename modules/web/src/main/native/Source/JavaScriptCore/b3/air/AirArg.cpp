@@ -31,13 +31,11 @@
 #include "AirSpecial.h"
 #include "AirStackSlot.h"
 #include "B3Value.h"
-#include "FPRInfo.h"
 #include "GPRInfo.h"
 
-#if COMPILER(GCC) && ASSERT_DISABLED
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wreturn-type"
-#endif // COMPILER(GCC) && ASSERT_DISABLED
+#if !ASSERT_ENABLED
+IGNORE_RETURN_TYPE_WARNINGS_BEGIN
+#endif
 
 namespace JSC { namespace B3 { namespace Air {
 
@@ -72,9 +70,14 @@ bool Arg::usesTmp(Air::Tmp tmp) const
     return uses;
 }
 
+bool Arg::canRepresent(Type type) const
+{
+    return isBank(bankForType(type));
+}
+
 bool Arg::canRepresent(Value* value) const
 {
-    return isBank(bankForType(value->type()));
+    return canRepresent(value->type());
 }
 
 bool Arg::isCompatibleBank(const Arg& other) const
@@ -379,8 +382,8 @@ void printInternal(PrintStream& out, Arg::Signedness signedness)
 
 } // namespace WTF
 
-#if COMPILER(GCC) && ASSERT_DISABLED
-#pragma GCC diagnostic pop
-#endif // COMPILER(GCC) && ASSERT_DISABLED
+#if !ASSERT_ENABLED
+IGNORE_RETURN_TYPE_WARNINGS_END
+#endif
 
 #endif // ENABLE(B3_JIT)

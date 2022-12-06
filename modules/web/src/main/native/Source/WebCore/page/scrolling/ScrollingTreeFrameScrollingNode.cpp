@@ -30,6 +30,7 @@
 
 #include "FrameView.h"
 #include "Logging.h"
+#include "ScrollingStateFrameScrollingNode.h"
 #include "ScrollingStateTree.h"
 #include "ScrollingTree.h"
 #include <wtf/text/TextStream.h>
@@ -53,9 +54,6 @@ void ScrollingTreeFrameScrollingNode::commitStateBeforeChildren(const ScrollingS
     if (state.hasChangedProperty(ScrollingStateFrameScrollingNode::FrameScaleFactor))
         m_frameScaleFactor = state.frameScaleFactor();
 
-    if (state.hasChangedProperty(ScrollingStateFrameScrollingNode::ReasonsForSynchronousScrolling))
-        m_synchronousScrollingReasons = state.synchronousScrollingReasons();
-
     if (state.hasChangedProperty(ScrollingStateFrameScrollingNode::HeaderHeight))
         m_headerHeight = state.headerHeight();
 
@@ -68,49 +66,45 @@ void ScrollingTreeFrameScrollingNode::commitStateBeforeChildren(const ScrollingS
     if (state.hasChangedProperty(ScrollingStateFrameScrollingNode::TopContentInset))
         m_topContentInset = state.topContentInset();
 
+    if (state.hasChangedProperty(ScrollingStateFrameScrollingNode::VisualViewportIsSmallerThanLayoutViewport))
+        m_visualViewportIsSmallerThanLayoutViewport = state.visualViewportIsSmallerThanLayoutViewport();
+
     if (state.hasChangedProperty(ScrollingStateFrameScrollingNode::FixedElementsLayoutRelativeToFrame))
         m_fixedElementsLayoutRelativeToFrame = state.fixedElementsLayoutRelativeToFrame();
 
-    if (state.hasChangedProperty(ScrollingStateFrameScrollingNode::LayoutViewport))
+    if (state.hasChangedProperty(ScrollingStateFrameScrollingNode::LayoutViewport)) {
         m_layoutViewport = state.layoutViewport();
+        updateViewportForCurrentScrollPosition({ });
+    }
 
     if (state.hasChangedProperty(ScrollingStateFrameScrollingNode::MinLayoutViewportOrigin))
         m_minLayoutViewportOrigin = state.minLayoutViewportOrigin();
 
     if (state.hasChangedProperty(ScrollingStateFrameScrollingNode::MaxLayoutViewportOrigin))
         m_maxLayoutViewportOrigin = state.maxLayoutViewportOrigin();
+
+    if (state.hasChangedProperty(ScrollingStateFrameScrollingNode::OverrideVisualViewportSize))
+        m_overrideVisualViewportSize = state.overrideVisualViewportSize();
 }
 
-void ScrollingTreeFrameScrollingNode::scrollBy(const FloatSize& delta)
+bool ScrollingTreeFrameScrollingNode::scrollPositionAndLayoutViewportMatch(const FloatPoint& position, Optional<FloatRect> overrideLayoutViewport)
 {
-    setScrollPosition(scrollPosition() + delta);
+    return position == currentScrollPosition() && (!overrideLayoutViewport || overrideLayoutViewport.value() == m_layoutViewport);
 }
 
-void ScrollingTreeFrameScrollingNode::scrollByWithoutContentEdgeConstraints(const FloatSize& offset)
+FloatRect ScrollingTreeFrameScrollingNode::layoutViewportForScrollPosition(const FloatPoint& visibleContentOrigin, float scale, ScrollBehaviorForFixedElements fixedBehavior) const
 {
-    setScrollPositionWithoutContentEdgeConstraints(scrollPosition() + offset);
-}
-
-void ScrollingTreeFrameScrollingNode::setScrollPosition(const FloatPoint& scrollPosition)
-{
-    FloatPoint newScrollPosition = scrollPosition.constrainedBetween(minimumScrollPosition(), maximumScrollPosition());
-    setScrollPositionWithoutContentEdgeConstraints(newScrollPosition);
-}
-
-FloatRect ScrollingTreeFrameScrollingNode::layoutViewportForScrollPosition(const FloatPoint& visibleContentOrigin, float scale) const
-{
-    ASSERT(scrollingTree().visualViewportEnabled());
-
-    FloatRect visibleContentRect(visibleContentOrigin, scrollableAreaSize());
+    FloatSize visualViewportSize = m_overrideVisualViewportSize.valueOr(scrollableAreaSize());
+    FloatRect visibleContentRect(visibleContentOrigin, visualViewportSize);
     LayoutRect visualViewport(FrameView::visibleDocumentRect(visibleContentRect, headerHeight(), footerHeight(), totalContentsSize(), scale));
     LayoutRect layoutViewport(m_layoutViewport);
 
-    LOG_WITH_STREAM(Scrolling, stream << "\nScrolling thread: " << "(visibleContentOrigin " << visibleContentOrigin << ") fixed behavior " << m_behaviorForFixed);
+    LOG_WITH_STREAM(Scrolling, stream << "ScrollingTreeFrameScrollingNode " << scrollingNodeID() << " layoutViewportForScrollPosition: " << "(visibleContentOrigin " << visibleContentOrigin << ", visualViewportSize " << visualViewportSize << ") fixed behavior " << m_behaviorForFixed);
     LOG_WITH_STREAM(Scrolling, stream << "  layoutViewport: " << layoutViewport);
     LOG_WITH_STREAM(Scrolling, stream << "  visualViewport: " << visualViewport);
     LOG_WITH_STREAM(Scrolling, stream << "  scroll positions: min: " << minLayoutViewportOrigin() << " max: "<< maxLayoutViewportOrigin());
 
-    LayoutPoint newLocation = FrameView::computeLayoutViewportOrigin(LayoutRect(visualViewport), LayoutPoint(minLayoutViewportOrigin()), LayoutPoint(maxLayoutViewportOrigin()), layoutViewport, m_behaviorForFixed);
+    LayoutPoint newLocation = FrameView::computeLayoutViewportOrigin(LayoutRect(visualViewport), LayoutPoint(minLayoutViewportOrigin()), LayoutPoint(maxLayoutViewportOrigin()), layoutViewport, fixedBehavior);
 
     if (layoutViewport.location() != newLocation) {
         layoutViewport.setLocation(newLocation);
@@ -118,6 +112,19 @@ FloatRect ScrollingTreeFrameScrollingNode::layoutViewportForScrollPosition(const
     }
 
     return layoutViewport;
+}
+
+void ScrollingTreeFrameScrollingNode::updateViewportForCurrentScrollPosition(Optional<FloatRect> overrideLayoutViewport)
+{
+    if (overrideLayoutViewport)
+        setLayoutViewport(overrideLayoutViewport.value());
+    else
+        setLayoutViewport(layoutViewportForScrollPosition(currentScrollPosition(), frameScaleFactor()));
+}
+
+FloatRect ScrollingTreeFrameScrollingNode::layoutViewportRespectingRubberBanding() const
+{
+    return layoutViewportForScrollPosition(currentScrollPosition(), frameScaleFactor(), StickToViewportBounds);
 }
 
 FloatSize ScrollingTreeFrameScrollingNode::viewToContentsOffset(const FloatPoint& scrollPosition) const
@@ -134,6 +141,9 @@ void ScrollingTreeFrameScrollingNode::dumpProperties(TextStream& ts, ScrollingSt
     ts.dumpProperty("min layoutViewport origin", m_minLayoutViewportOrigin);
     ts.dumpProperty("max layoutViewport origin", m_maxLayoutViewportOrigin);
 
+    if (m_overrideVisualViewportSize)
+        ts.dumpProperty("override visual viewport size", m_overrideVisualViewportSize.value());
+
     if (m_frameScaleFactor != 1)
         ts.dumpProperty("frame scale factor", m_frameScaleFactor);
     if (m_topContentInset)
@@ -143,12 +153,12 @@ void ScrollingTreeFrameScrollingNode::dumpProperties(TextStream& ts, ScrollingSt
         ts.dumpProperty("header height", m_headerHeight);
     if (m_footerHeight)
         ts.dumpProperty("footer height", m_footerHeight);
-    if (m_synchronousScrollingReasons)
-        ts.dumpProperty("synchronous scrolling reasons", ScrollingCoordinator::synchronousScrollingReasonsAsText(m_synchronousScrollingReasons));
 
     ts.dumpProperty("behavior for fixed", m_behaviorForFixed);
     if (m_fixedElementsLayoutRelativeToFrame)
         ts.dumpProperty("fixed elements lay out relative to frame", m_fixedElementsLayoutRelativeToFrame);
+    if (m_visualViewportIsSmallerThanLayoutViewport)
+        ts.dumpProperty("visual viewport is smaller than layout viewport", m_visualViewportIsSmallerThanLayoutViewport);
 }
 
 

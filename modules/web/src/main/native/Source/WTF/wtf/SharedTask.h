@@ -23,8 +23,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef SharedTask_h
-#define SharedTask_h
+#pragma once
 
 #include <wtf/Ref.h>
 #include <wtf/ThreadSafeRefCounted.h>
@@ -74,7 +73,7 @@ public:
 // you don't want to use this class directly. Use createSharedTask() instead.
 template<typename FunctionType, typename Functor> class SharedTaskFunctor;
 template<typename ResultType, typename... ArgumentTypes, typename Functor>
-class SharedTaskFunctor<ResultType (ArgumentTypes...), Functor> : public SharedTask<ResultType (ArgumentTypes...)> {
+class SharedTaskFunctor<ResultType(ArgumentTypes...), Functor> final : public SharedTask<ResultType(ArgumentTypes...)> {
 public:
     SharedTaskFunctor(const Functor& functor)
         : m_functor(functor)
@@ -87,7 +86,7 @@ public:
     }
 
 private:
-    ResultType run(ArgumentTypes... arguments) override
+    ResultType run(ArgumentTypes... arguments) final
     {
         return m_functor(std::forward<ArgumentTypes>(arguments)...);
     }
@@ -128,6 +127,3 @@ Ref<SharedTask<FunctionType>> createSharedTask(Functor&& functor)
 using WTF::createSharedTask;
 using WTF::SharedTask;
 using WTF::SharedTaskFunctor;
-
-#endif // SharedTask_h
-

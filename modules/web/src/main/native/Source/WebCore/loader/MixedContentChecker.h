@@ -37,7 +37,6 @@ namespace WebCore {
 
 class Frame;
 class FrameLoaderClient;
-class URL;
 class SecurityOrigin;
 
 class MixedContentChecker {
@@ -59,6 +58,7 @@ public:
     bool canRunInsecureContent(SecurityOrigin&, const URL&) const;
     void checkFormForMixedContent(SecurityOrigin&, const URL&) const;
     static bool isMixedContent(SecurityOrigin&, const URL&);
+    Optional<String> checkForMixedContentInFrameTree(const URL&);
 
 private:
     // FIXME: This should probably have a separate client from FrameLoader.

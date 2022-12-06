@@ -23,8 +23,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef WTF_Condition_h
-#define WTF_Condition_h
+#pragma once
 
 #include <wtf/Noncopyable.h>
 #include <wtf/ParkingLot.h>
@@ -40,8 +39,9 @@ namespace WTF {
 // notifyAll() require just a load and branch for the fast case where no thread is waiting.
 // This condition variable, when used with WTF::Lock, can outperform a system condition variable
 // and lock by up to 58x.
-class Condition {
+class Condition final {
     WTF_MAKE_NONCOPYABLE(Condition);
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     // Condition will accept any kind of time and convert it internally, but this typedef tells
     // you what kind of time Condition would be able to use without conversions. However, if you
@@ -178,6 +178,3 @@ using StaticCondition = Condition;
 
 using WTF::Condition;
 using WTF::StaticCondition;
-
-#endif // WTF_Condition_h
-

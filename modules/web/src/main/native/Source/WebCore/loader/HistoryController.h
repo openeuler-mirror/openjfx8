@@ -29,10 +29,7 @@
 
 #pragma once
 
-#include "FrameLoaderTypes.h"
-#include <wtf/Noncopyable.h>
-#include <wtf/RefPtr.h>
-#include <wtf/text/WTFString.h>
+#include "FrameLoader.h"
 
 namespace WebCore {
 
@@ -40,11 +37,11 @@ class Frame;
 class HistoryItem;
 class SerializedScriptValue;
 
-enum class ShouldTreatAsContinuingLoad;
+enum class ShouldTreatAsContinuingLoad : bool;
 
 struct StringWithDirection;
 
-class HistoryController {
+class FrameLoader::HistoryController {
     WTF_MAKE_NONCOPYABLE(HistoryController);
     WTF_MAKE_FAST_ALLOCATED;
 public:
@@ -75,7 +72,7 @@ public:
     void updateForFrameLoadCompleted();
 
     HistoryItem* currentItem() const { return m_currentItem.get(); }
-    void setCurrentItem(HistoryItem*);
+    WEBCORE_EXPORT void setCurrentItem(HistoryItem&);
     void setCurrentItemTitle(const StringWithDirection&);
     bool currentItemShouldBeReplaced() const;
     WEBCORE_EXPORT void replaceCurrentItem(HistoryItem*);
@@ -107,7 +104,7 @@ private:
     void recursiveUpdateForCommit();
     void recursiveUpdateForSameDocumentNavigation();
     bool itemsAreClones(HistoryItem&, HistoryItem*) const;
-    bool currentFramesMatchItem(HistoryItem*) const;
+    bool currentFramesMatchItem(HistoryItem&) const;
     void updateBackForwardListClippedAtTarget(bool doClip);
     void updateCurrentItem();
 

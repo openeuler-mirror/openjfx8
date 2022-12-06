@@ -27,13 +27,13 @@
 
 #if ENABLE(INDEXED_DATABASE)
 
-#include "FileSystem.h"
 #include "IDBCursorInfo.h"
 #include "IndexedDB.h"
 #include "Logging.h"
 #include "SQLiteIDBBackingStore.h"
 #include "SQLiteIDBCursor.h"
 #include "SQLiteTransaction.h"
+#include <wtf/FileSystem.h>
 
 namespace WebCore {
 namespace IDBServer {
@@ -58,7 +58,7 @@ IDBError SQLiteIDBTransaction::begin(SQLiteDatabase& database)
 {
     ASSERT(!m_sqliteTransaction);
 
-    m_sqliteTransaction = std::make_unique<SQLiteTransaction>(database, m_info.mode() == IDBTransactionMode::Readonly);
+    m_sqliteTransaction = makeUnique<SQLiteTransaction>(database, m_info.mode() == IDBTransactionMode::Readonly);
     m_sqliteTransaction->begin();
 
     if (m_sqliteTransaction->inProgress())
@@ -87,14 +87,12 @@ IDBError SQLiteIDBTransaction::commit()
 
 void SQLiteIDBTransaction::moveBlobFilesIfNecessary()
 {
-    String databaseDirectory = m_backingStore.fullDatabaseDirectory();
+    String databaseDirectory = m_backingStore.databaseDirectory();
     for (auto& entry : m_blobTemporaryAndStoredFilenames) {
-        m_backingStore.temporaryFileHandler().prepareForAccessToTemporaryFile(entry.first);
-
         if (!FileSystem::hardLinkOrCopyFile(entry.first, FileSystem::pathByAppendingComponent(databaseDirectory, entry.second)))
             LOG_ERROR("Failed to link/copy temporary blob file '%s' to location '%s'", entry.first.utf8().data(), FileSystem::pathByAppendingComponent(databaseDirectory, entry.second).utf8().data());
 
-        m_backingStore.temporaryFileHandler().accessToTemporaryFileComplete(entry.first);
+        FileSystem::deleteFile(entry.first);
     }
 
     m_blobTemporaryAndStoredFilenames.clear();
@@ -105,11 +103,11 @@ void SQLiteIDBTransaction::deleteBlobFilesIfNecessary()
     if (m_blobRemovedFilenames.isEmpty())
         return;
 
-    String databaseDirectory = m_backingStore.fullDatabaseDirectory();
+    String databaseDirectory = m_backingStore.databaseDirectory();
     for (auto& entry : m_blobRemovedFilenames) {
         String fullPath = FileSystem::pathByAppendingComponent(databaseDirectory, entry);
-        m_backingStore.temporaryFileHandler().prepareForAccessToTemporaryFile(fullPath);
-        m_backingStore.temporaryFileHandler().accessToTemporaryFileComplete(fullPath);
+
+        FileSystem::deleteFile(fullPath);
     }
 
     m_blobRemovedFilenames.clear();
@@ -117,10 +115,8 @@ void SQLiteIDBTransaction::deleteBlobFilesIfNecessary()
 
 IDBError SQLiteIDBTransaction::abort()
 {
-    for (auto& entry : m_blobTemporaryAndStoredFilenames) {
-        m_backingStore.temporaryFileHandler().prepareForAccessToTemporaryFile(entry.first);
-        m_backingStore.temporaryFileHandler().accessToTemporaryFileComplete(entry.first);
-    }
+    for (auto& entry : m_blobTemporaryAndStoredFilenames)
+        FileSystem::deleteFile(entry.first);
 
     m_blobTemporaryAndStoredFilenames.clear();
 

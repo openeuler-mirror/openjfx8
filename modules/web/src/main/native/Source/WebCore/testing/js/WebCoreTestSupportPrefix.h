@@ -41,19 +41,13 @@
 #endif
 #endif
 
-#if OS(WINDOWS)
-#undef WEBCORE_EXPORT
-#if PLATFORM(JAVA)
+#if PLATFORM(JAVA) && OS(WINDOWS)
 #undef WEBCORE_TESTSUPPORT_EXPORT
 #define WEBCORE_EXPORT
 #define WEBCORE_TESTSUPPORT_EXPORT
-#else
-#define WEBCORE_EXPORT WTF_IMPORT_DECLARATION
-#define WEBCORE_TESTSUPPORT_EXPORT WTF_EXPORT_DECLARATION
 #endif
 
-#else
-
+#if !OS(WINDOWS)
 #include <pthread.h>
 
 #define WEBCORE_TESTSUPPORT_EXPORT WEBCORE_EXPORT
@@ -120,19 +114,19 @@
 #endif
 #include <windows.h>
 #else
-#if !PLATFORM(IOS)
+#if !PLATFORM(IOS_FAMILY)
 #include <CoreServices/CoreServices.h>
-#endif // !PLATFORM(IOS)
+#endif // !PLATFORM(IOS_FAMILY)
 #endif // OS(WINDOWS)
 
 #endif
 
 #ifdef __OBJC__
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
 #import <Foundation/Foundation.h>
 #else
 #import <Cocoa/Cocoa.h>
-#endif // PLATFORM(IOS)
+#endif // PLATFORM(IOS_FAMILY)
 #endif
 
 #ifdef __cplusplus

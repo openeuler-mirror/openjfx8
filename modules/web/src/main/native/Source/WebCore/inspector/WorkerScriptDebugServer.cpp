@@ -74,11 +74,11 @@ void WorkerScriptDebugServer::runEventLoopWhilePaused()
 
     MessageQueueWaitResult result;
     do {
-        result = m_workerGlobalScope.thread().runLoop().runInMode(&m_workerGlobalScope, WorkerRunLoop::debuggerMode());
+        result = m_workerGlobalScope.thread().runLoop().runInDebuggerMode(m_workerGlobalScope);
     } while (result != MessageQueueTerminated && !m_doneProcessingDebuggerEvents);
 }
 
-void WorkerScriptDebugServer::reportException(JSC::ExecState* exec, JSC::Exception* exception) const
+void WorkerScriptDebugServer::reportException(JSC::JSGlobalObject* exec, JSC::Exception* exception) const
 {
     WebCore::reportException(exec, exception);
 }

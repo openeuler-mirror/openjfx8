@@ -42,7 +42,7 @@ namespace Air { class Code; }
 class StackmapSpecial : public Air::Special {
 public:
     StackmapSpecial();
-    virtual ~StackmapSpecial();
+    ~StackmapSpecial() override;
 
     enum RoleMode : int8_t {
         SameAsRep,
@@ -55,12 +55,12 @@ protected:
     RegisterSet extraEarlyClobberedRegs(Air::Inst&) final;
     RegisterSet extraClobberedRegs(Air::Inst&) final;
 
-    // Note that this does not override generate() or dumpImpl()/deepDumpImpl(). We have many some
+    // Note that this does not override generate() or dumpImpl()/deepDumpImpl(). We have many
     // subclasses that implement that.
     void forEachArgImpl(
         unsigned numIgnoredB3Args, unsigned numIgnoredAirArgs,
-        Air::Inst&, RoleMode, std::optional<unsigned> firstRecoverableIndex,
-        const ScopedLambda<Air::Inst::EachArgCallback>&, std::optional<Width> optionalDefArgWidth);
+        Air::Inst&, RoleMode, Optional<unsigned> firstRecoverableIndex,
+        const ScopedLambda<Air::Inst::EachArgCallback>&, Optional<Width> optionalDefArgWidth);
 
     bool isValidImpl(
         unsigned numIgnoredB3Args, unsigned numIgnoredAirArgs,
@@ -73,7 +73,7 @@ protected:
     Vector<ValueRep> repsImpl(
         Air::GenerationContext&, unsigned numIgnoredB3Args, unsigned numIgnoredAirArgs, Air::Inst&);
 
-    static bool isArgValidForValue(const Air::Arg&, Value*);
+    static bool isArgValidForType(const Air::Arg&, Type);
     static bool isArgValidForRep(Air::Code&, const Air::Arg&, const ValueRep&);
     static ValueRep repForArg(Air::Code&, const Air::Arg&);
 };

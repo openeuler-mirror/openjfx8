@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,14 +30,11 @@
 
 #include "AbstractModuleRecord.h"
 #include "JSCInlines.h"
-#include "JSModuleEnvironment.h"
 #include "JSModuleNamespaceObject.h"
-#include "JSWebAssemblyHelpers.h"
 #include "JSWebAssemblyLinkError.h"
 #include "JSWebAssemblyMemory.h"
 #include "JSWebAssemblyModule.h"
 #include "WebAssemblyModuleRecord.h"
-#include "WebAssemblyToJSCallee.h"
 #include <wtf/StdLibExtras.h>
 
 namespace JSC {
@@ -52,9 +49,12 @@ Structure* JSWebAssemblyInstance::createStructure(VM& vm, JSGlobalObject* global
 JSWebAssemblyInstance::JSWebAssemblyInstance(VM& vm, Structure* structure, Ref<Wasm::Instance>&& instance)
     : Base(vm, structure)
     , m_instance(WTFMove(instance))
+    , m_vm(&vm)
+    , m_globalObject(vm, this, structure->globalObject())
+    , m_tables(m_instance->module().moduleInformation().tableCount())
 {
     for (unsigned i = 0; i < this->instance().numImportFunctions(); ++i)
-        new (this->instance().importFunction<PoisonedBarrier<JSObject>>(i)) PoisonedBarrier<JSObject>();
+        new (this->instance().importFunction<WriteBarrier<JSObject>>(i)) WriteBarrier<JSObject>();
 }
 
 void JSWebAssemblyInstance::finishCreation(VM& vm, JSWebAssemblyModule* module, JSModuleNamespaceObject* moduleNamespaceObject)
@@ -64,9 +64,8 @@ void JSWebAssemblyInstance::finishCreation(VM& vm, JSWebAssemblyModule* module, 
 
     m_module.set(vm, this, module);
     m_moduleNamespaceObject.set(vm, this, moduleNamespaceObject);
-    m_callee.set(vm, this, module->callee());
 
-    heap()->reportExtraMemoryAllocated(m_instance->extraMemoryAllocated());
+    vm.heap.reportExtraMemoryAllocated(m_instance->extraMemoryAllocated());
 }
 
 void JSWebAssemblyInstance::destroy(JSCell* cell)
@@ -84,21 +83,33 @@ void JSWebAssemblyInstance::visitChildren(JSCell* cell, SlotVisitor& visitor)
     visitor.append(thisObject->m_codeBlock);
     visitor.append(thisObject->m_moduleNamespaceObject);
     visitor.append(thisObject->m_memory);
-    visitor.append(thisObject->m_table);
-    visitor.append(thisObject->m_callee);
+    for (unsigned i = 0; i < thisObject->instance().module().moduleInformation().tableCount(); ++i)
+        visitor.append(thisObject->m_tables[i]);
     visitor.reportExtraMemoryVisited(thisObject->m_instance->extraMemoryAllocated());
     for (unsigned i = 0; i < thisObject->instance().numImportFunctions(); ++i)
-        visitor.append(*thisObject->instance().importFunction<PoisonedBarrier<JSObject>>(i)); // This also keeps the functions' JSWebAssemblyInstance alive.
+        visitor.append(*thisObject->instance().importFunction<WriteBarrier<JSObject>>(i)); // This also keeps the functions' JSWebAssemblyInstance alive.
+
+    for (size_t i : thisObject->instance().globalsToBinding()) {
+        Wasm::Global* binding = thisObject->instance().getGlobalBinding(i);
+        if (binding)
+            visitor.appendUnbarriered(binding->owner<JSWebAssemblyGlobal>());
+    }
+    for (size_t i : thisObject->instance().globalsToMark())
+        visitor.appendUnbarriered(JSValue::decode(thisObject->instance().loadI64Global(i)));
+
+    auto locker = holdLock(cell->cellLock());
+    for (auto& wrapper : thisObject->instance().functionWrappers())
+        visitor.appendUnbarriered(wrapper.get());
 }
 
-void JSWebAssemblyInstance::finalizeCreation(VM& vm, ExecState* exec, Ref<Wasm::CodeBlock>&& wasmCodeBlock, JSObject* importObject, Wasm::CreationMode creationMode)
+void JSWebAssemblyInstance::finalizeCreation(VM& vm, JSGlobalObject* globalObject, Ref<Wasm::CodeBlock>&& wasmCodeBlock, JSObject* importObject, Wasm::CreationMode creationMode)
 {
     m_instance->finalizeCreation(this, wasmCodeBlock.copyRef());
 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!wasmCodeBlock->runnable()) {
-        throwException(exec, scope, JSWebAssemblyLinkError::create(exec, vm, globalObject(vm)->WebAssemblyLinkErrorStructure(), wasmCodeBlock->errorMessage()));
+        throwException(globalObject, scope, JSWebAssemblyLinkError::create(globalObject, vm, this->globalObject()->webAssemblyLinkErrorStructure(), wasmCodeBlock->errorMessage()));
         return;
     }
 
@@ -114,7 +125,7 @@ void JSWebAssemblyInstance::finalizeCreation(VM& vm, ExecState* exec, Ref<Wasm::
     } else {
         jsCodeBlock = JSWebAssemblyCodeBlock::create(vm, WTFMove(wasmCodeBlock), module()->module().moduleInformation());
         if (UNLIKELY(!jsCodeBlock->runnable())) {
-            throwException(exec, scope, JSWebAssemblyLinkError::create(exec, vm, globalObject(vm)->WebAssemblyLinkErrorStructure(), jsCodeBlock->errorMessage()));
+            throwException(globalObject, scope, JSWebAssemblyLinkError::create(globalObject, vm, this->globalObject()->webAssemblyLinkErrorStructure(), jsCodeBlock->errorMessage()));
             return;
         }
         m_codeBlock.set(vm, this, jsCodeBlock);
@@ -130,10 +141,10 @@ void JSWebAssemblyInstance::finalizeCreation(VM& vm, ExecState* exec, Ref<Wasm::
     moduleRecord->prepareLink(vm, this);
 
     if (creationMode == Wasm::CreationMode::FromJS) {
-        moduleRecord->link(exec, jsNull(), importObject, creationMode);
+        moduleRecord->link(globalObject, jsNull(), importObject, creationMode);
         RETURN_IF_EXCEPTION(scope, void());
 
-        JSValue startResult = moduleRecord->evaluate(exec);
+        JSValue startResult = moduleRecord->evaluate(globalObject);
         UNUSED_PARAM(startResult);
         RETURN_IF_EXCEPTION(scope, void());
     }
@@ -144,32 +155,31 @@ Identifier JSWebAssemblyInstance::createPrivateModuleKey()
     return Identifier::fromUid(PrivateName(PrivateName::Description, "WebAssemblyInstance"));
 }
 
-JSWebAssemblyInstance* JSWebAssemblyInstance::create(VM& vm, ExecState* exec, const Identifier& moduleKey, JSWebAssemblyModule* jsModule, JSObject* importObject, Structure* instanceStructure, Ref<Wasm::Module>&& module, Wasm::CreationMode creationMode)
+JSWebAssemblyInstance* JSWebAssemblyInstance::tryCreate(VM& vm, JSGlobalObject* globalObject, const Identifier& moduleKey, JSWebAssemblyModule* jsModule, JSObject* importObject, Structure* instanceStructure, Ref<Wasm::Module>&& module, Wasm::CreationMode creationMode)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = exec->lexicalGlobalObject();
 
     const Wasm::ModuleInformation& moduleInformation = jsModule->moduleInformation();
 
     auto exception = [&] (JSObject* error) {
-        throwException(exec, throwScope, error);
+        throwException(globalObject, throwScope, error);
         return nullptr;
     };
 
     if (!globalObject->webAssemblyEnabled())
-        return exception(createEvalError(exec, globalObject->webAssemblyDisabledErrorMessage()));
+        return exception(createEvalError(globalObject, globalObject->webAssemblyDisabledErrorMessage()));
 
     auto importFailMessage = [&] (const Wasm::Import& import, const char* before, const char* after) {
         return makeString(before, " ", String::fromUTF8(import.module), ":", String::fromUTF8(import.field), " ", after);
     };
 
-    WebAssemblyModuleRecord* moduleRecord = WebAssemblyModuleRecord::create(exec, vm, globalObject->webAssemblyModuleRecordStructure(), moduleKey, moduleInformation);
+    WebAssemblyModuleRecord* moduleRecord = WebAssemblyModuleRecord::create(globalObject, vm, globalObject->webAssemblyModuleRecordStructure(), moduleKey, moduleInformation);
     RETURN_IF_EXCEPTION(throwScope, nullptr);
 
-    JSModuleNamespaceObject* moduleNamespace = moduleRecord->getModuleNamespace(exec);
+    JSModuleNamespaceObject* moduleNamespace = moduleRecord->getModuleNamespace(globalObject);
 
     auto storeTopCallFrame = [&vm] (void* topCallFrame) {
-        vm.topCallFrame = bitwise_cast<ExecState*>(topCallFrame);
+        vm.topCallFrame = bitwise_cast<CallFrame*>(topCallFrame);
     };
 
     // FIXME: These objects could be pretty big we should try to throw OOM here.
@@ -185,13 +195,13 @@ JSWebAssemblyInstance* JSWebAssemblyInstance::create(VM& vm, ExecState* exec, co
     if (creationMode == Wasm::CreationMode::FromJS) {
         // If the list of module.imports is not empty and Type(importObject) is not Object, a TypeError is thrown.
         if (moduleInformation.imports.size() && !importObject)
-            return exception(createTypeError(exec, "can't make WebAssembly.Instance because there is no imports Object and the WebAssembly.Module requires imports"_s));
+            return exception(createTypeError(globalObject, "can't make WebAssembly.Instance because there is no imports Object and the WebAssembly.Module requires imports"_s));
     }
 
     // For each import i in module.imports:
     for (auto& import : moduleInformation.imports) {
-        Identifier moduleName = Identifier::fromString(&vm, String::fromUTF8(import.module));
-        Identifier fieldName = Identifier::fromString(&vm, String::fromUTF8(import.field));
+        Identifier moduleName = Identifier::fromString(vm, String::fromUTF8(import.module));
+        Identifier fieldName = Identifier::fromString(vm, String::fromUTF8(import.field));
         moduleRecord->appendRequestedModule(moduleName);
         moduleRecord->addImportEntry(WebAssemblyModuleRecord::ImportEntry {
             WebAssemblyModuleRecord::ImportEntryType::Single,
@@ -214,15 +224,15 @@ JSWebAssemblyInstance* JSWebAssemblyInstance::create(VM& vm, ExecState* exec, co
         JSValue value;
         if (creationMode == Wasm::CreationMode::FromJS) {
             // 1. Let o be the resultant value of performing Get(importObject, i.module_name).
-            JSValue importModuleValue = importObject->get(exec, moduleName);
+            JSValue importModuleValue = importObject->get(globalObject, moduleName);
             RETURN_IF_EXCEPTION(throwScope, nullptr);
             // 2. If Type(o) is not Object, throw a TypeError.
             if (!importModuleValue.isObject())
-                return exception(createTypeError(exec, importFailMessage(import, "import", "must be an object"), defaultSourceAppender, runtimeTypeForValue(vm, importModuleValue)));
+                return exception(createTypeError(globalObject, importFailMessage(import, "import", "must be an object"), defaultSourceAppender, runtimeTypeForValue(vm, importModuleValue)));
 
             // 3. Let v be the value of performing Get(o, i.item_name)
             JSObject* object = jsCast<JSObject*>(importModuleValue);
-            value = object->get(exec, fieldName);
+            value = object->get(globalObject, fieldName);
             RETURN_IF_EXCEPTION(throwScope, nullptr);
         }
         if (!value)
@@ -242,20 +252,20 @@ JSWebAssemblyInstance* JSWebAssemblyInstance::create(VM& vm, ExecState* exec, co
             JSWebAssemblyMemory* memory = jsDynamicCast<JSWebAssemblyMemory*>(vm, value);
             // i. If v is not a WebAssembly.Memory object, throw a WebAssembly.LinkError.
             if (!memory)
-                return exception(createJSWebAssemblyLinkError(exec, vm, importFailMessage(import, "Memory import", "is not an instance of WebAssembly.Memory")));
+                return exception(createJSWebAssemblyLinkError(globalObject, vm, importFailMessage(import, "Memory import", "is not an instance of WebAssembly.Memory")));
 
             Wasm::PageCount declaredInitial = moduleInformation.memory.initial();
             Wasm::PageCount importedInitial = memory->memory().initial();
             if (importedInitial < declaredInitial)
-                return exception(createJSWebAssemblyLinkError(exec, vm, importFailMessage(import, "Memory import", "provided an 'initial' that is smaller than the module's declared 'initial' import memory size")));
+                return exception(createJSWebAssemblyLinkError(globalObject, vm, importFailMessage(import, "Memory import", "provided an 'initial' that is smaller than the module's declared 'initial' import memory size")));
 
             if (Wasm::PageCount declaredMaximum = moduleInformation.memory.maximum()) {
                 Wasm::PageCount importedMaximum = memory->memory().maximum();
                 if (!importedMaximum)
-                    return exception(createJSWebAssemblyLinkError(exec, vm, importFailMessage(import, "Memory import", "did not have a 'maximum' but the module requires that it does")));
+                    return exception(createJSWebAssemblyLinkError(globalObject, vm, importFailMessage(import, "Memory import", "did not have a 'maximum' but the module requires that it does")));
 
                 if (importedMaximum > declaredMaximum)
-                    return exception(createJSWebAssemblyLinkError(exec, vm, importFailMessage(import, "Memory import", "provided a 'maximum' that is larger than the module's declared 'maximum' import memory size")));
+                    return exception(createJSWebAssemblyLinkError(globalObject, vm, importFailMessage(import, "Memory import", "provided a 'maximum' that is larger than the module's declared 'maximum' import memory size")));
             }
 
             // ii. Append v to memories.
@@ -278,15 +288,15 @@ JSWebAssemblyInstance* JSWebAssemblyInstance::create(VM& vm, ExecState* exec, co
             // We create a memory when it's a memory definition.
             RELEASE_ASSERT(!moduleInformation.memory.isImport());
 
-            auto* jsMemory = JSWebAssemblyMemory::create(exec, vm, globalObject->WebAssemblyMemoryStructure());
+            auto* jsMemory = JSWebAssemblyMemory::tryCreate(globalObject, vm, globalObject->webAssemblyMemoryStructure());
             RETURN_IF_EXCEPTION(throwScope, nullptr);
 
-            RefPtr<Wasm::Memory> memory = Wasm::Memory::create(moduleInformation.memory.initial(), moduleInformation.memory.maximum(),
+            RefPtr<Wasm::Memory> memory = Wasm::Memory::tryCreate(moduleInformation.memory.initial(), moduleInformation.memory.maximum(),
                 [&vm] (Wasm::Memory::NotifyPressure) { vm.heap.collectAsync(CollectionScope::Full); },
                 [&vm] (Wasm::Memory::SyncTryToReclaim) { vm.heap.collectSync(CollectionScope::Full); },
                 [&vm, jsMemory] (Wasm::Memory::GrowSuccess, Wasm::PageCount oldPageCount, Wasm::PageCount newPageCount) { jsMemory->growSuccessCallback(vm, oldPageCount, newPageCount); });
             if (!memory)
-                return exception(createOutOfMemoryError(exec));
+                return exception(createOutOfMemoryError(globalObject));
 
             jsMemory->adopt(memory.releaseNonNull());
             jsInstance->setMemory(vm, jsMemory);
@@ -296,8 +306,9 @@ JSWebAssemblyInstance* JSWebAssemblyInstance::create(VM& vm, ExecState* exec, co
 
     if (!jsInstance->memory()) {
         // Make sure we have a dummy memory, so that wasm -> wasm thunks avoid checking for a nullptr Memory when trying to set pinned registers.
-        auto* jsMemory = JSWebAssemblyMemory::create(exec, vm, globalObject->WebAssemblyMemoryStructure());
-        jsMemory->adopt(Wasm::Memory::create().releaseNonNull());
+        auto* jsMemory = JSWebAssemblyMemory::tryCreate(globalObject, vm, globalObject->webAssemblyMemoryStructure());
+        RETURN_IF_EXCEPTION(throwScope, nullptr);
+        jsMemory->adopt(Wasm::Memory::create());
         jsInstance->setMemory(vm, jsMemory);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
     }

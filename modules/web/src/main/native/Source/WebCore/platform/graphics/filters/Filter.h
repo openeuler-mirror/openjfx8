@@ -20,10 +20,15 @@
 
 #pragma once
 
-#include "FloatSize.h"
+#include "AffineTransform.h"
+#include "FloatRect.h"
+#include "GraphicsTypes.h"
 #include "ImageBuffer.h"
+#include <wtf/RefCounted.h>
 
 namespace WebCore {
+
+class FilterEffect;
 
 class Filter : public RefCounted<Filter> {
 public:
@@ -48,11 +53,13 @@ public:
     void setRenderingMode(RenderingMode renderingMode) { m_renderingMode = renderingMode; }
 
     virtual bool isSVGFilter() const { return false; }
+    virtual bool isCSSFilter() const { return false; }
 
     virtual FloatSize scaledByFilterResolution(FloatSize size) const { return size * m_filterResolution; }
 
     virtual FloatRect sourceImageRect() const = 0;
     virtual FloatRect filterRegion() const = 0;
+    virtual FloatRect filterRegionInUserSpace() const = 0;
 
 protected:
     explicit Filter(const FloatSize& filterResolution)
@@ -64,7 +71,7 @@ private:
     std::unique_ptr<ImageBuffer> m_sourceImage;
     FloatSize m_filterResolution;
     AffineTransform m_absoluteTransform;
-    RenderingMode m_renderingMode { Unaccelerated };
+    RenderingMode m_renderingMode { RenderingMode::Unaccelerated };
     float m_filterScale { 1 };
 };
 

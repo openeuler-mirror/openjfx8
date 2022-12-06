@@ -25,16 +25,16 @@
  */
 
 [
-    Conditional=VIDEO_TRACK,
-    Constructor(),
-    ConstructorCallWith=ScriptExecutionContext,
+    Conditional=VIDEO,
     JSGenerateToNativeObject,
 ] interface VTTRegion {
+    [CallWith=ScriptExecutionContext] constructor();
+
     readonly attribute TextTrack track;
 
     attribute DOMString id;
     attribute double width;
-    attribute long height;
+    attribute long lines;
     attribute double regionAnchorX;
     attribute double regionAnchorY;
     attribute double viewportAnchorX;

@@ -1,6 +1,6 @@
 /* gstdioprivate.h - Private GLib stdio functions
  *
- * Copyright 2017 Руслан Ижбулатов
+ * Copyright 2017 Ð ÑƒÑÐ»Ð°Ð½ Ð˜Ð¶Ð±ÑƒÐ»Ð°Ñ‚Ð¾Ð²
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -23,6 +23,11 @@ G_BEGIN_DECLS
 
 #if defined (G_OS_WIN32)
 
+typedef struct _gtimespec {
+  guint64 tv_sec;
+  guint32 tv_nsec;
+} gtimespec;
+
 struct _GWin32PrivateStat
 {
   guint32 volume_serial;
@@ -38,9 +43,9 @@ struct _GWin32PrivateStat
   guint16 st_gid;
   guint32 st_nlink;
   guint64 st_size;
-  guint64 st_ctime;
-  guint64 st_atime;
-  guint64 st_mtime;
+  gtimespec st_ctim;
+  gtimespec st_atim;
+  gtimespec st_mtim;
 };
 
 typedef struct _GWin32PrivateStat GWin32PrivateStat;

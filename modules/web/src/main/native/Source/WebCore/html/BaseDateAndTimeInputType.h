@@ -44,22 +44,19 @@ protected:
     BaseDateAndTimeInputType(HTMLInputElement& element) : InputType(element) { }
 
     Decimal parseToNumber(const String&, const Decimal&) const override;
-    bool parseToDateComponents(const String&, DateComponents*) const override;
     String sanitizeValue(const String&) const override;
     String serialize(const Decimal&) const override;
     String serializeWithComponents(const DateComponents&) const;
-    virtual bool setMillisecondToDateComponents(double, DateComponents*) const = 0;
     String visibleValue() const override;
     void attributeChanged(const QualifiedName&) override;
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     bool isKeyboardFocusable(KeyboardEvent*) const override;
 #endif
 
 private:
-    virtual bool parseToDateComponentsInternal(const UChar*, unsigned length, DateComponents*) const = 0;
-#if !PLATFORM(IOS)
-    virtual DateComponents::Type dateType() const = 0;
-#endif
+    virtual Optional<DateComponents> parseToDateComponents(const StringView&) const = 0;
+    virtual Optional<DateComponents> setMillisecondToDateComponents(double) const = 0;
+
     double valueAsDate() const override;
     ExceptionOr<void> setValueAsDate(double) const override;
     double valueAsDouble() const override;

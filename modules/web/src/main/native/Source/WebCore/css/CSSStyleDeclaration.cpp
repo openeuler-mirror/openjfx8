@@ -29,10 +29,18 @@
 #include "CSSPropertyNames.h"
 #include "CSSPropertyParser.h"
 #include "DeprecatedGlobalSettings.h"
+#include "Document.h"
 #include "HashTools.h"
 #include "RuntimeEnabledFeatures.h"
+#include "Settings.h"
+#include "StyledElement.h"
+#include <wtf/IsoMallocInlines.h>
+#include <wtf/Optional.h>
+#include <wtf/Variant.h>
 
 namespace WebCore {
+
+WTF_MAKE_ISO_ALLOCATED_IMPL(CSSStyleDeclaration);
 
 namespace {
 
@@ -144,7 +152,7 @@ struct CSSPropertyInfo {
     bool hadPixelOrPosPrefix;
 };
 
-static CSSPropertyInfo parseJavaScriptCSSPropertyName(const AtomicString& propertyName)
+static CSSPropertyInfo parseJavaScriptCSSPropertyName(const AtomString& propertyName)
 {
     using CSSPropertyInfoMap = HashMap<String, CSSPropertyInfo>;
     static NeverDestroyed<CSSPropertyInfoMap> propertyInfoCache;
@@ -235,31 +243,42 @@ static CSSPropertyInfo parseJavaScriptCSSPropertyName(const AtomicString& proper
     *bufferPtr = '\0';
 
     unsigned outputLength = bufferPtr - buffer;
-#if PLATFORM(IOS)
+#if PLATFORM(IOS_FAMILY)
     cssPropertyNameIOSAliasing(buffer, name, outputLength);
 #endif
 
     auto* hashTableEntry = findProperty(name, outputLength);
     if (auto propertyID = hashTableEntry ? hashTableEntry->id : 0) {
+        auto id = static_cast<CSSPropertyID>(propertyID);
         propertyInfo.hadPixelOrPosPrefix = hadPixelOrPosPrefix;
-        propertyInfo.propertyID = static_cast<CSSPropertyID>(propertyID);
+        propertyInfo.propertyID = id;
         propertyInfoCache.get().add(propertyNameString, propertyInfo);
     }
     return propertyInfo;
 }
 
-}
-
-CSSPropertyID CSSStyleDeclaration::getCSSPropertyIDFromJavaScriptPropertyName(const AtomicString& propertyName)
-{
-    return parseJavaScriptCSSPropertyName(propertyName).propertyID;
-}
-
-std::optional<Variant<String, double>> CSSStyleDeclaration::namedItem(const AtomicString& propertyName)
+static CSSPropertyInfo propertyInfoFromJavaScriptCSSPropertyName(const AtomString& propertyName, const Settings* settings)
 {
     auto propertyInfo = parseJavaScriptCSSPropertyName(propertyName);
+    auto id = propertyInfo.propertyID;
+    if (!isEnabledCSSProperty(id) || !isCSSPropertyEnabledBySettings(id, settings))
+        return { CSSPropertyInvalid, false };
+    return propertyInfo;
+}
+
+}
+
+CSSPropertyID CSSStyleDeclaration::getCSSPropertyIDFromJavaScriptPropertyName(const AtomString& propertyName)
+{
+    return propertyInfoFromJavaScriptCSSPropertyName(propertyName, nullptr).propertyID;
+}
+
+Optional<Variant<String, double>> CSSStyleDeclaration::namedItem(const AtomString& propertyName)
+{
+    auto* settings = parentElement() ? &parentElement()->document().settings() : nullptr;
+    auto propertyInfo = propertyInfoFromJavaScriptCSSPropertyName(propertyName, settings);
     if (!propertyInfo.propertyID)
-        return std::nullopt;
+        return WTF::nullopt;
 
     auto value = getPropertyCSSValueInternal(propertyInfo.propertyID);
     if (!value) {
@@ -271,15 +290,16 @@ std::optional<Variant<String, double>> CSSStyleDeclaration::namedItem(const Atom
         // Call this version of the getter so that, e.g., pixelTop returns top as a number
         // in pixel units and posTop should does the same _if_ this is a positioned element.
         // FIXME: If not a positioned element, MSIE documentation says posTop should return 0; this rule is not implemented.
-        return Variant<String, double> { downcast<CSSPrimitiveValue>(*value).floatValue(CSSPrimitiveValue::CSS_PX) };
+        return Variant<String, double> { downcast<CSSPrimitiveValue>(*value).floatValue(CSSUnitType::CSS_PX) };
     }
 
     return Variant<String, double> { value->cssText() };
 }
 
-ExceptionOr<void> CSSStyleDeclaration::setNamedItem(const AtomicString& propertyName, String value, bool& propertySupported)
+ExceptionOr<void> CSSStyleDeclaration::setNamedItem(const AtomString& propertyName, String value, bool& propertySupported)
 {
-    auto propertyInfo = parseJavaScriptCSSPropertyName(propertyName);
+    auto* settings = parentElement() ? &parentElement()->document().settings() : nullptr;
+    auto propertyInfo = propertyInfoFromJavaScriptCSSPropertyName(propertyName, settings);
     if (!propertyInfo.propertyID) {
         propertySupported = false;
         return { };
@@ -306,23 +326,28 @@ ExceptionOr<void> CSSStyleDeclaration::setNamedItem(const AtomicString& property
     return { };
 }
 
-Vector<AtomicString> CSSStyleDeclaration::supportedPropertyNames() const
+Vector<AtomString> CSSStyleDeclaration::supportedPropertyNames() const
 {
-    static const AtomicString* const cssPropertyNames = [] {
+    static unsigned numNames = 0;
+    static const AtomString* const cssPropertyNames = [] {
         String names[numCSSProperties];
-        for (int i = 0; i < numCSSProperties; ++i)
-            names[i] = getJSPropertyName(static_cast<CSSPropertyID>(firstCSSProperty + i));
-        std::sort(&names[0], &names[numCSSProperties], WTF::codePointCompareLessThan);
-        auto* identifiers = new AtomicString[numCSSProperties];
-        for (int i = 0; i < numCSSProperties; ++i)
+        for (int i = 0; i < numCSSProperties; ++i) {
+            CSSPropertyID id = static_cast<CSSPropertyID>(firstCSSProperty + i);
+            // FIXME: Should take account for flags in settings().
+            if (isEnabledCSSProperty(id))
+                names[numNames++] = getJSPropertyName(id);
+        }
+        std::sort(&names[0], &names[numNames], WTF::codePointCompareLessThan);
+        auto* identifiers = new AtomString[numNames];
+        for (unsigned i = 0; i < numNames; ++i)
             identifiers[i] = names[i];
         return identifiers;
     }();
 
-    Vector<AtomicString> result;
-    result.reserveInitialCapacity(numCSSProperties);
+    Vector<AtomString> result;
+    result.reserveInitialCapacity(numNames);
 
-    for (unsigned i = 0; i < numCSSProperties; ++i)
+    for (unsigned i = 0; i < numNames; ++i)
         result.uncheckedAppend(cssPropertyNames[i]);
 
     return result;

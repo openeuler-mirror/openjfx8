@@ -1,3 +1,7 @@
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
 add_definitions(-DBUILDING_WITH_CMAKE=1)
 add_definitions(-DHAVE_CONFIG_H=1)
 
@@ -5,41 +9,15 @@ option(USE_THIN_ARCHIVES "Produce all static libraries as thin archives" ON)
 if (USE_THIN_ARCHIVES)
     execute_process(COMMAND ${CMAKE_AR} -V OUTPUT_VARIABLE AR_VERSION)
     if ("${AR_VERSION}" MATCHES "^GNU ar")
-        set(CMAKE_CXX_ARCHIVE_CREATE "<CMAKE_AR> crDT <TARGET> <LINK_FLAGS> <OBJECTS>")
-        set(CMAKE_C_ARCHIVE_CREATE "<CMAKE_AR> crDT <TARGET> <LINK_FLAGS> <OBJECTS>")
-        set(CMAKE_CXX_ARCHIVE_APPEND "<CMAKE_AR> rDT <TARGET> <LINK_FLAGS> <OBJECTS>")
-        set(CMAKE_C_ARCHIVE_APPEND "<CMAKE_AR> rDT <TARGET> <LINK_FLAGS> <OBJECTS>")
+        set(CMAKE_CXX_ARCHIVE_CREATE "<CMAKE_AR> crT <TARGET> <LINK_FLAGS> <OBJECTS>")
+        set(CMAKE_C_ARCHIVE_CREATE "<CMAKE_AR> crT <TARGET> <LINK_FLAGS> <OBJECTS>")
+        set(CMAKE_CXX_ARCHIVE_APPEND "<CMAKE_AR> rT <TARGET> <LINK_FLAGS> <OBJECTS>")
+        set(CMAKE_C_ARCHIVE_APPEND "<CMAKE_AR> rT <TARGET> <LINK_FLAGS> <OBJECTS>")
     endif ()
 endif ()
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 define_property(TARGET PROPERTY FOLDER INHERITED BRIEF_DOCS "folder" FULL_DOCS "IDE folder name")
-
-# Detect Cortex-A53 core if CPU is ARM64 and OS is Linux.
-# Query /proc/cpuinfo for each available core and check reported CPU part number: 0xd03 signals Cortex-A53.
-# (see Main ID Register in ARM Cortex-A53 MPCore Processor Technical Reference Manual)
-set(WTF_CPU_ARM64_CORTEXA53_INITIALVALUE OFF)
-if (WTF_CPU_ARM64 AND (${CMAKE_SYSTEM_NAME} STREQUAL "Linux"))
-    execute_process(COMMAND nproc OUTPUT_VARIABLE PROC_COUNT)
-    math(EXPR PROC_MAX ${PROC_COUNT}-1)
-    foreach (PROC_ID RANGE ${PROC_MAX})
-        execute_process(COMMAND taskset -c ${PROC_ID} grep "^CPU part" /proc/cpuinfo OUTPUT_VARIABLE PROC_PART)
-        if (PROC_PART MATCHES "0xd03")
-            set(WTF_CPU_ARM64_CORTEXA53_INITIALVALUE ON)
-            break ()
-        endif ()
-    endforeach ()
-endif ()
-option(WTF_CPU_ARM64_CORTEXA53 "Enable Cortex-A53-specific code paths" ${WTF_CPU_ARM64_CORTEXA53_INITIALVALUE})
-
-if (WTF_CPU_ARM64_CORTEXA53)
-    if (NOT WTF_CPU_ARM64)
-        message(FATAL_ERROR "WTF_CPU_ARM64_CORTEXA53 set without WTF_CPU_ARM64")
-    endif ()
-    WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-mfix-cortex-a53-835769)
-endif ()
-
-EXPOSE_VARIABLE_TO_BUILD(WTF_CPU_ARM64_CORTEXA53)
 
 set(ARM_TRADITIONAL_DETECTED FALSE)
 if (WTF_CPU_ARM)
@@ -59,14 +37,29 @@ if (WTF_CPU_ARM)
     endif ()
 endif ()
 
+# Use ld.lld when building with LTO
+CMAKE_DEPENDENT_OPTION(USE_LD_LLD "Use LLD linker" ON
+                       "LTO_MODE;NOT USE_LD_GOLD;NOT WIN32" OFF)
+if (USE_LD_LLD)
+    execute_process(COMMAND ${CMAKE_C_COMPILER} -fuse-ld=lld -Wl,--version ERROR_QUIET OUTPUT_VARIABLE LD_VERSION)
+    if ("${LD_VERSION}" MATCHES "LLD")
+        string(APPEND CMAKE_EXE_LINKER_FLAGS " -fuse-ld=lld -Wl,--disable-new-dtags")
+        string(APPEND CMAKE_SHARED_LINKER_FLAGS " -fuse-ld=lld -Wl,--disable-new-dtags")
+        string(APPEND CMAKE_MODULE_LINKER_FLAGS " -fuse-ld=lld -Wl,--disable-new-dtags")
+    else ()
+        set(USE_LD_LLD OFF)
+    endif ()
+endif ()
+
 # Use ld.gold if it is available and isn't disabled explicitly
 CMAKE_DEPENDENT_OPTION(USE_LD_GOLD "Use GNU gold linker" ON
-                       "NOT CXX_ACCEPTS_MFIX_CORTEX_A53_835769;NOT ARM_TRADITIONAL_DETECTED;NOT WIN32;NOT APPLE" OFF)
+                       "NOT CXX_ACCEPTS_MFIX_CORTEX_A53_835769;NOT ARM_TRADITIONAL_DETECTED;NOT WIN32;NOT APPLE;NOT USE_LD_LLD" OFF)
 if (USE_LD_GOLD)
     execute_process(COMMAND ${CMAKE_C_COMPILER} -fuse-ld=gold -Wl,--version ERROR_QUIET OUTPUT_VARIABLE LD_VERSION)
     if ("${LD_VERSION}" MATCHES "GNU gold")
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fuse-ld=gold -Wl,--disable-new-dtags")
-        set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fuse-ld=gold -Wl,--disable-new-dtags")
+        string(APPEND CMAKE_EXE_LINKER_FLAGS " -fuse-ld=gold -Wl,--disable-new-dtags")
+        string(APPEND CMAKE_SHARED_LINKER_FLAGS " -fuse-ld=gold -Wl,--disable-new-dtags")
+        string(APPEND CMAKE_MODULE_LINKER_FLAGS " -fuse-ld=gold -Wl,--disable-new-dtags")
     else ()
         message(WARNING "GNU gold linker isn't available, using the default system linker.")
         set(USE_LD_GOLD OFF)
@@ -93,6 +86,15 @@ if (DEBUG_FISSION)
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gdb-index")
 endif ()
 
+set(GCC_OFFLINEASM_SOURCE_MAP_DEFAULT OFF)
+if (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+    set(GCC_OFFLINEASM_SOURCE_MAP_DEFAULT ON)
+endif ()
+
+option(GCC_OFFLINEASM_SOURCE_MAP
+  "Produce debug line information for offlineasm-generated code"
+  ${GCC_OFFLINEASM_SOURCE_MAP_DEFAULT})
+
 # Enable the usage of OpenMP.
 #  - At this moment, OpenMP is only used as an alternative implementation
 #    to native threads for the parallelization of the SVG filters.
@@ -118,21 +120,25 @@ WEBKIT_CHECK_HAVE_INCLUDE(HAVE_ERRNO_H errno.h)
 WEBKIT_CHECK_HAVE_INCLUDE(HAVE_LANGINFO_H langinfo.h)
 WEBKIT_CHECK_HAVE_INCLUDE(HAVE_MMAP sys/mman.h)
 WEBKIT_CHECK_HAVE_INCLUDE(HAVE_PTHREAD_NP_H pthread_np.h)
-WEBKIT_CHECK_HAVE_INCLUDE(HAVE_STRINGS_H strings.h)
 WEBKIT_CHECK_HAVE_INCLUDE(HAVE_SYS_PARAM_H sys/param.h)
 WEBKIT_CHECK_HAVE_INCLUDE(HAVE_SYS_TIME_H sys/time.h)
 WEBKIT_CHECK_HAVE_INCLUDE(HAVE_SYS_TIMEB_H sys/timeb.h)
+WEBKIT_CHECK_HAVE_INCLUDE(HAVE_LINUX_MEMFD_H linux/memfd.h)
 
 # Check for functions
 WEBKIT_CHECK_HAVE_FUNCTION(HAVE_ALIGNED_MALLOC _aligned_malloc)
 WEBKIT_CHECK_HAVE_FUNCTION(HAVE_ISDEBUGGERPRESENT IsDebuggerPresent)
 WEBKIT_CHECK_HAVE_FUNCTION(HAVE_LOCALTIME_R localtime_r)
+WEBKIT_CHECK_HAVE_FUNCTION(HAVE_MALLOC_TRIM malloc_trim)
 WEBKIT_CHECK_HAVE_FUNCTION(HAVE_STRNSTR strnstr)
 WEBKIT_CHECK_HAVE_FUNCTION(HAVE_TIMEGM timegm)
 WEBKIT_CHECK_HAVE_FUNCTION(HAVE_VASPRINTF vasprintf)
 
 # Check for symbols
 WEBKIT_CHECK_HAVE_SYMBOL(HAVE_REGEX_H regexec regex.h)
+if (NOT (${CMAKE_SYSTEM_NAME} STREQUAL "Darwin"))
+WEBKIT_CHECK_HAVE_SYMBOL(HAVE_PTHREAD_MAIN_NP pthread_main_np pthread_np.h)
+endif ()
 # Windows has signal.h but is missing symbols that are used in calls to signal.
 WEBKIT_CHECK_HAVE_SYMBOL(HAVE_SIGNAL_H SIGTRAP signal.h)
 

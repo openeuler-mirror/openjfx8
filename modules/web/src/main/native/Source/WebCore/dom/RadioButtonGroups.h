@@ -21,9 +21,9 @@
 #pragma once
 
 #include <memory>
-#include <wtf/Forward.h>
 #include <wtf/HashMap.h>
 #include <wtf/Vector.h>
+#include <wtf/text/AtomStringHash.h>
 
 namespace WebCore {
 
@@ -31,21 +31,22 @@ class HTMLInputElement;
 class RadioButtonGroup;
 
 class RadioButtonGroups {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     RadioButtonGroups();
     ~RadioButtonGroups();
-    void addButton(HTMLInputElement*);
-    void updateCheckedState(HTMLInputElement*);
+    void addButton(HTMLInputElement&);
+    void updateCheckedState(HTMLInputElement&);
     void requiredStateChanged(HTMLInputElement&);
-    void removeButton(HTMLInputElement*);
-    HTMLInputElement* checkedButtonForGroup(const AtomicString& groupName) const;
-    bool hasCheckedButton(const HTMLInputElement*) const;
-    bool isInRequiredGroup(HTMLInputElement*) const;
-    Vector<HTMLInputElement*> groupMembers(const HTMLInputElement&) const;
+    void removeButton(HTMLInputElement&);
+    RefPtr<HTMLInputElement> checkedButtonForGroup(const AtomString& groupName) const;
+    bool hasCheckedButton(const HTMLInputElement&) const;
+    bool isInRequiredGroup(HTMLInputElement&) const;
+    Vector<Ref<HTMLInputElement>> groupMembers(const HTMLInputElement&) const;
 
 private:
-    typedef HashMap<AtomicStringImpl*, std::unique_ptr<RadioButtonGroup>> NameToGroupMap;
-    std::unique_ptr<NameToGroupMap> m_nameToGroupMap;
+    typedef HashMap<AtomString, std::unique_ptr<RadioButtonGroup>> NameToGroupMap;
+    NameToGroupMap m_nameToGroupMap;
 };
 
 } // namespace WebCore

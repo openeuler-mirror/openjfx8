@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2008, 2011, 2013, 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2005-2019 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -18,8 +18,7 @@
  *
  */
 
-#ifndef WTF_HashMap_h
-#define WTF_HashMap_h
+#pragma once
 
 #include <initializer_list>
 #include <wtf/Forward.h>
@@ -40,7 +39,7 @@ private:
     using MappedTraits = MappedTraitsArg;
 
     struct KeyValuePairTraits : KeyValuePairHashTraits<KeyTraits, MappedTraits> {
-        static const bool hasIsEmptyValueFunction = true;
+        static constexpr bool hasIsEmptyValueFunction = true;
         static bool isEmptyValue(const typename KeyValuePairHashTraits<KeyTraits, MappedTraits>::TraitType& value)
         {
             return isHashTraitsEmptyValue<KeyTraits>(value.key);
@@ -66,6 +65,11 @@ private:
     using IdentityTranslatorType = typename HashTableType::IdentityTranslatorType;
 
 public:
+    /*
+     * Since figuring out the entries of an iterator is confusing, here is a cheat sheet:
+     * const KeyType& key = iterator->key;
+     * ValueType& value = iterator->value;
+     */
     using iterator = HashTableIteratorAdapter<HashTableType, KeyValuePairType>;
     using const_iterator = HashTableConstIteratorAdapter<HashTableType, KeyValuePairType>;
 
@@ -74,6 +78,11 @@ public:
     using ValuesIteratorRange = SizedIteratorRange<HashMap, typename iterator::Values>;
     using ValuesConstIteratorRange = SizedIteratorRange<HashMap, typename const_iterator::Values>;
 
+    /*
+     * Since figuring out the entries of an AddResult is confusing, here is a cheat sheet:
+     * iterator iter = addResult.iterator;
+     * bool isNewEntry = addResult.isNewEntry;
+     */
     using AddResult = typename HashTableType::AddResult;
 
 public:
@@ -93,11 +102,16 @@ public:
     unsigned capacity() const;
     bool isEmpty() const;
 
+    void reserveInitialCapacity(unsigned keyCount) { m_impl.reserveInitialCapacity(keyCount); }
+
     // iterators iterate over pairs of keys and values
     iterator begin();
     iterator end();
     const_iterator begin() const;
     const_iterator end() const;
+
+    iterator random() { return m_impl.random(); }
+    const_iterator random() const { return m_impl.random(); }
 
     KeysIteratorRange keys() { return makeSizedIteratorRange(*this, begin().keys(), end().keys()); }
     const KeysConstIteratorRange keys() const { return makeSizedIteratorRange(*this, begin().keys(), end().keys()); }
@@ -579,5 +593,3 @@ inline bool operator!=(const HashMap<T, U, V, W, X>& a, const HashMap<T, U, V, W
 } // namespace WTF
 
 using WTF::HashMap;
-
-#endif /* WTF_HashMap_h */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2017, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2010, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -1233,7 +1233,10 @@ public class Scene implements EventTarget {
         context.platformImage = accessor.getTkImageLoader(wimg);
         impl_setAllowPGAccess(false);
         Object tkImage = tk.renderToImage(context);
-        accessor.loadTkImage(wimg, tkImage);
+
+        if (tkImage != null) {
+            accessor.loadTkImage(wimg, tkImage);
+        }
 
         if (camera != null) {
             impl_setAllowPGAccess(true);

@@ -557,7 +557,7 @@ public class TreeTableView<S> extends Control {
         @Override public Boolean call(TreeTableView table) {
             try {
                 TreeItem rootItem = table.getRoot();
-                if (rootItem == null) return false;
+                if (rootItem == null || rootItem.getChildren().isEmpty()) return false;
 
                 TreeSortMode sortMode = table.getSortMode();
                 if (sortMode == null) return false;
@@ -732,67 +732,79 @@ public class TreeTableView<S> extends Control {
             final TreeTableViewFocusModel<S> fm = getFocusModel();
             final TreeTableViewSelectionModel<S> sm = getSelectionModel();
             c.reset();
+
+            // we need to collect together all removed and all added columns, because
+            // the code below works on the actually removed columns. If we perform
+            // the code within this while loop, we'll be deselecting columns that
+            // should be deselected (because they have just moved place, for example).
+            List<TreeTableColumn<S,?>> removed = new ArrayList<>();
+            List<TreeTableColumn<S,?>> added = new ArrayList<>();
             while (c.next()) {
-                if (! c.wasRemoved()) continue;
+                if (c.wasRemoved()) {
+                    removed.addAll(c.getRemoved());
+                }
+                if (c.wasAdded()) {
+                    added.addAll(c.getAddedSubList());
+                }
+            }
+            removed.removeAll(added);
 
-                List<? extends TreeTableColumn<S,?>> removed = c.getRemoved();
 
-                // Fix for focus - we simply move focus to a cell to the left
-                // of the focused cell if the focused cell was located within
-                // a column that has been removed.
-                if (fm != null) {
-                    TreeTablePosition<S, ?> focusedCell = fm.getFocusedCell();
-                    boolean match = false;
-                    for (TreeTableColumn<S, ?> tc : removed) {
-                        match = focusedCell != null && focusedCell.getTableColumn() == tc;
-                        if (match) {
-                            break;
-                        }
-                    }
-
+            // Fix for focus - we simply move focus to a cell to the left
+            // of the focused cell if the focused cell was located within
+            // a column that has been removed.
+            if (fm != null) {
+                TreeTablePosition<S, ?> focusedCell = fm.getFocusedCell();
+                boolean match = false;
+                for (TreeTableColumn<S, ?> tc : removed) {
+                    match = focusedCell != null && focusedCell.getTableColumn() == tc;
                     if (match) {
-                        int matchingColumnIndex = lastKnownColumnIndex.getOrDefault(focusedCell.getTableColumn(), 0);
-                        int newFocusColumnIndex =
-                                matchingColumnIndex == 0 ? 0 :
-                                        Math.min(getVisibleLeafColumns().size() - 1, matchingColumnIndex - 1);
-                        fm.focus(focusedCell.getRow(), getVisibleLeafColumn(newFocusColumnIndex));
+                        break;
                     }
                 }
 
-                // Fix for selection - we remove selection from all cells that
-                // were within the removed column.
-                if (sm != null) {
-                    List<TreeTablePosition> selectedCells = new ArrayList<>(sm.getSelectedCells());
-                    for (TreeTablePosition selectedCell : selectedCells) {
-                        boolean match = false;
-                        for (TreeTableColumn<S, ?> tc : removed) {
-                            match = selectedCell != null && selectedCell.getTableColumn() == tc;
-                            if (match) break;
-                        }
+                if (match) {
+                    int matchingColumnIndex = lastKnownColumnIndex.getOrDefault(focusedCell.getTableColumn(), 0);
+                    int newFocusColumnIndex =
+                            matchingColumnIndex == 0 ? 0 :
+                                    Math.min(getVisibleLeafColumns().size() - 1, matchingColumnIndex - 1);
+                    fm.focus(focusedCell.getRow(), getVisibleLeafColumn(newFocusColumnIndex));
+                }
+            }
 
-                        if (match) {
-                            // we can't just use the selectedCell.getTableColumn(), as that
-                            // column no longer exists and therefore its index is not correct.
-                            int matchingColumnIndex = lastKnownColumnIndex.getOrDefault(selectedCell.getTableColumn(), -1);
-                            if (matchingColumnIndex == -1) continue;
+            // Fix for selection - we remove selection from all cells that
+            // were within the removed column.
+            if (sm != null) {
+                List<TreeTablePosition> selectedCells = new ArrayList<>(sm.getSelectedCells());
+                for (TreeTablePosition selectedCell : selectedCells) {
+                    boolean match = false;
+                    for (TreeTableColumn<S, ?> tc : removed) {
+                        match = selectedCell != null && selectedCell.getTableColumn() == tc;
+                        if (match) break;
+                    }
 
-                            if (sm instanceof TreeTableViewArrayListSelectionModel) {
-                                // Also, because the table column no longer exists in the columns
-                                // list at this point, we can't just call:
-                                // sm.clearSelection(selectedCell.getRow(), selectedCell.getTableColumn());
-                                // as the tableColumn would map to an index of -1, which means that
-                                // selection will not be cleared. Instead, we have to create
-                                // a new TablePosition with a fixed column index and use that.
-                                TreeTablePosition<S,?> fixedTablePosition =
-                                        new TreeTablePosition<S,Object>(TreeTableView.this,
-                                                selectedCell.getRow(),
-                                                selectedCell.getTableColumn());
-                                fixedTablePosition.fixedColumnIndex = matchingColumnIndex;
+                    if (match) {
+                        // we can't just use the selectedCell.getTableColumn(), as that
+                        // column no longer exists and therefore its index is not correct.
+                        int matchingColumnIndex = lastKnownColumnIndex.getOrDefault(selectedCell.getTableColumn(), -1);
+                        if (matchingColumnIndex == -1) continue;
 
-                                ((TreeTableViewArrayListSelectionModel)sm).clearSelection(fixedTablePosition);
-                            } else {
-                                sm.clearSelection(selectedCell.getRow(), selectedCell.getTableColumn());
-                            }
+                        if (sm instanceof TreeTableViewArrayListSelectionModel) {
+                            // Also, because the table column no longer exists in the columns
+                            // list at this point, we can't just call:
+                            // sm.clearSelection(selectedCell.getRow(), selectedCell.getTableColumn());
+                            // as the tableColumn would map to an index of -1, which means that
+                            // selection will not be cleared. Instead, we have to create
+                            // a new TablePosition with a fixed column index and use that.
+                            TreeTablePosition<S,?> fixedTablePosition =
+                                    new TreeTablePosition<S,Object>(TreeTableView.this,
+                                            selectedCell.getRow(),
+                                            selectedCell.getTableColumn());
+                            fixedTablePosition.fixedColumnIndex = matchingColumnIndex;
+
+                            ((TreeTableViewArrayListSelectionModel)sm).clearSelection(fixedTablePosition);
+                        } else {
+                            sm.clearSelection(selectedCell.getRow(), selectedCell.getTableColumn());
                         }
                     }
                 }
@@ -1738,6 +1750,11 @@ public class TreeTableView<S> extends Control {
         return visibleLeafColumns.get(column);
     }
 
+    private boolean sortingInProgress;
+    boolean isSortingInProgress() {
+        return sortingInProgress;
+    }
+
     /**
      * The sort method forces the TreeTableView to re-run its sorting algorithm. More
      * often than not it is not necessary to call this method directly, as it is
@@ -1748,6 +1765,7 @@ public class TreeTableView<S> extends Control {
      * something external changes and a sort is required.
      */
     public void sort() {
+        sortingInProgress = true;
         final ObservableList<TreeTableColumn<S,?>> sortOrder = getSortOrder();
 
         // update the Comparator property
@@ -1766,6 +1784,7 @@ public class TreeTableView<S> extends Control {
             // sortLock = true;
             // TableUtil.handleSortFailure(sortOrder, lastSortEventType, lastSortEventSupportInfo);
             // sortLock = false;
+            sortingInProgress = false;
             return;
         }
 
@@ -1779,9 +1798,27 @@ public class TreeTableView<S> extends Control {
 
         // get the sort policy and run it
         Callback<TreeTableView<S>, Boolean> sortPolicy = getSortPolicy();
-        if (sortPolicy == null) return;
+        if (sortPolicy == null) {
+            sortingInProgress = false;
+            return;
+        }
         Boolean success = sortPolicy.call(this);
 
+        if (getSortMode() == TreeSortMode.ALL_DESCENDANTS) {
+            Set<TreeItem<S>> sortedParents = new HashSet<>();
+            for (TreeTablePosition<S,?> selectedPosition : prevState) {
+                // This null check is not required ideally.
+                // The selectedPosition.getTreeItem() should always return a valid TreeItem.
+                // But, it is possible to be null due to JDK-8248217.
+                if (selectedPosition.getTreeItem() != null) {
+                    TreeItem<S> parent = selectedPosition.getTreeItem().getParent();
+                    while (parent != null && sortedParents.add(parent)) {
+                        parent.getChildren();
+                        parent = parent.getParent();
+                    }
+                }
+            }
+        }
         getSelectionModel().stopAtomic();
 
         if (success == null || ! success) {
@@ -1817,7 +1854,10 @@ public class TreeTableView<S> extends Control {
                     sm.handleSelectedCellsListChangeEvent(c);
                 }
             }
+            getSelectionModel().setSelectedIndex(getRow(getSelectionModel().getSelectedItem()));
+            getFocusModel().focus(getSelectionModel().getSelectedIndex());
         }
+        sortingInProgress = false;
     }
 
     /**
@@ -2460,12 +2500,41 @@ public class TreeTableView<S> extends Control {
                         shift += -count + 1;
                         startRow++;
                     } else if (e.wasPermutated()) {
-                        // This handles the sorting case where nothing was added or
-                        // removed, but the location of the selected index / item
-                        // has likely changed. This was added to fix RT-30156 and
-                        // unit tests exist to prevent it from regressing.
-                        quietClearSelection();
-                        select(oldSelectedItem);
+                        // Approach:
+                        // Get the current selection.
+                        // Create a new selection with updated index(row).
+                        // Update the current selection with new selection.
+                        // If sorting is in progress then one Selection change event will be sent from
+                        // TreeTableView.sort() method, and should not be sent from here.
+                        // else, in case otherwise, the selection change events would be generated.
+                        // Do not call shiftSelection() in case of permutation change(when shift == 0).
+
+                        List<TreeTablePosition<S, ?>> currentSelection = new ArrayList<>(selectedCellsMap.getSelectedCells());
+                        List<TreeTablePosition<S, ?>> updatedSelection = new ArrayList<>();
+
+                        boolean selectionIndicesChanged = false;
+                        for (TreeTablePosition<S, ?> selectedCell : currentSelection) {
+                            int newRow = treeTableView.getRow(selectedCell.getTreeItem());
+                            if (selectedCell.getRow() != newRow) {
+                                selectionIndicesChanged = true;
+                            }
+                            updatedSelection.add(new TreeTablePosition<>(selectedCell, newRow));
+                        }
+                        if (selectionIndicesChanged) {
+                            if (treeTableView.isSortingInProgress()) {
+                                startAtomic();
+                                selectedCellsMap.setAll(updatedSelection);
+                                stopAtomic();
+                            } else {
+                                startAtomic();
+                                quietClearSelection();
+                                stopAtomic();
+                                selectedCellsMap.setAll(updatedSelection);
+                                int selectedIndex = treeTableView.getRow(getSelectedItem());
+                                setSelectedIndex(selectedIndex);
+                                focus(selectedIndex);
+                            }
+                        }
                     } else if (e.wasAdded()) {
                         // shuffle selection by the number of added items
                         shift += treeItem.isExpanded() ? addedSize : 0;
@@ -2526,40 +2595,44 @@ public class TreeTableView<S> extends Control {
                     }
                 } while (e.getChange() != null && e.getChange().next());
 
-                shiftSelection(startRow, shift, new Callback<ShiftParams, Void>() {
-                    @Override public Void call(ShiftParams param) {
+                if (shift != 0) {
+                    shiftSelection(startRow, shift, new Callback<ShiftParams, Void>() {
+                        @Override public Void call(ShiftParams param) {
 
-                        // we make the shifts atomic, as otherwise listeners to
-                        // the items / indices lists get a lot of intermediate
-                        // noise. They eventually get the summary event fired
-                        // from within shiftSelection, so this is ok.
-                        startAtomic();
+                            // we make the shifts atomic, as otherwise listeners to
+                            // the items / indices lists get a lot of intermediate
+                            // noise. They eventually get the summary event fired
+                            // from within shiftSelection, so this is ok.
+                            startAtomic();
 
-                        final int clearIndex = param.getClearIndex();
-                        TreeTablePosition<S,?> oldTP = null;
-                        if (clearIndex > -1) {
-                            for (int i = 0; i < selectedCellsMap.size(); i++) {
-                                TreeTablePosition<S,?> tp = selectedCellsMap.get(i);
-                                if (tp.getRow() == clearIndex) {
-                                    oldTP = tp;
-                                    selectedCellsMap.remove(tp);
-                                    break;
+                            final int clearIndex = param.getClearIndex();
+                            final int setIndex = param.getSetIndex();
+                            TreeTablePosition<S,?> oldTP = null;
+                            if (clearIndex > -1) {
+                                for (int i = 0; i < selectedCellsMap.size(); i++) {
+                                    TreeTablePosition<S,?> tp = selectedCellsMap.get(i);
+                                    if (tp.getRow() == clearIndex) {
+                                        oldTP = tp;
+                                        selectedCellsMap.remove(tp);
+                                    } else if (tp.getRow() == setIndex && !param.isSelected()) {
+                                        selectedCellsMap.remove(tp);
+                                    }
                                 }
                             }
+
+                            if (oldTP != null && param.isSelected()) {
+                                TreeTablePosition<S,?> newTP = new TreeTablePosition<>(
+                                        treeTableView, param.getSetIndex(), oldTP.getTableColumn());
+
+                                selectedCellsMap.add(newTP);
+                            }
+
+                            stopAtomic();
+
+                            return null;
                         }
-
-                        if (oldTP != null && param.isSelected()) {
-                            TreeTablePosition<S,?> newTP = new TreeTablePosition<>(
-                                    treeTableView, param.getSetIndex(), oldTP.getTableColumn());
-
-                            selectedCellsMap.add(newTP);
-                        }
-
-                        stopAtomic();
-
-                        return null;
-                    }
-                });
+                    });
+                }
             }
         };
 
@@ -3282,22 +3355,18 @@ public class TreeTableView<S> extends Control {
                 if (removedSize != addedSize) {
                     fireChangeEvent = true;
                 } else {
-                    for (int i = 0; i < c.getRemovedSize(); i++) {
+                    for (int i = 0; i < removedSize; i++) {
                         TreeTablePosition<S, ?> removed = c.getRemoved().get(i);
                         TreeItem<S> removedTreeItem = removed.getTreeItem();
 
-                        boolean matchFound = false;
-                        for (int j = 0; j < c.getAddedSize(); j++) {
-                            TreeTablePosition<S, ?> added = c.getAddedSubList().get(j);
-                            TreeItem<S> addedTreeItem = added.getTreeItem();
-
-                            if (removedTreeItem != null && removedTreeItem.equals(addedTreeItem)) {
-                                matchFound = true;
-                                break;
-                            }
+                        if (removedTreeItem == null) {
+                            continue;
                         }
 
-                        if (!matchFound) {
+                        TreeTablePosition<S, ?> added = c.getAddedSubList().get(i);
+                        TreeItem<S> addedTreeItem = added.getTreeItem();
+
+                        if (!removedTreeItem.equals(addedTreeItem)) {
                             fireChangeEvent = true;
                             break outer;
                         }
@@ -3309,9 +3378,14 @@ public class TreeTableView<S> extends Control {
             }
 
             if (fireChangeEvent) {
-                // create an on-demand list of the removed objects contained in the
-                // given rows.
-                selectedItems.callObservers(new MappingChange<>(c, cellToItemsMap, selectedItems));
+                if (treeTableView.isSortingInProgress()) {
+                    selectedItems.callObservers(new MappingChange<>(
+                            c, f -> f.getTreeItem(), selectedItems));
+                } else {
+                    // create an on-demand list of the removed objects contained in the
+                    // given rows.
+                    selectedItems.callObservers(new MappingChange<>(c, cellToItemsMap, selectedItems));
+                }
             }
             c.reset();
 
