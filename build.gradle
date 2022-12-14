@@ -285,9 +285,6 @@ defineProperty("javaBuildNumber", javaRuntimeVersion.substring(javaRuntimeVersio
 
 defineProperty("libAVRepositoryURL", "https://libav.org/releases/")
 defineProperty("FFmpegRepositoryURL", "https://www.ffmpeg.org/releases/")
-defineProperty("icuRepositoryURL", "https://github.com/unicode-org/icu/releases/")
-
-defineProperty("icuVersion", "68.2")
 
 loadProperties("$projectDir/build.properties")
 
@@ -1332,21 +1329,6 @@ allprojects {
                 }
                 patternLayout {
                     artifact "[artifact].[ext]"
-                }
-            }
-        }
-    }
-
-    if (JFX_DEPS_URL == "" && IS_COMPILE_WEBKIT) {
-        def icuReleaseVersion = icuVersion.replaceAll('\\.', '-')
-        repositories {
-            ivy {
-                url icuRepositoryURL
-                metadataSources {
-                    artifact()
-                }
-                patternLayout {
-                    artifact "download/release-$icuReleaseVersion/[artifact].[ext]"
                 }
             }
         }
@@ -2867,12 +2849,7 @@ project(":web") {
         webkit
     }
 
-    getConfigurations().create("icu");
-
     dependencies {
-        if (IS_COMPILE_WEBKIT) {
-            icu name: "icu4c-${icuVersion}-data-bin-l", ext: "zip"
-        }
         implementation project(":base"), project(":graphics"), project(":controls"), project(":media")
     }
 
@@ -2955,14 +2932,7 @@ project(":web") {
         File nativeBuildDir = new File("${webkitOutputDir}")
         nativeBuildDir.mkdirs()
 
-        def getICUFile = task("copyICUFile", type: Copy) {
-            enabled = IS_COMPILE_WEBKIT
-
-            from configurations.icu.files
-            into "$webkitOutputDir/$webkitConfig/icu/data"
-        }
-
-        def compileNativeTask = task("compileNative${t.capital}", dependsOn: [generateHeaders, getICUFile]) {
+        def compileNativeTask = task("compileNative${t.capital}", dependsOn: [generateHeaders]) {
             doLast {
                 println "Building Webkit configuration /$webkitConfig/ into $webkitOutputDir"
 
