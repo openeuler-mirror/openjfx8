@@ -30,6 +30,8 @@ import java.awt.image.BufferedImage;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileReader;
+import java.io.IOException;
 import static java.lang.String.format;
 import java.net.HttpURLConnection;
 import java.util.ArrayList;
@@ -42,6 +44,8 @@ import javafx.application.Platform;
 import javafx.beans.value.ChangeListener;
 import javafx.beans.value.ObservableValue;
 import javafx.concurrent.Worker.State;
+import javafx.scene.web.WebEngine;
+import javafx.scene.web.WebView;
 import netscape.javascript.JSObject;
 import org.junit.Test;
 import org.w3c.dom.Document;
@@ -400,6 +404,54 @@ public class MiscellaneousTest extends TestBase {
         } catch (InterruptedException e) {
             throw new AssertionError(e);
         }
+    }
+
+    private void verifyUserAgentString(String userAgentString) {
+        final String fxVersion = System.getProperty("javafx.runtime.version");
+        final String numericStr = fxVersion.split("[^0-9]")[0];
+        final String fxVersionString = "JavaFX/" + numericStr;
+        assertTrue("UserAgentString does not contain " + fxVersionString, userAgentString.contains(fxVersionString));
+
+        File webkitLicense = new File("src/main/legal/webkit.md");
+        assertTrue("File does not exist: " + webkitLicense, webkitLicense.exists());
+
+        try (final BufferedReader licenseText = new BufferedReader(new FileReader(webkitLicense))) {
+            final String firstLine = licenseText.readLine().trim();
+            final String webkitVersion = firstLine.substring(firstLine.lastIndexOf(" ") + 2);
+            assertTrue("webkitVersion should not be empty", webkitVersion.length() > 0);
+            assertTrue("UserAgentString does not contain: " + webkitVersion, userAgentString.contains(webkitVersion));
+        } catch (IOException ex){
+            throw new AssertionError(ex);
+        }
+    }
+
+    /**
+     * @test
+     * @bug 8193207
+     * Check UserAgentString for javafx runtime version and webkit version
+     */
+    @Test public void testUserAgentString() {
+        submit(() -> {
+            final String userAgentString = getEngine().getUserAgent();
+            verifyUserAgentString(userAgentString);
+        });
+    }
+
+    /**
+     * @test
+     * @bug 8275138
+     * Check UserAgentString from JavaScript for javafx runtime version and webkit version
+     */
+    @Test public void testUserAgentStringJS() {
+        final WebEngine webEngine = createWebEngine();
+        submit(() -> {
+            final JSObject window = (JSObject) webEngine.executeScript("window");
+            assertNotNull(window);
+            webEngine.executeScript("var userAgent = navigator.userAgent");
+            String userAgentString = (String)window.getMember("userAgent");
+            assertNotNull(userAgentString);
+            verifyUserAgentString(userAgentString);
+        });
     }
 
     @Test public void testSVGRenderingWithGradient() {
