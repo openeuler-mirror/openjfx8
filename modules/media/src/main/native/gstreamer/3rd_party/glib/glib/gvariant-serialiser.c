@@ -1053,6 +1053,7 @@ gvs_tuple_is_normal (GVariantSerialised value)
   gsize length;
   gsize offset;
   gsize i;
+  gsize offset_table_size;
 
   /* as per the comment in gvs_tuple_get_child() */
   if G_UNLIKELY (value.data == NULL && value.size != 0)
@@ -1153,7 +1154,19 @@ gvs_tuple_is_normal (GVariantSerialised value)
       }
   }
 
-  return offset_ptr == offset;
+  /* @offset_ptr has been counting backwards from the end of the variant, to
+   * find the beginning of the offset table. @offset has been counting forwards
+   * from the beginning of the variant to find the end of the data. They should
+   * have met in the middle. */
+  if (offset_ptr != offset)
+    return FALSE;
+
+  offset_table_size = value.size - offset_ptr;
+  if (value.size > 0 &&
+      gvs_calculate_total_size (offset, offset_table_size / offset_size) != value.size)
+    return FALSE;  /* offset size not minimal */
+
+  return TRUE;
 }
 
 /* Variants {{{2
