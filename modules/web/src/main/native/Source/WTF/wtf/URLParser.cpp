@@ -1259,8 +1259,8 @@ void URLParser::parse(const CharacterType* input, const unsigned length, const U
                     return;
                 }
                 m_url.m_schemeEnd = schemeEnd;
-                StringView urlScheme = parsedDataView(0, m_url.m_schemeEnd);
                 appendToASCIIBuffer(':');
+                StringView urlScheme = parsedDataView(0, m_url.m_schemeEnd);
                 switch (scheme(urlScheme)) {
 #if PLATFORM(JAVA)
                 // JAR can have complex protocols like "jar:file" or "jar:http://"
